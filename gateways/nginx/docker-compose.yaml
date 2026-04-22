@@ -1,0 +1,62 @@
+# gateways/nginx/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for parity attestation.
+# Same port contract as every other gateway under `gateways/<gw>/`:
+#
+#     loadgen (host)  →  nginx :9080  →  backend :8080
+#
+# nginx has **no** admin API: every profile's behaviour is expressed
+# entirely in its `nginx.conf` on disk. We therefore only expose the
+# data plane on :9080. `scripts/parity-gateway.sh` copes with that —
+# the admin-port wait loop is optional, and each nginx profile's
+# `setup.sh` is a plain HTTP smoke check.
+#
+# The policy profile is picked by the GATEWAY_PROFILE env var (default
+# `p01-vanilla`). Each profile directory must contain:
+#
+#   nginx.conf   - full nginx configuration (single-file override)
+#   setup.sh     - post-up smoke check (nginx is ready at container start)
+#   NOTES.md     - profile-specific notes / deviations
+#
+# Image is pinned by digest for reproducibility; refresh with:
+#   docker pull nginx:1.27.3-alpine && docker image inspect \
+#     nginx:1.27.3-alpine --format '{{index .RepoDigests 0}}'
+
+name: gateway-benchmarks-nginx
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-nginx-backend
+    restart: "no"
+    # Backend listens on :8080 inside the container. We do NOT publish
+    # it on the host — only the gateway needs to talk to it, over the
+    # private `bench-net` bridge. Add `- "8088:8080"` temporarily if
+    # you want to probe it from the host.
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  gateway:
+    image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
+    container_name: gwb-nginx
+    restart: "no"
+    depends_on:
+      - backend
+    # `nginx -g 'daemon off;'` is the default entrypoint; we just
+    # override the config file path to keep the volume mount obvious.
+    command: ["nginx", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9080:9080"  # data plane (parity-gateway target)
+    # nginx handles SIGTERM gracefully; the stop-grace-period is kept
+    # low so `docker compose down` in teardown is snappy even on CI.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+networks:
+  bench-net:
+    driver: bridge

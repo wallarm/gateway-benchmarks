@@ -137,7 +137,10 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       in `p10-full-pipeline/NOTES.md`)
     - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING
       (p02, p10), 0 FAIL** across all 10 canonical profiles
-    - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+    - [x] `nginx / p01-vanilla` — 4/4 green on `nginx:1.27.3-alpine`
+      (catch-all `proxy_pass`, uniform settings fully expressed in
+      `nginx.conf`, zero deviations)
+    - [ ] `nginx / p02..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

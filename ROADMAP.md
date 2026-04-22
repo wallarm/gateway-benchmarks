@@ -210,7 +210,24 @@
   [`gateways/wallarm/p10-full-pipeline/NOTES.md`](./gateways/wallarm/p10-full-pipeline/NOTES.md).
   Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING (p02, p10),
   0 FAIL** across all 10 canonical profiles.
-- [ ] `gateways/nginx/` configs for p01..p10
+- [~] `gateways/nginx/` configs for p01..p10:
+  - [x] `gateways/nginx/p01-vanilla/` — **4/4 PASS** on
+    `nginx:1.27.3-alpine`
+    (`sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4`).
+    Catch-all `proxy_pass http://backend_pool;` with every row from
+    [`docs/GATEWAYS.md § Uniform settings`](./docs/GATEWAYS.md#uniform-settings)
+    explicitly expressed in the config; no deviations. See
+    [`gateways/nginx/p01-vanilla/NOTES.md`](./gateways/nginx/p01-vanilla/NOTES.md).
+  - [ ] `p02-jwt`, `p08-req-body`, `p09-resp-body`, `p10-full-pipeline`
+    will switch the image to `openresty/openresty:<pinned>` when
+    their iteration lands.
+  - [ ] `p03-rl-static`, `p04-rl-dynamic-low`, `p05-rl-dynamic-high`
+    will use `limit_req_zone` on the mainline image (no Lua needed).
+  - [ ] `p06-req-headers`, `p07-resp-headers` will use
+    `proxy_set_header` / `add_header` + `more_clear_headers` from
+    `ngx_headers_more` (bundled in openresty; a deviation entry will
+    record whether we stay on mainline or switch to openresty for
+    the drop-side).
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
 - [ ] `gateways/apisix/` configs for p01..p10
@@ -413,8 +430,13 @@
      `jwt_validation`. **Wallarm roster is now complete**: `8 PASS,
      2 FEATURE-MISSING (p02, p10), 0 FAIL` across all 10 canonical
      profiles on `wallarm/api-gateway:0.2.0`.
-   - next pass: the other gateways (`nginx` → `envoy` → `kong` →
-     `apisix` → `traefik` → `tyk`), one profile column at a time,
-     starting with `nginx/p01-vanilla`.
+   - `nginx/p01-vanilla` → **4/4 PASS** on
+     `nginx:1.27.3-alpine` (digest resolved and pinned in
+     `docs/GATEWAYS.md`). Catch-all `proxy_pass` with every uniform
+     setting expressed explicitly in `nginx.conf` — no deviations.
+     This seeds the nginx column for the rest of Phase 3b.
+   - next pass: `nginx/p02..p10` (mainline for `p03..p07`, openresty
+     for `p02`/`p08`/`p09`/`p10`), then `envoy` → `kong` → `apisix`
+     → `traefik` → `tyk`, one profile column at a time.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

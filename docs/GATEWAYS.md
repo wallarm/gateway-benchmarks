@@ -13,7 +13,7 @@ back into this table whenever a pin is bumped.
 | Gateway  | Version       | Docker image                           | Digest        | Language       | Source |
 |----------|---------------|----------------------------------------|---------------|----------------|--------|
 | wallarm  | `0.2.0`       | `wallarm/api-gateway:0.2.0`            | `sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825` | Rust | https://hub.docker.com/r/wallarm/api-gateway |
-| nginx    | `1.27.3-alpine` | `nginx:1.27.3-alpine`                | `sha256:TBD`  | C              | https://hub.docker.com/_/nginx |
+| nginx    | `1.27.3-alpine` | `nginx:1.27.3-alpine`                | `sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4` | C              | https://hub.docker.com/_/nginx |
 | envoy    | `v1.31.5`     | `envoyproxy/envoy:v1.31.5`             | `sha256:TBD`  | C++            | https://hub.docker.com/r/envoyproxy/envoy |
 | kong     | `3.8.0`       | `kong:3.8.0`                           | `sha256:TBD`  | Lua / OpenResty | https://hub.docker.com/_/kong |
 | apisix   | `3.11.0-debian` | `apache/apisix:3.11.0-debian`         | `sha256:TBD`  | Lua / OpenResty | https://hub.docker.com/r/apache/apisix |
@@ -543,7 +543,11 @@ Status
     `gateways/wallarm/p10-full-pipeline/NOTES.md`).
   - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING (p02, p10),
     0 FAIL** across all 10 canonical profiles.
-  - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
+  - `nginx / p01-vanilla` — **ready**, parity 4/4 green on
+    `nginx:1.27.3-alpine` (catch-all `proxy_pass` with uniform
+    settings; zero deviations).
+  - `nginx / p02..p10` — pending.
+  - `envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst
   actually fits inside its 1 s window. Validated end-to-end against

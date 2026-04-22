@@ -47,13 +47,17 @@ docker image inspect nginx:1.27.3-alpine \
 gateways/nginx/
 ├── README.md                  (this file)
 ├── docker-compose.yaml        (nginx + backend on bench-net)
-└── p01-vanilla/
-    ├── nginx.conf             (full config, HTTP/1.1 only, catch-all proxy)
-    ├── setup.sh               (post-up smoke check; nginx has no admin API)
-    └── NOTES.md               (uniform-settings audit, deviations)
+├── p01-vanilla/
+│   ├── nginx.conf             (full config, HTTP/1.1 only, catch-all proxy)
+│   ├── setup.sh               (post-up smoke check; nginx has no admin API)
+│   └── NOTES.md               (uniform-settings audit, deviations)
+└── p03-rl-static/
+    ├── nginx.conf             (+limit_req_zone/limit_req, error_page 429)
+    ├── setup.sh               (post-up smoke; burst handled by parity runner)
+    └── NOTES.md               (mechanism, burst shape, deviations)
 ```
 
-(The remaining profiles `p02..p10` land in subsequent Phase 3b iterations.)
+(The remaining profiles `p02`, `p04..p10` land in subsequent Phase 3b iterations.)
 
 ## Feature matrix
 
@@ -61,7 +65,7 @@ gateways/nginx/
 |-------------------------|---------------------------------------------------|-------------------|
 | `p01-vanilla`           | Catch-all `proxy_pass http://backend_pool`        | PASS (4/4)        |
 | `p02-jwt`               | `ngx_http_auth_jwt_module` (commercial) or Lua    | planned (openresty) |
-| `p03-rl-static`         | `limit_req_zone` — fixed bucket                   | planned           |
+| `p03-rl-static`         | `limit_req_zone $server_name` + `burst=200 nodelay` | PASS (2/2)      |
 | `p04-rl-dynamic-low`    | `limit_req_zone $http_x_real_ip ...`              | planned           |
 | `p05-rl-dynamic-high`   | same, higher rate (zone sizing per `docs/POLICIES.md †`) | planned  |
 | `p06-req-headers`       | `proxy_set_header` / `more_clear_input_headers`   | planned           |

@@ -140,7 +140,11 @@ The project is in early phases. No benchmark runs yet — we are building the fo
     - [x] `nginx / p01-vanilla` — 4/4 green on `nginx:1.27.3-alpine`
       (catch-all `proxy_pass`, uniform settings fully expressed in
       `nginx.conf`, zero deviations)
-    - [ ] `nginx / p02..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+    - [x] `nginx / p03-rl-static` — 2/2 green (`limit_req_zone
+      $server_name rate=1000r/s` + `burst=200 nodelay` +
+      `error_page 429 @retry_after`; 1200-req burst →
+      `2xx=262, 429=938, 5xx=0`)
+    - [ ] `nginx / p02`, `p04..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

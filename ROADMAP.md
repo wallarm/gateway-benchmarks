@@ -218,11 +218,21 @@
     [`docs/GATEWAYS.md § Uniform settings`](./docs/GATEWAYS.md#uniform-settings)
     explicitly expressed in the config; no deviations. See
     [`gateways/nginx/p01-vanilla/NOTES.md`](./gateways/nginx/p01-vanilla/NOTES.md).
+  - [x] `gateways/nginx/p03-rl-static/` — **2/2 PASS** on the same
+    image. `limit_req_zone $server_name zone=bench_p03:1m rate=1000r/s`
+    + `limit_req zone=bench_p03 burst=200 nodelay` +
+    `error_page 429 @retry_after` (to stamp `Retry-After: 1` on the
+    429). Observed `2xx=262, 429=938, 5xx=0` under the fixture's
+    1200-req 1-second ASAP burst — well above the `150 − 50 = 100`
+    minimum threshold. See
+    [`gateways/nginx/p03-rl-static/NOTES.md`](./gateways/nginx/p03-rl-static/NOTES.md).
   - [ ] `p02-jwt`, `p08-req-body`, `p09-resp-body`, `p10-full-pipeline`
     will switch the image to `openresty/openresty:<pinned>` when
     their iteration lands.
-  - [ ] `p03-rl-static`, `p04-rl-dynamic-low`, `p05-rl-dynamic-high`
-    will use `limit_req_zone` on the mainline image (no Lua needed).
+  - [ ] `p04-rl-dynamic-low`, `p05-rl-dynamic-high` will use
+    `limit_req_zone $http_x_real_ip` on the mainline image (no Lua
+    needed). p05's 50 000-key pool needs explicit zone sizing; see
+    the "✓†" footnote in `docs/POLICIES.md § Feature availability`.
   - [ ] `p06-req-headers`, `p07-resp-headers` will use
     `proxy_set_header` / `add_header` + `more_clear_headers` from
     `ngx_headers_more` (bundled in openresty; a deviation entry will
@@ -435,8 +445,15 @@
      `docs/GATEWAYS.md`). Catch-all `proxy_pass` with every uniform
      setting expressed explicitly in `nginx.conf` — no deviations.
      This seeds the nginx column for the rest of Phase 3b.
-   - next pass: `nginx/p02..p10` (mainline for `p03..p07`, openresty
-     for `p02`/`p08`/`p09`/`p10`), then `envoy` → `kong` → `apisix`
-     → `traefik` → `tyk`, one profile column at a time.
+   - `nginx/p03-rl-static` → **2/2 PASS** on the same image.
+     `limit_req_zone $server_name rate=1000r/s` + `burst=200 nodelay`
+     + `error_page 429 @retry_after` (to stamp `Retry-After: 1`).
+     Observed `2xx=262, 429=938, 5xx=0` at 1200 req / 1 s ASAP —
+     well inside the fixture's `≥ 150 ± 50 × 429` tolerance.
+   - next pass: `nginx/p04-rl-dynamic-low` + `p05-rl-dynamic-high`
+     (`limit_req_zone $http_x_real_ip` on mainline, zone sizing for
+     the 50 000-key pool in p05), then `p06/p07` (mainline headers),
+     then the openresty-based cluster `p02/p08/p09/p10`, then
+     `envoy` → `kong` → `apisix` → `traefik` → `tyk`.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

@@ -546,7 +546,11 @@ Status
   - `nginx / p01-vanilla` — **ready**, parity 4/4 green on
     `nginx:1.27.3-alpine` (catch-all `proxy_pass` with uniform
     settings; zero deviations).
-  - `nginx / p02..p10` — pending.
+  - `nginx / p03-rl-static` — **ready**, parity 2/2 green
+    (`limit_req_zone $server_name rate=1000r/s` + `burst=200 nodelay`
+    + `error_page 429 @retry_after`; observed
+    `2xx=262, 429=938, 5xx=0` under a 1200-req 1-second burst).
+  - `nginx / p02`, `p04..p10` — pending.
   - `envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

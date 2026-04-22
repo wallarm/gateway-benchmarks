@@ -144,7 +144,15 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       $server_name rate=1000r/s` + `burst=200 nodelay` +
       `error_page 429 @retry_after`; 1200-req burst →
       `2xx=262, 429=938, 5xx=0`)
-    - [ ] `nginx / p02`, `p04..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+    - [x] `nginx / p04-rl-dynamic-low` — 2/2 green
+      (`limit_req_zone $http_x_real_ip rate=10r/s` +
+      `burst=10 nodelay`; 10 IPs × 45 req → `2xx=109, 429=341` —
+      symmetric to wallarm/p04 within one request)
+    - [x] `nginx / p05-rl-dynamic-high` — 3/3 green (same mechanism,
+      `zone=10m rate=100r/s` + `burst=20 nodelay`, zone sized for
+      the 50 000-IP pool per POLICIES.md; burst #2 →
+      `2xx=24, 429=476`)
+    - [ ] `nginx / p02`, `p06..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

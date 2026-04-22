@@ -550,7 +550,20 @@ Status
     (`limit_req_zone $server_name rate=1000r/s` + `burst=200 nodelay`
     + `error_page 429 @retry_after`; observed
     `2xx=262, 429=938, 5xx=0` under a 1200-req 1-second burst).
-  - `nginx / p02`, `p04..p10` — pending.
+  - `nginx / p04-rl-dynamic-low` — **ready**, parity 2/2 green
+    (`limit_req_zone $http_x_real_ip zone=bench_p04:1m rate=10r/s` +
+    `burst=10 nodelay`; observed `2xx=109, 429=341, 5xx=0` under the
+    10-IP / 450-req / 3-second fixture — symmetric to wallarm
+    `99/351` within one request).
+  - `nginx / p05-rl-dynamic-high` — **ready**, parity 3/3 green.
+    Same mechanism as p04 with `zone=10m rate=100r/s` + `burst=20`.
+    Zone size follows from POLICIES.md's 50 000-IP pool:
+    50 000 keys × ~128 B ≈ 6.4 MB, rounded up to 10 MB for LRU
+    slack. Observed shapes: burst #1 (10 IPs × 20 rps) = `200/0`,
+    burst #2 (1 IP × 500 rps) = `2xx=24, 429=476`. See the `✓†`
+    footnote in
+    [`docs/POLICIES.md § Feature availability`](./POLICIES.md#feature-availability-as-of-current-images).
+  - `nginx / p02`, `p06..p10` — pending.
   - `envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

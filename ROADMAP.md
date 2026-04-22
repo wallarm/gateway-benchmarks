@@ -226,13 +226,23 @@
     1200-req 1-second ASAP burst — well above the `150 − 50 = 100`
     minimum threshold. See
     [`gateways/nginx/p03-rl-static/NOTES.md`](./gateways/nginx/p03-rl-static/NOTES.md).
+  - [x] `gateways/nginx/p04-rl-dynamic-low/` — **2/2 PASS** on the
+    same image. `limit_req_zone $http_x_real_ip zone=bench_p04:1m
+    rate=10r/s` + `burst=10 nodelay`. Observed `2xx=109, 429=341,
+    5xx=0` under the 10-IP / 450-req / 3-s fixture — inside one
+    request of wallarm/p04 (`99/351`). See
+    [`gateways/nginx/p04-rl-dynamic-low/NOTES.md`](./gateways/nginx/p04-rl-dynamic-low/NOTES.md).
+  - [x] `gateways/nginx/p05-rl-dynamic-high/` — **3/3 PASS** on the
+    same image. Same mechanism as p04 with `zone=10m rate=100r/s` +
+    `burst=20 nodelay`. Zone size sized for POLICIES.md's 50 000-IP
+    pool (≈ 6.4 MB at 128 B/key, rounded up to 10 MB for LRU slack).
+    Observed: burst #1 (10 IPs × 20 rps, under limit) = `200/0`,
+    burst #2 (1 IP × 500 rps) = `2xx=24, 429=476` (fixture threshold
+    260; 1.8× headroom). See
+    [`gateways/nginx/p05-rl-dynamic-high/NOTES.md`](./gateways/nginx/p05-rl-dynamic-high/NOTES.md).
   - [ ] `p02-jwt`, `p08-req-body`, `p09-resp-body`, `p10-full-pipeline`
     will switch the image to `openresty/openresty:<pinned>` when
     their iteration lands.
-  - [ ] `p04-rl-dynamic-low`, `p05-rl-dynamic-high` will use
-    `limit_req_zone $http_x_real_ip` on the mainline image (no Lua
-    needed). p05's 50 000-key pool needs explicit zone sizing; see
-    the "✓†" footnote in `docs/POLICIES.md § Feature availability`.
   - [ ] `p06-req-headers`, `p07-resp-headers` will use
     `proxy_set_header` / `add_header` + `more_clear_headers` from
     `ngx_headers_more` (bundled in openresty; a deviation entry will
@@ -450,10 +460,18 @@
      + `error_page 429 @retry_after` (to stamp `Retry-After: 1`).
      Observed `2xx=262, 429=938, 5xx=0` at 1200 req / 1 s ASAP —
      well inside the fixture's `≥ 150 ± 50 × 429` tolerance.
-   - next pass: `nginx/p04-rl-dynamic-low` + `p05-rl-dynamic-high`
-     (`limit_req_zone $http_x_real_ip` on mainline, zone sizing for
-     the 50 000-key pool in p05), then `p06/p07` (mainline headers),
-     then the openresty-based cluster `p02/p08/p09/p10`, then
+   - `nginx/p04-rl-dynamic-low` → **2/2 PASS** on the same image.
+     `limit_req_zone $http_x_real_ip rate=10r/s` + `burst=10 nodelay`.
+     Observed `2xx=109, 429=341, 5xx=0` — symmetric to wallarm/p04
+     (`99/351`) within one request.
+   - `nginx/p05-rl-dynamic-high` → **3/3 PASS** on the same image.
+     `zone=10m rate=100r/s` + `burst=20 nodelay` (zone sized for the
+     50 000-IP pool per POLICIES.md). Burst #1 = `200/0`, burst #2 =
+     `2xx=24, 429=476` — 1.8× the fixture's 260 × 429 floor.
+   - next pass: `nginx/p06-req-headers` + `p07-resp-headers` on
+     mainline (`proxy_set_header` / `add_header`, possibly
+     `ngx_headers_more` via openresty for the drop-side), then the
+     openresty-based cluster `p02/p08/p09/p10`, then
      `envoy` → `kong` → `apisix` → `traefik` → `tyk`.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

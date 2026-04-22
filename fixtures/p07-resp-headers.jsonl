@@ -1,0 +1,2 @@
+{"name":"client sees X-Bench-Out, does not see Server","request":{"method":"GET","path":"/response-headers","query":{"Server":"should-be-dropped"}},"expect":{"status":200,"response_header_present":["X-Bench-Out"],"response_header_absent":["Server"]}}
+{"name":"response-header drop is unconditional","request":{"method":"GET","path":"/get"},"expect":{"status":200,"response_header_present":["X-Bench-Out"],"response_header_absent":["Server"]}}

@@ -1,0 +1,3 @@
+{"name":"gateway injects X-Bench-In and drops X-Forwarded-For","request":{"method":"GET","path":"/headers","headers":{"X-Forwarded-For":"198.51.100.7"}},"expect":{"status":200,"backend_saw_header":{"X-Bench-In":"1"},"backend_missed_header":["X-Forwarded-For"]}}
+{"name":"X-Forwarded-For drop is unconditional","request":{"method":"GET","path":"/headers"},"expect":{"status":200,"backend_saw_header":{"X-Bench-In":"1"},"backend_missed_header":["X-Forwarded-For"]}}
+{"name":"other client headers pass through unchanged","request":{"method":"GET","path":"/headers","headers":{"X-Client-Trace":"abc-123"}},"expect":{"status":200,"backend_saw_header":{"X-Client-Trace":"abc-123"}}}

@@ -1,0 +1,2 @@
+{"name":"single request below limit -> 200","request":{"method":"GET","path":"/anything"},"expect":{"status":200}}
+{"kind":"burst","name":"1200 rps within 1s -> at least 150 x 429","burst":{"total_requests":1200,"duration_s":1,"keys":1,"request":{"method":"GET","path":"/anything"}},"expect":{"status_429_min":150,"status_429_tolerance":50}}

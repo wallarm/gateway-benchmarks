@@ -4,7 +4,7 @@
 	orchestrator-build orchestrator-test \
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
-	parity-check
+	parity-check parity-check-all
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -72,8 +72,9 @@ help: ## Show this help
 	@echo "  $(GREEN)perf-aws-report$(NC)       Pull raw data and render the HTML report"
 	@echo "  $(GREEN)perf-aws-down$(NC)         Destroy the EC2 hosts (enable_perf_test=false + tofu apply)"
 	@echo ""
-	@echo "$(YELLOW)Quality:$(NC)"
-	@echo "  $(GREEN)parity-check$(NC)          Run parity attestation only (no load)"
+	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
+	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile (see PARITY_* vars)"
+	@echo "  $(GREEN)parity-check-all$(NC)      Sweep parity across all 10 profiles against PARITY_TARGET"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
@@ -209,5 +210,43 @@ perf-aws-down: ## Destroy the EC2 hosts
 # ---------------------------------------------------------------------------
 # Parity (Phase 3)
 # ---------------------------------------------------------------------------
-parity-check: ## Run parity attestation only
-	$(PHASE_TODO)
+PARITY_GATEWAY ?= backend-direct
+PARITY_TARGET  ?= http://localhost:$(BACKEND_PORT)
+PARITY_PROFILE ?= p01-vanilla
+PARITY_OUT     ?= reports/$(RUN_ID)/parity
+
+parity-check: ## Run parity against a running target (see PARITY_* variables)
+	@echo "$(YELLOW)parity: gateway=$(PARITY_GATEWAY) profile=$(PARITY_PROFILE) target=$(PARITY_TARGET)$(NC)"
+	@mkdir -p $(PARITY_OUT)
+	@bash scripts/parity-attestation.sh \
+		--gateway $(PARITY_GATEWAY) \
+		--profile $(PARITY_PROFILE) \
+		--target  $(PARITY_TARGET) \
+		--output  $(PARITY_OUT)/$(PARITY_GATEWAY)-$(PARITY_PROFILE).json \
+		--verbose
+
+parity-check-all: ## Run parity across every profile p01..p10 against PARITY_TARGET
+	@echo "$(YELLOW)parity: sweeping p01..p10 against $(PARITY_TARGET)$(NC)"
+	@mkdir -p $(PARITY_OUT)
+	@set -e; \
+	 passed=0; failed=0; \
+	 for p in p01-vanilla p02-jwt p03-rl-static p04-rl-dynamic-low \
+	          p05-rl-dynamic-high p06-req-headers p07-resp-headers \
+	          p08-req-body p09-resp-body p10-full-pipeline; do \
+	     rc=0; \
+	     bash scripts/parity-attestation.sh \
+	         --gateway $(PARITY_GATEWAY) \
+	         --profile $$p \
+	         --target  $(PARITY_TARGET) \
+	         --output  $(PARITY_OUT)/$(PARITY_GATEWAY)-$$p.json \
+	         > /dev/null 2>&1 || rc=$$?; \
+	     st=$$(jq -r '.status' $(PARITY_OUT)/$(PARITY_GATEWAY)-$$p.json); \
+	     ps=$$(jq -r '.passed' $(PARITY_OUT)/$(PARITY_GATEWAY)-$$p.json); \
+	     tot=$$(jq -r '.probes' $(PARITY_OUT)/$(PARITY_GATEWAY)-$$p.json); \
+	     sk=$$(jq -r '.skipped' $(PARITY_OUT)/$(PARITY_GATEWAY)-$$p.json); \
+	     printf '  %-22s  %-6s  %2s/%-2s  skipped=%s\n' "$$p" "$$st" "$$ps" "$$tot" "$$sk"; \
+	     if [ "$$st" = "PASS" ]; then passed=$$((passed+1)); else failed=$$((failed+1)); fi; \
+	 done; \
+	 echo ""; \
+	 echo "$(CYAN)Summary:$(NC) $$passed passed, $$failed not-PASS (reports in $(PARITY_OUT)/)"
+

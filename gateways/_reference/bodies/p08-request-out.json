@@ -1,0 +1,7 @@
+{
+  "msg": "hello",
+  "bench": {
+    "from_client": true,
+    "injected": true
+  }
+}

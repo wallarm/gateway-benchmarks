@@ -1,0 +1,4 @@
+{"name":"GET / reaches backend","request":{"method":"GET","path":"/"},"expect":{"status":200}}
+{"name":"GET /anything echoes method","request":{"method":"GET","path":"/anything"},"expect":{"status":200,"response_body_json_contains":{"$.method":"GET"}}}
+{"name":"POST /anything echoes body","request":{"method":"POST","path":"/anything","headers":{"Content-Type":"application/json"},"body_json":{"hello":"bench"}},"expect":{"status":200,"response_body_json_contains":{"$.json.hello":"bench"}}}
+{"name":"GET /bytes/1024 returns exactly 1024 bytes","request":{"method":"GET","path":"/bytes/1024"},"expect":{"status":200,"response_header_present":["Content-Length"]}}

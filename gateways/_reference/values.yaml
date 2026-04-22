@@ -1,0 +1,142 @@
+# gateways/_reference/values.yaml
+#
+# Single source of truth for every constant used by the benchmark.
+# Both `scripts/parity-attestation.sh` and every `gateways/<gw>/...`
+# config render from this file. If you change a value here, the
+# gateway configs should be re-rendered and the parity probes rerun.
+
+bench:
+  service_name: bench-service
+  # Everything below this line describes values observable from outside
+  # the gateway. They must match byte for byte in every gateway config.
+
+upstream:
+  host: backend
+  port: 8080
+  path: /anything
+  # Gateway keep-alive / pool sizing. TASK.md §10: uniform across gateways.
+  pool:
+    size: 1024
+    idle_timeout_s: 60
+    keepalive: on
+
+downstream:
+  keepalive: on
+  request_timeout_s: 10
+  # Buffering is "off" wherever the gateway exposes that toggle. Where
+  # it cannot be fully disabled, documented deviations go into
+  # docs/GATEWAYS.md.
+  buffering:
+    request: off
+    response: off
+
+http:
+  # TASK.md §6: HTTP/1.1 only, forcibly disable HTTP/2 and HTTP/3.
+  versions: ["1.1"]
+  alpn: ["http/1.1"]
+
+# -----------------------------------------------------------------------------
+# Per-profile values
+# -----------------------------------------------------------------------------
+
+# p02 — JWT
+jwt:
+  algorithm: HS256
+  # NOTE: this secret is public by design. It has never been used in
+  # production. It only exists to let external reviewers reproduce the
+  # JWT probes.
+  secret: "bench-jwt-hs256-secret-2026"
+  header:
+    name: Authorization
+    scheme: Bearer
+  payload:
+    sub: bench
+    role: tester
+    iss: gateway-benchmarks
+  expiry_s: 3600
+  # Gateways that cannot consume a shared secret directly fall back to
+  # JWKS served from the benchmark's internal URL below.
+  jwks:
+    url: "http://loadgen:8081/.well-known/jwks.json"
+    kid: "bench-hs256-2026"
+
+# p03 — Static rate limit
+rl_static:
+  # Requests per second, per service. Above-limit responses are 429
+  # with Retry-After: 1. Rolling 1 s window, keyed per service.
+  limit_rps: 1000
+  window_s: 1
+  key: service
+
+# p04 — Dynamic rate limit (low cardinality)
+rl_dynamic_low:
+  limit_rps: 10
+  window_s: 1
+  key_header: X-Real-IP
+  pool_size: 100
+
+# p05 — Dynamic rate limit (high cardinality)
+rl_dynamic_high:
+  limit_rps: 100
+  window_s: 1
+  key_header: X-Real-IP
+  pool_size: 50000
+
+# p06 — Request headers rewrite
+req_headers:
+  add:
+    - name: X-Bench-In
+      value: "1"
+  drop:
+    - X-Forwarded-For
+
+# p07 — Response headers rewrite
+resp_headers:
+  add:
+    - name: X-Bench-Out
+      value: "1"
+  drop:
+    - Server
+
+# p08 — Request body rewrite (JSON)
+req_body:
+  add:
+    path: $.bench.injected
+    value: true
+  drop:
+    path: $.secret
+
+# p09 — Response body rewrite (JSON)
+# `$.origin` is chosen because go-httpbin's /anything always puts the
+# client IP there, so the drop-rule is always exercised.
+resp_body:
+  add:
+    path: $.bench.injected
+    value: true
+  drop:
+    path: $.origin
+
+# p10 — Full pipeline is the composition of the six above, in this
+# exact order:
+full_pipeline:
+  order:
+    - jwt
+    - rl_static
+    - req_headers
+    - req_body
+    - resp_headers
+    - resp_body
+
+# -----------------------------------------------------------------------------
+# Parity attestation tolerances (see docs/POLICIES.md)
+# -----------------------------------------------------------------------------
+parity:
+  # p03: fire 1200 requests in 1 s — we expect at least 150 × 429 and
+  # tolerate ±50 around the exact expected count.
+  p03_expected_429_min: 150
+  p03_expected_429_tolerance: 50
+
+  # p04: 10 distinct IPs × 15 req/s × 3 s = 450 requests, ~50% above
+  # limit. We expect ~150 × 429 (tolerance ±30).
+  p04_expected_429_min: 120
+  p04_expected_429_tolerance: 30

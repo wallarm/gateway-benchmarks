@@ -90,38 +90,49 @@
 
 **Goal**: prove that every gateway does the same thing before we measure metrics.
 
-- [ ] Define **exact values** for each policy profile (in `docs/POLICIES.md`):
-  - JWT: `HS256`, shared secret `bench-secret-2026`, claim `bench: true`, exp +1h
-  - Static rate limit: 1000 req/s per service, sliding window 1s
-  - Dynamic RL low cardinality: 100 keys (IP-based), 10 req/s per IP
-  - Dynamic RL high cardinality: 50k keys, 100 req/s per IP
-  - Request headers: add `X-Bench-In: 1`, remove `X-Forwarded-For`
-  - Response headers: add `X-Bench-Out: 1`, remove `Server`
-  - Request body: add `.bench.injected: true`, remove `.secret`
-  - Response body: add `.bench.injected: true`, remove `.server`
-- [ ] Implement **10 configs** for each of the 7 gateways:
-  - `gateways/{gw}/vanilla.yaml`
-  - `gateways/{gw}/jwt.yaml`
-  - `gateways/{gw}/rl-static.yaml`
-  - `gateways/{gw}/rl-dynamic-low.yaml`
-  - `gateways/{gw}/rl-dynamic-high.yaml`
-  - `gateways/{gw}/req-headers.yaml`
-  - `gateways/{gw}/resp-headers.yaml`
-  - `gateways/{gw}/req-body.yaml`
-  - `gateways/{gw}/resp-body.yaml`
-  - `gateways/{gw}/full-pipeline.yaml`
-- [ ] **Parity attestation script** `scripts/parity-attestation.sh`:
-  - Starts the gateway in the target configuration
-  - Runs functional tests:
-    - JWT: valid token → 200; invalid → 401; expired → 401
-    - RL: 1001st request in a second → 429; latency does not spike
-    - Req headers: backend observes `X-Bench-In: 1`, does not observe `X-Forwarded-For`
-    - Body rewrite: backend receives the modified JSON
-    - Full pipeline: all 5 transformations combined
-  - Emits `PASS`/`FAIL`/`FEATURE-MISSING` as machine-readable JSON
-- [ ] Document deviations in `docs/GATEWAYS.md`: what fails where, what is feature-missing
-- [ ] **Tyk lacks** custom Lua → mark request/response body rewrite as `feature-missing` for Tyk
-- [ ] **Envoy** body rewrite requires a Lua filter → implement and mark as a deviation
+**Phase 3a — foundation (done)**
+
+- [x] Locked exact values for every profile in [`docs/POLICIES.md`](./docs/POLICIES.md):
+  - JWT: HS256, shared secret `bench-jwt-hs256-secret-2026`, `kid = bench-hs256-2026`, `exp = iat + 3600`
+  - Static RL: 1000 req/s per service, rolling 1 s window
+  - Dynamic RL low cardinality: 10 req/s per IP, pool = 100
+  - Dynamic RL high cardinality: 100 req/s per IP, pool = 50 000
+  - Request headers: add `X-Bench-In: 1`, drop `X-Forwarded-For`
+  - Response headers: add `X-Bench-Out: 1`, drop `Server`
+  - Request body (JSON): add `$.bench.injected = true`, drop `$.secret`
+  - Response body (JSON): add `$.bench.injected = true`, drop `$.origin`
+    (`.origin` chosen because go-httpbin always returns it)
+- [x] [`gateways/_reference/`](./gateways/_reference/) shared assets:
+  `values.yaml`, JWT secret + payload template, JWKS, TLS cert/key,
+  canonical request / response bodies for p08 / p09
+- [x] [`fixtures/`](./fixtures/) per-profile probe sets (`p01..p10.jsonl`,
+  32 probes total, schema documented in `fixtures/README.md`)
+- [x] [`scripts/gen-jwt.sh`](./scripts/gen-jwt.sh) — mints valid / expired / wrong-secret HS256 tokens
+  (bash + openssl + jq, no external deps)
+- [x] [`scripts/parity-attestation.sh`](./scripts/parity-attestation.sh)
+  runner: substitutes `${JWT_*}` placeholders, evaluates per-probe
+  assertions (status, headers, JSON body, backend-echo), emits
+  PASS / FAIL / FEATURE-MISSING JSON
+- [x] `make parity-check` / `make parity-check-all` — real targets,
+  smoke-verified against the raw backend
+  (`p01` → PASS 4/4, `p02..p10` correctly FAIL because the backend is
+  not a gateway)
+- [x] Uniform settings and HTTP/1.1-enforcement knobs documented per
+  gateway in [`docs/GATEWAYS.md`](./docs/GATEWAYS.md)
+
+**Phase 3b — per-gateway configs (in progress)**
+
+- [ ] Bursts in the parity runner (p03 static-RL, p04/p05 dynamic-RL)
+- [ ] `gateways/wallarm/` configs for p01..p10 (reference gateway)
+- [ ] `gateways/nginx/` configs for p01..p10
+- [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
+- [ ] `gateways/kong/` configs for p01..p10
+- [ ] `gateways/apisix/` configs for p01..p10
+- [ ] `gateways/traefik/` configs for p01..p10 (community plugin for p02/p03)
+- [ ] `gateways/tyk/` configs for p01..p07, p10 (p08/p09 = feature-missing)
+- [ ] Green parity cell for every `(gateway, profile)` entry in
+  [`docs/POLICIES.md` feature matrix](./docs/POLICIES.md) — either
+  PASS or explicitly tagged FEATURE-MISSING / DEVIATION
 
 ### Phase 4. Load framework + k6 (2–3 days)
 
@@ -270,5 +281,11 @@
 
 1. Phase 1 scaffolding — done.
 2. Phase 2 (vendored `go-httpbin` backend) — done.
-3. Start **Phase 3** (parity configs for 7 gateways × 10 profiles) — that is the critical path.
-4. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure sub-tasks in Phase 5.
+3. Phase 3a foundation (docs, reference assets, fixtures, parity
+   runner, Makefile targets) — done, smoke-verified.
+4. **Phase 3b**: per-gateway configs, starting with Wallarm as the
+   reference, then Nginx → Envoy → Kong → APISIX → Traefik → Tyk.
+   Each gateway lands together with a green parity cell for every
+   profile it supports natively (FEATURE-MISSING for the rest).
+5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
+   sub-tasks in Phase 5.

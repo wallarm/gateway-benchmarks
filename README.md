@@ -3,7 +3,7 @@
 > Reproducible, vendor-neutral performance benchmarks for production API gateways under a **policy × protocol × load** matrix.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Phase 2 complete](https://img.shields.io/badge/status-phase_2_complete-orange.svg)](./ROADMAP.md)
+[![Status: Phase 3a complete](https://img.shields.io/badge/status-phase_3a_complete-orange.svg)](./ROADMAP.md)
 
 ---
 
@@ -108,7 +108,8 @@ The project is in early phases. No benchmark runs yet — we are building the fo
 
 - [x] Phase 1 — Skeleton (README, directories, license, lint CI)
 - [x] Phase 2 — Synthetic backend (vendored `mccutchen/go-httpbin@v2.22.1`, static Docker image, smoke-tested)
-- [ ] Phase 3 — Parity framework (7 gateways × 10 policy profiles)
+- [x] Phase 3a — Parity foundation (canonical values, reference assets, fixtures, `make parity-check[-all]`)
+- [ ] Phase 3b — Per-gateway configs (7 gateways × 10 policy profiles)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

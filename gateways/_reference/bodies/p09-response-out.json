@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "http://gateway:8080/anything",
+  "headers": {
+    "Host": "gateway:8080"
+  },
+  "bench": {
+    "injected": true
+  }
+}

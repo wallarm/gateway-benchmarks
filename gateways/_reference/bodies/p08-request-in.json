@@ -1,0 +1,7 @@
+{
+  "msg": "hello",
+  "secret": "please-drop-me",
+  "bench": {
+    "from_client": true
+  }
+}

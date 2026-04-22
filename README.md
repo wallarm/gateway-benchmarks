@@ -211,14 +211,24 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       sweep wall-clock: ~15 s.
     - [~] `envoy` — column opened on
       `envoyproxy/envoy:distroless-v1.32.6` pinned by digest.
-      `p01-vanilla` parity **4/4 PASS** on the first run (static
-      bootstrap: listener + HCM + router + STRICT_DNS cluster,
-      every uniform setting wired explicitly). Remaining 9
-      profiles planned via native `local_ratelimit` (p03/p04/p05),
-      `*_headers_to_add/_to_remove` (p06/p07) and a Lua filter
-      reusing the same `jwt_hs256.lua` / `body_rewrite.lua` the
-      nginx column uses (`envoy.filters.http.jwt_authn` only
-      supports asymmetric RS/ES/PS — not the canonical HS256 secret).
+      **2 PASS / 0 FAIL / 6 probes** so far (p01 + p03).
+      `p01-vanilla` — static bootstrap (listener + HCM + router +
+      STRICT_DNS cluster), every uniform setting wired explicitly.
+      `p03-rl-static` — `envoy.filters.http.local_ratelimit` at
+      HCM level, per-worker `token_bucket` × `--concurrency 2`
+      with a **documented rate deviation**: canonical 1000 rps
+      lowered to ≈200 rps because envoy on Docker Desktop /
+      Apple Silicon saturates at 500–800 rps of HTTP/1.1 accept
+      under the 128-parallel burst probe (the filter would never
+      engage otherwise). Canonical rate restored in Phase 4 on a
+      real Linux host. Config ingestion moved from bind-mount to
+      Docker `configs:` to work around VirtioFS cache staleness.
+      Remaining 8 profiles planned via native `local_ratelimit`
+      with descriptors (p04/p05), `*_headers_to_add/_to_remove`
+      (p06/p07) and a Lua filter reusing the same
+      `jwt_hs256.lua` / `body_rewrite.lua` the nginx column uses
+      (`envoy.filters.http.jwt_authn` only supports asymmetric
+      RS/ES/PS — not the canonical HS256 secret).
     - [ ] `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

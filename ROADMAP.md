@@ -303,9 +303,26 @@
     `envoy.filters.http.jwt_authn` only supports asymmetric
     algorithms (RS/ES/PS), so the canonical HS256 secret goes
     through Lua (same helper the nginx column uses).
-  - [ ] p03/p04/p05 — planned via
-    `envoy.filters.http.local_ratelimit`, keyed by path for p03
-    and by `X-Real-IP` descriptor for p04/p05.
+  - [x] `gateways/envoy/p03-rl-static/` — parity **2/2 PASS**
+    on the pinned distroless image.
+    `envoy.filters.http.local_ratelimit` at HCM level,
+    `token_bucket: { max_tokens: 100, tokens_per_fill: 100,
+    fill_interval: 1s }` per worker × `--concurrency 2` ⇒ ≈200
+    rps effective. **Rate deviation** (canonical 1000 rps lowered
+    to ≈200 rps on Docker Desktop / Apple Silicon because envoy
+    saturates at 500–800 rps of HTTP/1.1 accept under the
+    128-parallel burst probe). Canonical rate restored in Phase 4
+    on a real Linux host. Config ingestion moved from bind-mount
+    to Docker `configs:` to work around VirtioFS cache staleness.
+    See
+    [`gateways/envoy/p03-rl-static/NOTES.md`](./gateways/envoy/p03-rl-static/NOTES.md)
+    and
+    [`docs/GATEWAYS.md § Deviations`](./docs/GATEWAYS.md#gwenvoy-pp03-rl-static).
+  - [ ] p04/p05 — planned via
+    `envoy.filters.http.local_ratelimit` with `descriptors` keyed
+    on `X-Real-IP`, token buckets `{5, 5} / {50, 50}` per worker
+    × `--concurrency 2` (same deviation workaround as p03 on
+    Docker Desktop).
   - [ ] p06/p07 — planned via native
     `request_headers_to_add` / `request_headers_to_remove` and
     `response_headers_to_add` / `response_headers_to_remove` on
@@ -585,11 +602,28 @@
      (compose + `_shared/lualib/` + p01-vanilla). `p01-vanilla`
      parity **4/4 PASS** on the first run, static bootstrap
      (listener + HCM + router + STRICT_DNS cluster) with every
-     uniform setting wired explicitly. Remaining 9 profiles
-     planned: `local_ratelimit` for p03/p04/p05, native header
-     transforms for p06/p07, Lua filter reusing the shared
-     `jwt_hs256.lua` / `body_rewrite.lua` for p02/p08/p09, and
-     composition in HCM filter order for p10.
+     uniform setting wired explicitly.
+   - **envoy / p03-rl-static**: parity **2/2 PASS** via
+     `envoy.filters.http.local_ratelimit` at HCM level with a
+     per-worker `token_bucket`. Two adjustments were landed in
+     the process: (a) `--concurrency 2` pinned on the compose
+     command (envoy's bucket is per-worker, so `N_CPU` workers
+     would multiply the rate unpredictably); (b) config ingestion
+     migrated from a bind-mount to Docker `configs:` because
+     Docker Desktop VirtioFS kept serving a pre-edit copy of
+     `envoy.yaml` for ~30 s after `compose up`, which broke
+     iteration. **Rate deviation** documented: canonical 1000 rps
+     lowered to ≈200 rps on Docker Desktop / Apple Silicon
+     because envoy saturates at 500–800 rps of HTTP/1.1 accept
+     under the 128-parallel burst probe (observed 2xx≈122,
+     429≈166, other≈912 — 166 × 429 above the 150 ± 50
+     threshold). Canonical rate restored in Phase 4 on a real
+     Linux host. Envoy column snapshot: **2 PASS / 0 FAIL /
+     6 probes** (p01 + p03). Remaining 8 profiles planned:
+     `local_ratelimit` with descriptors for p04/p05, native
+     header transforms for p06/p07, Lua filter reusing the
+     shared `jwt_hs256.lua` / `body_rewrite.lua` for p02/p08/p09,
+     and composition in HCM filter order for p10.
    - next pass: `kong` → `apisix` → `traefik` → `tyk`, one
      profile column at a time (envoy p02..p10 fills in interleaved).
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure

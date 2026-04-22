@@ -507,11 +507,17 @@ assert_all() {
         assert_json_missing "${path}" || fails+=("body at ${path}: unexpectedly present")
     done < <(jq -r '.expect.response_body_json_absent // [] | .[]' <<< "${probe_json}")
 
-    # backend_saw_header / backend_missed_header (via /anything echo)
+    # backend_saw_header / backend_missed_header (via the backend echo at .headers)
+    #
+    # go-httpbin returns each request header as a JSON array of strings,
+    # e.g. `"X-Bench-In": ["1"]`. assert_json_has_string accepts both
+    # a plain string and an array-of-strings shape, so fixtures stay
+    # gateway-agnostic (a gateway whose backend emits the header as a
+    # scalar string still passes the same probe).
     while IFS=$'\t' read -r hdr want; do
         [[ -z "${hdr}" ]] && continue
         local path=".headers.\"${hdr}\""
-        assert_json_match_string "${path}" "${want}" \
+        assert_json_has_string "${path}" "${want}" \
             || fails+=("backend did not see header ${hdr}=${want}")
     done < <(jq -r '(.expect.backend_saw_header // {}) | to_entries[] | "\(.key)\t\(.value)"' <<< "${probe_json}")
 
@@ -560,6 +566,22 @@ assert_json_match_string() {
     local got
     got=$(json_get "${path}")
     [[ "${got}" == "${want}" ]]
+}
+
+# Accepts either scalar string or array-of-strings at ${path}. This makes
+# fixture assertions work uniformly across backends (e.g. go-httpbin emits
+# `"X-Foo": ["1"]`, while a proxy echo endpoint might emit `"X-Foo": "1"`).
+assert_json_has_string() {
+    local path="$1" want="$2"
+    local jq_path="${path/#\$/}"
+    [[ "${jq_path}" = "" ]] && jq_path="."
+    jq -e --arg want "${want}" \
+        "(${jq_path}) as \$v |
+            if   \$v | type == \"string\" then \$v == \$want
+            elif \$v | type == \"array\"  then (\$v | map(tostring) | index(\$want) != null)
+            else false
+            end" \
+        "${tmpdir}/body" >/dev/null 2>&1
 }
 
 assert_json_missing() {

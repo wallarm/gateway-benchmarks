@@ -118,7 +118,11 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       `jwt_validation` policy in the public image)
     - [x] `wallarm / p03-rl-static` — 2/2 green, `ratelimit` policy with
       `rate=1000/1s`, sliding window
-    - [ ] `wallarm / p04…p10` (next iteration)
+    - [x] `wallarm / p06-req-headers` — 3/3 green, `lua_runner` on
+      `request_flow` (`+X-Bench-In`, `-X-Forwarded-For`)
+    - [x] `wallarm / p07-resp-headers` — 2/2 green, `lua_runner` on
+      `response_flow` (`+X-Bench-Out`, `-Server`)
+    - [ ] `wallarm / p04, p05, p08, p09, p10` (next iteration)
     - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

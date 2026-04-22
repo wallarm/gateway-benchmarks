@@ -149,7 +149,26 @@
   `window_type: fixed` reading of POLICIES.md (both semantics agree on
   "rolling 1 s window"; see
   [`gateways/wallarm/p03-rl-static/NOTES.md`](./gateways/wallarm/p03-rl-static/NOTES.md))
-- [ ] `gateways/wallarm/` configs for p04..p10 (next Phase 3b pass)
+- [x] `gateways/wallarm/p06-req-headers/` — real wallarm `0.2.0` image,
+  parity **3/3 PASS**. `lua_runner` bound on service-level
+  `request_flow` (`+X-Bench-In`, `-X-Forwarded-For`). Deviations:
+  the base-path strip forces a `target.endpoint.url=…/anything/headers`
+  backend trick (otherwise a trailing-slash 404); qemu-amd64-on-arm
+  segfaults on `lua_runner` activation, so Apple Silicon users must
+  let the multi-arch manifest resolve to native arm64. See
+  [`gateways/wallarm/p06-req-headers/NOTES.md`](./gateways/wallarm/p06-req-headers/NOTES.md).
+- [x] `gateways/wallarm/p07-resp-headers/` — real wallarm `0.2.0`
+  image, parity **2/2 PASS**. `lua_runner` bound on `response_flow`
+  (`+X-Bench-Out`, `-Server`). Same base-path trick as p06; the
+  `Server`-drop side is structural on this backend (go-httpbin's
+  `/anything/*` doesn't emit `Server:`) — every other gateway in the
+  bench will exercise the drop for real. See
+  [`gateways/wallarm/p07-resp-headers/NOTES.md`](./gateways/wallarm/p07-resp-headers/NOTES.md).
+- [x] `scripts/parity-attestation.sh::assert_json_has_string` — header-
+  echo helper that accepts both scalar strings and arrays (go-httpbin
+  always emits arrays), so fixtures stay gateway-agnostic.
+- [ ] `gateways/wallarm/` configs for p04, p05, p08, p09, p10 (next
+  Phase 3b pass)
 - [ ] `gateways/nginx/` configs for p01..p10
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
@@ -317,9 +336,15 @@
      **done**. `FEATURE-MISSING` short-circuit landed in
      `scripts/parity-gateway.sh`; burst runner switched to
      `curl --parallel -K` to actually hit 1200 rps inside 1 s.
+   - `wallarm/p06-req-headers` **3/3 PASS** and
+     `wallarm/p07-resp-headers` **2/2 PASS** — both through
+     `lua_runner` (service-level request/response flows). Base-path
+     strip trick landed (target URLs route through go-httpbin's
+     `/anything/<slug>` catch-all); qemu-amd64-on-arm segfault
+     gotcha documented. The `assert_json_has_string` helper was added
+     to `scripts/parity-attestation.sh` so header-echo assertions
+     work against both array and scalar shapes.
    - next passes (in this order):
-     - `wallarm/p06-req-headers` + `p07-resp-headers` → shake out the
-       header-transform plumbing.
      - `wallarm/p08-req-body` + `p09-resp-body` → exercise the Lua
        body-rewrite primitive.
      - `wallarm/p04-rl-dynamic-low` + `p05-rl-dynamic-high` →

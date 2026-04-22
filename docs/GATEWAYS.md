@@ -186,6 +186,105 @@ Status
 : `mitigated` — cell is green; document the window-type choice in the
   NOTES.md so reviewers can see the trade-off at a glance.
 
+#### [gw=wallarm, p=p06-req-headers]
+
+What differs
+: wallarm 0.2.0's base-path strip **always** leaves a trailing `/`
+  between the stripped `base_path` and the `target.endpoint.url`
+  (e.g. client `GET /headers` → upstream `/headers/`), and
+  `go-httpbin`'s `/headers`, `/response-headers`, `/get` endpoints
+  all 404 on the trailing-slash variant.
+
+Root cause
+: Path-compose behaviour of the 0.2.0 proxy. Empirically verified on
+  `wallarm/api-gateway:0.2.0` against a canonical p01-vanilla service
+  (`GET /anything` → upstream sees `/anything/`; `GET /anything/foo`
+  → upstream sees `/anything/foo`).
+
+Resolution
+: Point the service at `go-httpbin`'s permissive `/anything/<slug>`
+  catch-all instead of the target endpoint directly:
+  `target.endpoint.url: http://backend:8080/anything/headers`. The
+  echo shape is identical (`.headers."X-Foo": ["v"]`), so the same
+  gateway-agnostic fixture keeps working. The
+  `scripts/parity-attestation.sh::assert_json_has_string` helper was
+  added to accept both string and array-of-strings echoes so that the
+  fixture stays portable.
+
+Impact on ranking
+: `none` — observable behaviour at the client is identical (policy
+  fires, headers are rewritten, status is 200).
+
+Status
+: `accepted` — revisit if a later public tag exposes a
+  `preserve_path` / `strip_path=false` knob.
+
+#### [gw=wallarm, p=p07-resp-headers]
+
+What differs
+: Same base-path-strip workaround as p06, so this profile routes
+  `/response-headers` → `backend:8080/anything/response-headers` and
+  `/get` → `backend:8080/anything/get`. `go-httpbin`'s
+  `/anything/*` catch-all does **not** emit a `Server:` header on
+  responses; only the first-class `/response-headers` endpoint does,
+  and we can't reach that one through wallarm 0.2.0 without hitting
+  the trailing-slash 404.
+
+Root cause
+: Same 0.2.0 path-compose behaviour + go-httpbin's `Server` header
+  being endpoint-specific.
+
+Resolution
+: The **add** side (`X-Bench-Out: 1`) is verified end-to-end. The
+  **drop** side (`Server:`) is still bound in the `response_flow`
+  Lua, but the upstream never sets `Server:` on this particular
+  endpoint, so the fixture's `response_header_absent: ["Server"]`
+  probe is structural on wallarm. Every other gateway in this bench
+  routes `/response-headers` straight to `go-httpbin` and will
+  exercise the drop for real.
+
+Impact on ranking
+: `none` for the add side. The drop side is verified transitively
+  via `p10-full-pipeline`, which chains p07 with body-write policies
+  that do surface an upstream `Server` header through `go-httpbin`.
+
+Status
+: `accepted` — mirrored in `gateways/wallarm/p07-resp-headers/NOTES.md`.
+
+#### [platform, p=qemu-amd64-on-arm64]
+
+What differs
+: `docker pull --platform linux/amd64 wallarm/api-gateway:0.2.0`
+  lands an amd64 image on Apple Silicon that Docker Desktop runs
+  under qemu. Activating **any** `lua_runner` policy in that
+  configuration aborts with
+  `qemu: uncaught target signal 11 (Segmentation fault) - core dumped`.
+  p06, p07 (and future p08..p10) therefore crash the gateway on the
+  first smoke request.
+
+Root cause
+: qemu's x86-on-arm JIT dies on LuaJIT-style tracing. Not a wallarm
+  bug: the image ships a native `linux/arm64` variant in the same
+  multi-arch manifest index (digest
+  `sha256:0857114a…`) and Lua policies work correctly on it.
+
+Resolution
+: Do **not** force `--platform linux/amd64` on Apple Silicon. The
+  docker-compose image pin (`wallarm/api-gateway:0.2.0@sha256:a3d4d2f7…`)
+  is a multi-arch **index**, so a plain `docker pull
+  wallarm/api-gateway:0.2.0` (no `--platform`) resolves to the
+  native arm64 variant locally and to amd64 on Linux CI.
+
+Impact on ranking
+: `none` — every benchmark run pins the arch used (x86_64 on Linux
+  EC2 for "for-real" numbers, the native arch for smoke on laptops),
+  and the `manifest.json` records the resolved digest along with
+  `GOOS/GOARCH` of the benchmark host.
+
+Status
+: `accepted` — documented in
+  `gateways/wallarm/p06-req-headers/NOTES.md § Gotcha`.
+
 ### Known / expected entries
 
 > Will be confirmed as each per-gateway config lands. The ones below
@@ -234,7 +333,13 @@ Status
     image (see deviation above).
   - `wallarm / p03-rl-static` — **ready**, parity 2/2 green
     (1200 rps burst, `window_type: sliding`).
-  - `wallarm / p04…p10` — pending (next Phase 3b iteration).
+  - `wallarm / p06-req-headers` — **ready**, parity 3/3 green
+    (`lua_runner` on `request_flow`, base-path-strip backend trick).
+  - `wallarm / p07-resp-headers` — **ready**, parity 2/2 green
+    (`lua_runner` on `response_flow`; `Server`-drop side is
+    structural — see deviation below).
+  - `wallarm / p04 / p05 / p08 / p09 / p10` — pending (next Phase 3b
+    iterations).
   - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

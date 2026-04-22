@@ -44,8 +44,14 @@ gateways/wallarm/
 │   └── NOTES.md               (deviation: sliding window, not fixed)
 ├── p04-rl-dynamic-low/        (to be added)
 ├── p05-rl-dynamic-high/       (to be added)
-├── p06-req-headers/           (to be added)
-├── p07-resp-headers/          (to be added)
+├── p06-req-headers/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: lua_runner on request_flow)
+│   └── NOTES.md               (base-path strip workaround; qemu gotcha)
+├── p07-resp-headers/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: lua_runner on response_flow)
+│   └── NOTES.md               (`Server`-drop is tautological on go-httpbin)
 ├── p08-req-body/              (to be added)
 ├── p09-resp-body/             (to be added)
 └── p10-full-pipeline/         (to be added)
@@ -60,10 +66,10 @@ gateways/wallarm/
 | `p03-rl-static`         | `ratelimit` policy, key = service, 1000 rps        | PASS (2/2)        |
 | `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | planned           |
 | `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | planned           |
-| `p06-req-headers`       | `header_transform` on request                      | planned           |
-| `p07-resp-headers`      | `header_transform` on response                     | planned           |
-| `p08-req-body`          | `body_transform` (JSON) on request                 | planned           |
-| `p09-resp-body`         | `body_transform` (JSON) on response                | planned           |
+| `p06-req-headers`       | `lua_runner` on request_flow                       | PASS (3/3)        |
+| `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
+| `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | planned           |
+| `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | planned           |
 | `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | planned           |
 
 `PASS` / `FEATURE-MISSING` entries reflect the latest run of

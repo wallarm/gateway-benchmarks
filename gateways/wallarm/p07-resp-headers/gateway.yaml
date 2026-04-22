@@ -1,0 +1,25 @@
+# gateways/wallarm/p07-resp-headers/gateway.yaml
+#
+# Profile p07-resp-headers: response-header rewrite
+# (`add X-Bench-Out: 1`, `remove Server`).
+# Static config is identical to p01-vanilla — every profile-specific
+# piece lives in setup.sh (Admin API bootstrap) and NOTES.md.
+
+net:
+  http_port: 9080
+
+admin:
+  listen_address: "0.0.0.0"
+  listen_port: 9081
+
+persistence:
+  enabled: false
+
+upstream:
+  pool:
+    size: 1024
+    idle_timeout_ms: 60000
+  tcp:
+    keepalive_secs: 90
+    nodelay: true
+    reuse_address: true

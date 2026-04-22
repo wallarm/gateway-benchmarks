@@ -13,7 +13,12 @@
 #   setup.sh       - Admin API bootstrap (services, policies, routes)
 #   NOTES.md       - profile-specific notes / deviations
 #
-# Image is pinned by digest for reproducibility; refresh with:
+# Image is pinned by digest for reproducibility, but can be overridden
+# for local validation of unreleased Wallarm builds:
+#   WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
+#     make parity-gateway-all PARITY_GATEWAY=wallarm
+#
+# Refresh the public pin with:
 #   docker pull wallarm/api-gateway:0.2.0 && docker image inspect \
 #     wallarm/api-gateway:0.2.0 --format '{{index .RepoDigests 0}}'
 
@@ -33,7 +38,7 @@ services:
         aliases: [backend]
 
   gateway:
-    image: wallarm/api-gateway:0.2.0@sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825
+    image: ${WALLARM_IMAGE:-wallarm/api-gateway:0.2.0@sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825}
     container_name: gwb-wallarm
     restart: "no"
     depends_on:

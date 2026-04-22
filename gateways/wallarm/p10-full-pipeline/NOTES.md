@@ -1,7 +1,10 @@
 # `wallarm / p10-full-pipeline` — deviation notes
 
-**Current verdict on `wallarm/api-gateway:0.2.0`**: `FEATURE-MISSING`
-(cascade from `p02-jwt`).
+**Pinned public verdict on `wallarm/api-gateway:0.2.0`**:
+`FEATURE-MISSING` (cascade from `p02-jwt`).
+
+**Local override verdict on `wallarm/api-gateway:main-5f1ab30`**:
+`PASS (4/4)`.
 
 ## Why
 
@@ -28,7 +31,12 @@ Wallarm happily forwards the requests and returns `200`, which is a
 functional failure of the profile.
 
 Since `p02-jwt` is itself [`FEATURE-MISSING` on this
-image](../p02-jwt/NOTES.md), `p10` inherits the marker.
+image](../p02-jwt/NOTES.md), `p10` inherits the marker on the pinned
+public image.
+
+`setup.sh` now does the same runtime `/policies` detection as `p02`:
+on public `0.2.0` it returns `FEATURE-MISSING`, while a local main-branch
+override can bind the full flow and run parity for real.
 
 ## What *is* already working (as standalone PASSes)
 
@@ -50,13 +58,34 @@ haven't already exercised — both `request_flow` and `response_flow` are
 plain arrays in Wallarm's Admin API, so stacking policies is a pure
 configuration join.
 
-## Forward-compatible `setup.sh` sketch
+## Local main override
 
-The moment a public Wallarm release exposes the `jwt_validation`
-policy (source evidence:
-[`wallarm-api-gateway/tests/integration/jwt_validation_test.sh`](../../../../wallarm-api-gateway/tests/integration/jwt_validation_test.sh)),
-the script below should make this cell flip to `PASS` without any
-changes to the fixture, the parity runner, or any other cell:
+With:
+
+```bash
+WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
+    make parity-gateway PARITY_GATEWAY=wallarm PARITY_PROFILE=p10-full-pipeline
+```
+
+the full pipeline is green:
+
+- valid JWT happy-path -> `200` + all five transforms
+- missing JWT -> `401`
+- expired JWT -> `401`
+- burst with valid JWT -> `2xx=998, 429=202, 5xx=0`
+
+Two implementation details matter for that green burst:
+
+1. The benchmark harness must forward `.burst.headers`, otherwise the
+   p10 rate-limit probe silently fires without `Authorization` and all
+   1200 requests land in `401 other`.
+2. The p10-local `req-body` Lua path is a no-op on empty request bodies.
+   That keeps the happy-path POST exercising body rewrite while letting
+   the burst probe's bodyless `GET /anything` reach the JWT+RL stages
+   without a synthetic-body 500.
+
+The live binding installed by `setup.sh` is still the same canonical
+composition the old forward-compatible sketch described:
 
 ```bash
 #!/usr/bin/env bash
@@ -175,10 +204,10 @@ policy), so no further setup is needed on the client side.
 
 ## Expected follow-up
 
-1. Track `jwt_validation` visibility in future public Wallarm releases.
-2. When it lands: drop this `FEATURE-MISSING` file, paste the sketch
-   above into `setup.sh`, run `make parity-gateway GATEWAY=wallarm
-   PROFILE=p10-full-pipeline`, and the 4 fixture probes should go
-   green without any fixture or harness change.
+Track `jwt_validation` visibility in future public Wallarm releases.
+The benchmark repo no longer needs a separate `FEATURE-MISSING` marker
+file for `p10`: the runtime `setup.sh` already handles both cases
+honestly. The public `0.2.0` image still resolves to `FEATURE-MISSING`;
+the local override is now fully green.
 
 Tracking: [`docs/GATEWAYS.md § deviations`](../../../docs/GATEWAYS.md#deviations).

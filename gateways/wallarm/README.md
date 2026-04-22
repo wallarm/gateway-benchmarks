@@ -25,6 +25,17 @@ docker image inspect wallarm/api-gateway:0.2.0 \
     --format '{{index .RepoDigests 0}}'
 ```
 
+For unreleased local validation, override the image at runtime:
+
+```bash
+WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
+    make parity-gateway-all PARITY_GATEWAY=wallarm
+```
+
+The pinned public image still reports `8 PASS / 2 FEATURE-MISSING`
+(`p02`, `p10`), while the local override above is validated at
+`10 PASS / 0 FAIL / 0 other`.
+
 ## Layout
 
 ```
@@ -36,8 +47,9 @@ gateways/wallarm/
 │   ├── setup.sh               (Admin API bootstrap)
 │   └── NOTES.md               (parity compliance, deviations)
 ├── p02-jwt/
-│   ├── FEATURE-MISSING        (no jwt_validation policy in 0.2.0)
-│   └── NOTES.md               (explainer + future-ready config)
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (runtime-detect jwt_validation; PASS on local main)
+│   └── NOTES.md               (public 0.2.0 vs local main override)
 ├── p03-rl-static/
 │   ├── gateway.yaml           (listener + pool; copied from p01)
 │   ├── setup.sh               (Admin API: ratelimit policy on flow)
@@ -67,8 +79,9 @@ gateways/wallarm/
 │   ├── setup.sh               (Admin API: lua_runner + cjson on response_flow)
 │   └── NOTES.md               (JSON rewrite + Content-Length recompute)
 └── p10-full-pipeline/
-    ├── FEATURE-MISSING        (cascade from p02-jwt)
-    └── NOTES.md               (forward-compatible setup sketch)
+    ├── gateway.yaml           (same listener + pool as p01)
+    ├── setup.sh               (runtime-detect jwt_validation; compose full flow)
+    └── NOTES.md               (public 0.2.0 vs local main override)
 ```
 
 ## Feature matrix
@@ -76,7 +89,7 @@ gateways/wallarm/
 | Profile                 | Primitive                                          | Parity            |
 |-------------------------|----------------------------------------------------|-------------------|
 | `p01-vanilla`           | Catch-all service `/ → backend`                    | PASS (4/4)        |
-| `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret)  | FEATURE-MISSING   |
+| `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret)  | PASS on `main-5f1ab30`; FEATURE-MISSING on public `0.2.0` |
 | `p03-rl-static`         | `ratelimit` policy, key = service, 1000 rps        | PASS (2/2)        |
 | `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | PASS (2/2)        |
 | `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | PASS (3/3)        |
@@ -84,19 +97,19 @@ gateways/wallarm/
 | `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
 | `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | PASS (3/3)        |
 | `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | PASS (3/3)        |
-| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | FEATURE-MISSING†  |
+| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | PASS on `main-5f1ab30`; FEATURE-MISSING on public `0.2.0`† |
 
-† Cascade from `p02-jwt`: all other five building blocks (`p03`, `p06`,
-`p07`, `p08`, `p09`) already pass independently on this image. A
-forward-compatible `setup.sh` sketch is included in
-[`p10-full-pipeline/NOTES.md`](./p10-full-pipeline/NOTES.md) — the
-moment `jwt_validation` is exposed by a public Wallarm release, drop
-the marker and this cell flips to `PASS` without touching fixtures or
-the harness.
+† The `setup.sh` for `p02` / `p10` now performs runtime detection against
+`GET /policies`: on the pinned public `0.2.0` image it emits
+`FEATURE-MISSING`, while the local `main-5f1ab30` override binds the
+native JWT policy and the full pipeline passes end to end.
 
-`PASS` / `FEATURE-MISSING` entries reflect the latest run of
-`make parity-gateway-all PARITY_GATEWAY=wallarm`. See each profile's
-`NOTES.md` and [`docs/GATEWAYS.md § Deviations`](../../docs/GATEWAYS.md#deviations)
+These statuses reflect two tracked runs:
+- pinned public image `wallarm/api-gateway:0.2.0` → `8 PASS / 2 FEATURE-MISSING`
+- local override `wallarm/api-gateway:main-5f1ab30` → `10 PASS / 0 FAIL / 0 other`
+
+See each profile's `NOTES.md` and
+[`docs/GATEWAYS.md § Deviations`](../../docs/GATEWAYS.md#deviations)
 for the per-cell rationale.
 
 The full list of canonical values (rate limit, JWT secret, header
@@ -134,6 +147,11 @@ and into `docs/GATEWAYS.md § Deviations`.
 make parity-gateway \
     PARITY_GATEWAY=wallarm \
     PARITY_PROFILE=p01-vanilla
+
+# Same sweep against a locally built unreleased Wallarm image:
+WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
+make parity-gateway-all \
+    PARITY_GATEWAY=wallarm
 
 # All 10 profiles against an already-running wallarm:
 make parity-check-all \

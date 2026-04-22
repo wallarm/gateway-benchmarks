@@ -76,6 +76,8 @@ if [[ -z "${OUTPUT}" ]]; then
 fi
 LOGS_DIR="$(dirname "${OUTPUT}")/logs/${GATEWAY}-${PROFILE}"
 mkdir -p "$(dirname "${OUTPUT}")" "${LOGS_DIR}"
+RUNTIME_FEATURE_MISSING_REASON_FILE="${LOGS_DIR}/feature-missing.txt"
+SETUP_FEATURE_MISSING_RC=42
 
 GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:9080}"
 
@@ -190,7 +192,33 @@ done
 # 3. Run the profile-specific setup
 # -----------------------------------------------------------------------------
 say "=> running setup ${setup_script}"
-bash "${setup_script}"
+rm -f "${RUNTIME_FEATURE_MISSING_REASON_FILE}"
+setup_rc=0
+FEATURE_MISSING_REASON_FILE="${RUNTIME_FEATURE_MISSING_REASON_FILE}" \
+    bash "${setup_script}" || setup_rc=$?
+
+case "${setup_rc}" in
+    0) ;;
+    "${SETUP_FEATURE_MISSING_RC}")
+        reason="$(sed -n '1p' "${RUNTIME_FEATURE_MISSING_REASON_FILE}" 2>/dev/null || true)"
+        say "=> ${GATEWAY} / ${PROFILE}: setup reported FEATURE-MISSING"
+        [[ -n "${reason}" ]] && warn "   reason: ${reason}"
+        parity_args=(
+            --gateway "${GATEWAY}"
+            --profile "${PROFILE}"
+            --target  "${GATEWAY_TARGET}"
+            --output  "${OUTPUT}"
+            --feature-missing
+        )
+        (( VERBOSE == 1 )) && parity_args+=(--verbose)
+        bash scripts/parity-attestation.sh "${parity_args[@]}" >/dev/null
+        warn "verdict: FEATURE-MISSING  ${OUTPUT}"
+        exit 0
+        ;;
+    *)
+        exit "${setup_rc}"
+        ;;
+esac
 
 # -----------------------------------------------------------------------------
 # 4. Run parity attestation

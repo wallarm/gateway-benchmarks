@@ -333,6 +333,12 @@ run_burst_probe() {
 
     local url="${TARGET}${path}"
 
+    local -a static_headers=()
+    while IFS= read -r line; do
+        [[ -z "${line}" ]] && continue
+        static_headers+=("$(substitute_placeholders "${line}")")
+    done < <(jq -r '(.burst.headers // {}) | to_entries[] | "\(.key): \(.value)"' <<< "${probe_json}")
+
     # Key rotation
     local -a keys=()
     if [[ -n "${key_pool}" ]]; then
@@ -359,6 +365,10 @@ run_burst_probe() {
         fi
         {
             printf -- 'request = "%s"\n' "${method}"
+            local hdr
+            for hdr in "${static_headers[@]+"${static_headers[@]}"}"; do
+                printf -- 'header = "%s"\n' "${hdr}"
+            done
             [[ -n "${header_line}" ]] && printf -- 'header = "%s"\n' "${header_line}"
             printf -- 'silent\n'
             printf -- 'output = "/dev/null"\n'

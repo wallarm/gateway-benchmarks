@@ -56,6 +56,13 @@ services:
     command: ["nginx", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
     volumes:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Shared Lua library mounted at a path that only OpenResty reads.
+      # Mainline nginx does not load it (no `lua_package_path`, no
+      # lua_module compiled in) so the mount is effectively a no-op
+      # for mainline profiles (p01/p03/p04/p05/p06). OpenResty
+      # profiles (p02/p07/p08/p09/p10) pick it up via
+      # `lua_package_path` in their nginx.conf.
+      - ./_shared/lualib:/usr/local/openresty/lualib/bench:ro
     ports:
       - "9080:9080"  # data plane (parity-gateway target)
     # nginx handles SIGTERM gracefully; the stop-grace-period is kept

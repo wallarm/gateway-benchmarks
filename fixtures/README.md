@@ -49,11 +49,13 @@ dispatching each probe.
 
 ## Profiles that aren't simple probe-by-probe
 
-`p03 rl-static`, `p04 rl-dynamic-low` and `p05 rl-dynamic-high` require
-a **burst** (N requests over T seconds from K distinct keys). Their
-fixtures therefore declare one probe with `kind: "burst"` and the
-desired parameters; the script turns that into a real parallel burst
-via `hey` / `xargs`, then asserts the aggregate outcome.
+`p03 rl-static`, `p04 rl-dynamic-low`, `p05 rl-dynamic-high`, and the
+burst probe inside `p10 full-pipeline` require a **burst** (N requests
+over T seconds from K distinct keys). Their fixtures therefore declare
+one probe with `kind: "burst"` and the desired parameters; the script
+turns that into a real parallel burst via `curl --parallel -K`, applies
+`burst.headers` (for example `Authorization: Bearer ${JWT_VALID}`), and
+then asserts the aggregate outcome.
 
 ## Files
 

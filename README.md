@@ -114,8 +114,9 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       (now using `curl --parallel -K` for sustained 1200 rps bursts)
     - [x] `FEATURE-MISSING` short-circuit in `scripts/parity-gateway.sh`
     - [x] `wallarm / p01-vanilla` — 4/4 green against `wallarm/api-gateway:0.2.0`
-    - [x] `wallarm / p02-jwt` — **FEATURE-MISSING** on 0.2.0 (no native
-      `jwt_validation` policy in the public image)
+    - [x] `wallarm / p02-jwt` — **FEATURE-MISSING** on the pinned public
+      `0.2.0`, but **6/6 PASS** with
+      `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30`
     - [x] `wallarm / p03-rl-static` — 2/2 green, `ratelimit` policy with
       `rate=1000/1s`, sliding window
     - [x] `wallarm / p06-req-headers` — 3/3 green, `lua_runner` on
@@ -132,11 +133,20 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       keyed on `X-Real-IP`, rate=10/s, sliding window
     - [x] `wallarm / p05-rl-dynamic-high` — 3/3 green, same policy
       shape as p04 with rate=100/s
-    - [x] `wallarm / p10-full-pipeline` — **FEATURE-MISSING** (cascade
-      from `p02-jwt`; forward-compatible `setup.sh` sketch committed
-      in `p10-full-pipeline/NOTES.md`)
-    - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING
-      (p02, p10), 0 FAIL** across all 10 canonical profiles
+    - [x] `wallarm / p10-full-pipeline` — **FEATURE-MISSING** on the
+      pinned public `0.2.0` (cascade from `p02-jwt`), but **4/4 PASS**
+      with `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30`
+    - Wallarm roster on pinned public `0.2.0`: **8 PASS,
+      2 FEATURE-MISSING (p02, p10), 0 FAIL**. Under local
+      unreleased override
+      (`WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 make
+      parity-gateway-all PARITY_GATEWAY=wallarm`): **10 PASS,
+      0 FAIL, 32/32 probes** — the dual-mode `setup.sh` in p02/p10
+      runtime-detects `jwt_validation` in `/policies` and binds
+      the native policy chain when available.
+    - Local Wallarm override roster on `main-5f1ab30`:
+      **10 PASS, 0 FAIL, 0 other** via
+      `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30`
     - [x] `nginx / p01-vanilla` — 4/4 green on `nginx:1.27.3-alpine`
       (catch-all `proxy_pass`, uniform settings fully expressed in
       `nginx.conf`, zero deviations)
@@ -165,10 +175,41 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       `gateways/nginx/p07-resp-headers/.env`; `parity-gateway.sh`
       now passes it via `docker compose --env-file` (generic
       per-profile override contract — also carries OpenResty pins
-      for upcoming p02/p08/p09/p10 cells).
-    - **nginx column snapshot**: 6 PASS, 0 FAIL, 4 pending
-      (p02/p08/p09/p10)
-    - [ ] `nginx / p02`, `p08..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+      for p02/p08/p09/p10 cells below).
+    - [x] `nginx / p02-jwt` — 6/6 green on OpenResty. ~60-line
+      pure-Lua HS256 verifier at
+      `gateways/nginx/_shared/lualib/jwt_hs256.lua`, uses bundled
+      `resty.sha256` + `cjson.safe` + `bit.bxor` via classic
+      RFC 2104 HMAC construction (no `lua-resty-jwt` dependency —
+      keeps digest-pin reproducibility intact). **First gateway
+      where p02 flips from FEATURE-MISSING (wallarm 0.2.0) to
+      PASS.**
+    - [x] `nginx / p08-req-body` — 3/3 green on OpenResty.
+      `access_by_lua_block` + `ngx.req.set_body_data`
+      (auto-patches Content-Length); shared cjson helper at
+      `gateways/nginx/_shared/lualib/body_rewrite.lua` injects
+      `$.bench.injected`, drops `$.secret`.
+    - [x] `nginx / p09-resp-body` — 3/3 green on OpenResty.
+      Canonical two-phase Lua pattern:
+      `header_filter_by_lua_block` clears Content-Length,
+      `body_filter_by_lua_block` buffers chunks and rewrites on
+      EOF. Non-JSON responses pass through untouched.
+    - [x] `nginx / p10-full-pipeline` — 4/4 green on OpenResty.
+      Composes p02+p03+p06+p07+p08+p09 in one request flow. nginx
+      phase ordering (`PREACCESS → ACCESS → CONTENT →
+      header/body_filter`) encodes the semantics for free; burst
+      probe at 1200 rps of valid-JWT GETs observes
+      `2xx=0, 429=945, 5xx=0` (rate-limit fires before Lua auth,
+      as the fixture expects). **First gateway in the bench with
+      a complete green p10** — wallarm's cell is still
+      FEATURE-MISSING because `jwt_validation` is absent from the
+      0.2.0 public image.
+    - **nginx column snapshot**: **10 PASS, 0 FAIL, 32/32 probes**
+      across all 10 canonical profiles (`nginx:1.27.3-alpine` for
+      mainline, `openresty:1.27.1.2-alpine` for Lua profiles).
+      **nginx is the first gateway to close every cell.** Warm
+      sweep wall-clock: ~15 s.
+    - [ ] `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

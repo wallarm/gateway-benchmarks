@@ -23,6 +23,12 @@ back into this table whenever a pin is bumped.
 The final list may evolve. Proposed additions (HAProxy, others) are
 tracked as GitHub issues on the repository.
 
+For unreleased local validation, compose stacks may accept an image
+override (for Wallarm:
+`WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30`). Those runs are
+documented in the profile-level `NOTES.md`, while the canonical pin in
+the table above remains the released public image.
+
 ## Uniform settings
 
 Per [TASK.md §10](../TASK.md), certain settings must be identical on
@@ -136,15 +142,16 @@ What differs
 Root cause
 : Policy gap in the public 0.2.0 image. Tracked as
   [`gateways/wallarm/p02-jwt/NOTES.md`](../gateways/wallarm/p02-jwt/NOTES.md)
-  and marked with a `FEATURE-MISSING` file that
-  `scripts/parity-gateway.sh` short-circuits on.
+  and detected at runtime by `gateways/wallarm/p02-jwt/setup.sh`.
 
 Resolution
 : Cell is explicitly tagged `FEATURE-MISSING` in the parity report so
   it is visible in the matrix but does not block the sweep. Revisit
   once a public tag ships with `jwt_validation`; the
   `NOTES.md` already contains the exact Admin API payloads we'll use
-  once that lands.
+  once that lands. A local override run against
+  `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30` is already green
+  (`6/6 PASS`).
 
 Impact on ranking
 : `excluded from ranking` for this cell only. Other wallarm cells are
@@ -243,7 +250,9 @@ Resolution
   window") is *stricter* under an ASAP burst than under a paced
   trickle. A gateway that cannot limit under ASAP bursts would
   fail the parity check, even though it might pass under paced
-  load.
+  load. The same runner now also forwards static `.burst.headers`
+  (for example `Authorization: Bearer ${JWT_VALID}` in `p10`) while
+  keeping the same ASAP scheduling model.
 
 Impact on ranking
 : `none` — parity certifies correctness, not RPS. Phase 4 k6 load
@@ -395,15 +404,14 @@ Root cause
   pinned public image does not ship `jwt_validation`.
 
 Resolution
-: The profile is marked `FEATURE-MISSING` via
-  `gateways/wallarm/p10-full-pipeline/FEATURE-MISSING`, with reason
-  `"cascade from p02-jwt"`. The other five building blocks
-  (`p03`, `p06`, `p07`, `p08`, `p09`) pass independently on this
-  same image, proving the orchestration path works end-to-end.
-  A forward-compatible `setup.sh` sketch is committed in
-  [`gateways/wallarm/p10-full-pipeline/NOTES.md`](../gateways/wallarm/p10-full-pipeline/NOTES.md);
-  once `jwt_validation` appears in a public Wallarm release the
-  cell flips to `PASS` without touching fixtures or harness.
+: On the pinned public `0.2.0` image the profile is still
+  `FEATURE-MISSING`, but now via runtime detection inside
+  `gateways/wallarm/p10-full-pipeline/setup.sh` rather than a static
+  marker file. The other five building blocks (`p03`, `p06`, `p07`,
+  `p08`, `p09`) pass independently on that image, proving the
+  orchestration path works end-to-end. A local override run against
+  `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30` is already green
+  (`4/4 PASS`) with the same canonical flow ordering.
 
 Impact on ranking
 : `excluded from ranking` for this cell. No spillover: every other
@@ -518,7 +526,8 @@ Status
 - Per-gateway configs:
   - `wallarm / p01-vanilla` — **ready**, parity 4/4 green.
   - `wallarm / p02-jwt` — **FEATURE-MISSING** on the pinned 0.2.0
-    image (see deviation above).
+  image (see deviation above), but **ready** on local override
+  `main-5f1ab30` (`6/6 PASS`).
   - `wallarm / p03-rl-static` — **ready**, parity 2/2 green
     (1200 rps burst, `window_type: sliding`).
   - `wallarm / p04-rl-dynamic-low` — **ready**, parity 2/2 green
@@ -539,10 +548,18 @@ Status
     (`lua_runner` + `cjson.safe` on `response_flow`,
     Content-Length recomputed).
   - `wallarm / p10-full-pipeline` — **FEATURE-MISSING** (cascade from
-    `p02-jwt`; forward-compatible `setup.sh` sketch in
-    `gateways/wallarm/p10-full-pipeline/NOTES.md`).
-  - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING (p02, p10),
-    0 FAIL** across all 10 canonical profiles.
+  `p02-jwt`) on pinned `0.2.0`, but **ready** on local override
+  `main-5f1ab30` (`4/4 PASS`).
+  - Wallarm roster on pinned public `0.2.0`: **8 PASS,
+    2 FEATURE-MISSING (p02, p10), 0 FAIL**. On local unreleased
+    override `wallarm/api-gateway:main-5f1ab30` (source-built
+    image with the `jwt_validation` policy now present in the
+    registry): **10 PASS, 0 FAIL, 32/32 probes**. The dual-mode
+    `setup.sh` in `gateways/wallarm/p02-jwt/` + `p10-full-pipeline/`
+    keys off `GET /policies` at runtime, so the same fixture set
+    exercises both image flavours without any harness flags.
+- Local Wallarm override roster on `main-5f1ab30`: **10 PASS, 0 FAIL,
+  0 other**.
   - `nginx / p01-vanilla` — **ready**, parity 4/4 green on
     `nginx:1.27.3-alpine` (catch-all `proxy_pass` with uniform
     settings; zero deviations).
@@ -575,11 +592,64 @@ Status
     response header. `ngx_headers_more`'s `more_clear_headers
     "Server";` does, and OpenResty bundles that module. The
     override is declared in `gateways/nginx/p07-resp-headers/.env`,
-    which `scripts/parity-gateway.sh` sources automatically
-    (generic per-profile-env mechanism; also covers future
-    `p02/p08/p09/p10` once they land on OpenResty for
-    `ngx_http_lua_module`).
-  - `nginx / p02`, `p08..p10` — pending.
+    which `scripts/parity-gateway.sh` passes to `docker compose`
+    via `--env-file` so the image pin is strictly scoped to that
+    profile's invocation (generic per-profile-env mechanism now
+    reused by every Lua cell).
+  - `nginx / p02-jwt` — **ready**, parity 6/6 green on OpenResty.
+    The bench-specific HS256 verifier lives at
+    `gateways/nginx/_shared/lualib/jwt_hs256.lua` — ~60 lines of
+    pure Lua, using only primitives bundled with stock OpenResty
+    (`resty.sha256`, `cjson.safe`, `bit.bxor`, `ngx.encode_base64`).
+    HMAC-SHA-256 is built by hand via the classic RFC 2104
+    construction (`K' = sha256(K) if |K|>64 else K; ipad/opad ⊕;
+    sha256(opad||sha256(ipad||m))`), plus a constant-time byte
+    compare and an `exp >= now` window check. Deliberately no
+    dependency on `lua-resty-jwt` — pulling in a custom Dockerfile
+    or `opm install` step would defeat the digest-pin reproducibility
+    story. First nginx cell to turn a wallarm `FEATURE-MISSING`
+    into a PASS.
+  - `nginx / p08-req-body` — **ready**, parity 3/3 green on
+    OpenResty. `access_by_lua_block` reads the full client body
+    (`ngx.req.read_body` + `ngx.req.get_body_data`), runs it
+    through `body_rewrite.rewrite_request` (shared cjson helper —
+    injects `$.bench.injected`, drops `$.secret`), and hands the
+    rewritten JSON back via `ngx.req.set_body_data`. That single
+    call **auto-patches Content-Length** on the upstream-bound
+    request, which is why the fixture's "Content-Length is
+    correct after rewrite" probe passes without any header
+    ceremony. Empty / non-JSON bodies are coerced to `{}` so the
+    inject invariant always holds. Same transform semantics as
+    `wallarm / p08-req-body` — both lean on cjson.safe inside a
+    Lua sandbox.
+  - `nginx / p09-resp-body` — **ready**, parity 3/3 green on
+    OpenResty. Canonical two-phase Lua pattern:
+    `header_filter_by_lua_block` clears `Content-Length` (so nginx
+    emits `Transfer-Encoding: chunked` for the modified body) and
+    `body_filter_by_lua_block` collects chunks into
+    `ngx.ctx.bench_buf` until `ngx.arg[2]` (EOF) fires, then
+    concatenates and rewrites through
+    `body_rewrite.rewrite_response_if_json` (injects
+    `$.bench.injected`, drops `$.origin`). Non-JSON upstream
+    bodies pass through untouched — identical behaviour to
+    `wallarm / p09-resp-body`.
+  - `nginx / p10-full-pipeline` — **ready**, parity 4/4 green on
+    OpenResty. Composes p02+p03+p06+p07+p08+p09 in a single
+    request flow, relying on nginx phase ordering
+    (`PREACCESS → ACCESS → CONTENT → header_filter → body_filter`)
+    to encode "rate-limit first, then JWT, then req-body rewrite,
+    then upstream, then resp-hdr + resp-body rewrite" semantics
+    without any explicit sequencing. Observed burst shape under
+    1200 rps of valid-JWT GETs: `2xx=0, 429=945, 5xx=0, other=255`
+    — the 945×429 confirms rate-limit fires **before** Lua auth
+    (the expected order, matching the fixture's tolerance of
+    `status_429_min=150 ± 50`). First gateway in the bench with a
+    complete green `p10`: wallarm's cell is still
+    `FEATURE-MISSING` because `wallarm/api-gateway:0.2.0` lacks a
+    `jwt_validation` policy, cascading the gap into p10.
+  - nginx roster on `1.27.3-alpine` + `openresty:1.27.1.2-alpine`:
+    **10 PASS, 0 FAIL, 32/32 probes** across all 10 canonical
+    profiles.
   - `envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

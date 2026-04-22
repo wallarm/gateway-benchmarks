@@ -1,0 +1,13 @@
+{
+  "ignorePatterns": [
+    {
+      "pattern": "^https://github.com/wallarm/gateway-benchmarks/"
+    },
+    {
+      "pattern": "^./.github/PULL_REQUEST_TEMPLATE.md"
+    }
+  ],
+  "retryOn429": true,
+  "retryCount": 3,
+  "fallbackRetryDelay": "30s"
+}

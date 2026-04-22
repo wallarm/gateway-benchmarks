@@ -1,0 +1,53 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=( $(find scripts backend gateways infra -name '*.sh' 2>/dev/null) )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No shell scripts yet — passing"
+            exit 0
+          fi
+          shellcheck --severity=style "${files[@]}"
+
+  markdown:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: markdown-link-check
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          use-verbose-mode: "no"
+          check-modified-files-only: "yes"
+          config-file: ".github/markdown-link-check.json"
+
+  go-vet:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+        continue-on-error: true
+      - name: go vet
+        run: |
+          if [ -f orchestrator/go.mod ]; then
+            cd orchestrator && go vet ./...
+          else
+            echo "orchestrator/go.mod absent yet — skipping"
+          fi

@@ -1,0 +1,38 @@
+# ---- Local scratch (never committed) ----
+.notes/
+
+# ---- Go ----
+orchestrator/bin/
+orchestrator/vendor/
+*.test
+*.out
+
+# ---- Raw reports ----
+# We commit aggregated runs; raw per-request streams stay local.
+reports/**/raw/**/k6-stream.json.gz
+reports/**/raw/**/logs/
+
+# ---- Terraform / OpenTofu ----
+infra/aws/.terraform/
+infra/aws/.terraform.lock.hcl
+infra/aws/terraform.tfstate
+infra/aws/terraform.tfstate.backup
+infra/aws/terraform.tfvars
+infra/aws/*.auto.tfvars
+infra/aws/crash.log
+
+# ---- Docker ----
+*.env
+docker-compose.override.yaml
+
+# ---- Editor / OS ----
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- Temporary files ----
+/tmp/
+*.tmp
+*.log

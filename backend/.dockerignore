@@ -1,0 +1,7 @@
+# Minimise the build context.
+# Only ./upstream (go-httpbin sources) and ./Dockerfile are needed.
+README.md
+NOTICE
+.dockerignore
+**/*.md
+!upstream/**/*.md

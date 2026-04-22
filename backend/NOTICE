@@ -1,0 +1,33 @@
+gateway-benchmarks — synthetic benchmark backend
+================================================
+
+This directory vendors third-party source code. That code retains its
+original copyright and is distributed under its original license.
+
+Component
+---------
+Name:       go-httpbin
+Upstream:   https://github.com/mccutchen/go-httpbin
+Version:    v2.22.1
+Commit:     f26ca5854f665e80255940d5aab7f119904c3875
+Vendored:   2026-04-16
+
+License
+-------
+MIT License
+Copyright (c) 2016 Will McCutchen
+
+The full, unmodified license text is in ./upstream/LICENSE and is also
+copied into the final container image as /LICENSE.go-httpbin.
+
+Modifications
+-------------
+None. The upstream source tree under ./upstream/ is kept verbatim to make
+it obvious — including to external reviewers — that we are not tweaking
+the backend to favour any specific gateway.
+
+CI metadata files that are only relevant to the upstream project
+(`.github/`, `.goreleaser.yaml`, `.codecov.yml`, `.golangci.yaml`,
+`kustomize/`, `examples/`, upstream `Dockerfile`, upstream `Makefile`)
+were omitted from the vendored tree because they have no effect on the
+benchmark backend itself.

@@ -77,13 +77,14 @@
 
 ### Phase 2. Synthetic backend (0.5 day)
 
-**Goal**: forked `go-httpbin` with our additions (if needed).
+**Goal**: vendored `go-httpbin` with our additions (if needed).
 
-- [ ] Vendor `github.com/mccutchen/go-httpbin` into `backend/`
-- [ ] Dockerfile (pinned Go version, `FROM scratch` final stage)
-- [ ] Exercised endpoints: `/get`, `/post`, `/headers`, `/bytes/{n}`, `/anything`, `/status/{code}`, `/delay/{s}`, `/gzip`, `/deflate`
-- [ ] Optional extra endpoints (e.g. `/jwt/validate-echo` for JWT parity — likely unnecessary, httpbin is enough)
-- [ ] Healthcheck endpoint (`/status/200`)
+- [x] Vendor `github.com/mccutchen/go-httpbin` **v2.22.1** into `backend/upstream/`, keep MIT license and add NOTICE attribution
+- [x] Dockerfile: `golang:1.25-alpine` builder → `FROM scratch` final stage, static binary (`CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`), non-root user, ~3 MB image
+- [x] Exercised endpoints: `/status/200`, `/get`, `/post`, `/anything`, `/headers`, `/bytes/{n}`, `/status/{code}`, `/delay/{s}`, `/gzip`, `/deflate` — documented in `backend/README.md` and verified by `scripts/backend-smoke.sh`
+- [ ] Optional extra endpoints (e.g. `/jwt/validate-echo` for JWT parity — deferred; httpbin is enough for now)
+- [x] Healthcheck endpoint (`/status/200`)
+- [x] `make backend-build` / `make backend-build-amd64` / `make backend-run` / `make backend-smoke` — real, idempotent targets (see `Makefile`)
 
 ### Phase 3. Parity framework (3–5 days — core work)
 
@@ -267,5 +268,7 @@
 
 ## Next steps
 
-1. Finish Phase 1 scaffolding — done.
-2. Start **Phase 2** (fork `go-httpbin`) and **Phase 3** (parity configs) in parallel.
+1. Phase 1 scaffolding — done.
+2. Phase 2 (vendored `go-httpbin` backend) — done.
+3. Start **Phase 3** (parity configs for 7 gateways × 10 profiles) — that is the critical path.
+4. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure sub-tasks in Phase 5.

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help prereqs-check lint \
-	backend-build backend-run \
+	backend-build backend-build-amd64 backend-run backend-smoke \
 	orchestrator-build orchestrator-test \
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
@@ -24,6 +24,16 @@ ORCH_BIN         ?= orchestrator/bin/bench
 LOCAL_COMPOSE    ?= infra/local/docker-compose.yaml
 AWS_TOFU_DIR     ?= infra/aws
 
+# --- Backend (Phase 2) ------------------------------------------------------
+# Pinned upstream: github.com/mccutchen/go-httpbin @ v2.22.1
+BACKEND_IMAGE    ?= gateway-benchmarks/backend
+BACKEND_VERSION  ?= v2.22.1
+BACKEND_PORT     ?= 8080
+# Empty default => docker builds for the host's native arch (fast on Mac).
+# Override to `linux/amd64` for CI / AWS runs: `make backend-build BACKEND_PLATFORM=linux/amd64`.
+BACKEND_PLATFORM ?=
+BUILD_DATE       := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 # Placeholder until a phase delivers the real implementation.
 PHASE_TODO = @echo "$(YELLOW)[TODO] $@ — see ROADMAP.md; will be implemented in the relevant phase.$(NC)"
 
@@ -39,8 +49,10 @@ help: ## Show this help
 	@echo "  $(GREEN)lint$(NC)                  shellcheck for scripts/, go vet for orchestrator/"
 	@echo ""
 	@echo "$(YELLOW)Backend (Phase 2):$(NC)"
-	@echo "  $(GREEN)backend-build$(NC)         Build the forked go-httpbin container"
-	@echo "  $(GREEN)backend-run$(NC)           Run the backend locally on :8080"
+	@echo "  $(GREEN)backend-build$(NC)         Build the vendored go-httpbin container (native arch)"
+	@echo "  $(GREEN)backend-build-amd64$(NC)   Build explicitly for linux/amd64 (CI / AWS)"
+	@echo "  $(GREEN)backend-run$(NC)           Run the backend locally on :$(BACKEND_PORT)"
+	@echo "  $(GREEN)backend-smoke$(NC)         Hit the backend's smoke endpoints (requires running instance)"
 	@echo ""
 	@echo "$(YELLOW)Orchestrator (Phase 6):$(NC)"
 	@echo "  $(GREEN)orchestrator-build$(NC)    go build -> $(ORCH_BIN)"
@@ -106,11 +118,41 @@ lint: ## Lint shell and Go code
 # ---------------------------------------------------------------------------
 # Backend (Phase 2)
 # ---------------------------------------------------------------------------
-backend-build: ## Build the backend image
-	$(PHASE_TODO)
+backend-build: ## Build the backend image ($(BACKEND_IMAGE):$(BACKEND_VERSION))
+	@if [ -n "$(BACKEND_PLATFORM)" ]; then \
+		echo "$(YELLOW)Building $(BACKEND_IMAGE):$(BACKEND_VERSION) for $(BACKEND_PLATFORM)...$(NC)"; \
+		docker buildx build \
+			--platform $(BACKEND_PLATFORM) \
+			--build-arg BUILD_DATE=$(BUILD_DATE) \
+			--tag  $(BACKEND_IMAGE):$(BACKEND_VERSION) \
+			--tag  $(BACKEND_IMAGE):latest \
+			--load \
+			backend/ ; \
+	else \
+		echo "$(YELLOW)Building $(BACKEND_IMAGE):$(BACKEND_VERSION) for native arch...$(NC)"; \
+		docker build \
+			--build-arg BUILD_DATE=$(BUILD_DATE) \
+			--tag  $(BACKEND_IMAGE):$(BACKEND_VERSION) \
+			--tag  $(BACKEND_IMAGE):latest \
+			backend/ ; \
+	fi
+	@echo "$(GREEN)✓ built:$(NC) $(BACKEND_IMAGE):$(BACKEND_VERSION)"
+	@docker image inspect $(BACKEND_IMAGE):$(BACKEND_VERSION) \
+		--format 'arch:  {{.Architecture}}{{"\n"}}size:  {{.Size}} bytes' 2>/dev/null || true
 
-backend-run: ## Run the backend locally
-	$(PHASE_TODO)
+backend-build-amd64: ## Build the backend image explicitly for linux/amd64 (used by AWS / CI)
+	@$(MAKE) backend-build BACKEND_PLATFORM=linux/amd64
+
+backend-run: ## Run the backend locally on :$(BACKEND_PORT)
+	@echo "$(YELLOW)Starting $(BACKEND_IMAGE):$(BACKEND_VERSION) on :$(BACKEND_PORT)...$(NC)"
+	@docker run --rm -it \
+		--name gateway-benchmarks-backend \
+		-p $(BACKEND_PORT):8080 \
+		$(BACKEND_IMAGE):$(BACKEND_VERSION)
+
+backend-smoke: ## Smoke-test a running backend (expects :$(BACKEND_PORT) reachable)
+	@echo "$(YELLOW)Smoke-testing backend on http://localhost:$(BACKEND_PORT)...$(NC)"
+	@bash scripts/backend-smoke.sh $(BACKEND_PORT)
 
 # ---------------------------------------------------------------------------
 # Orchestrator (Phase 6)

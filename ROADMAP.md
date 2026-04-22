@@ -194,7 +194,22 @@
   10 distinct IPs × 20 rps → `2xx=200, 429=0` (all under limit);
   single-IP saturation of 500 reqs → `2xx=100, 429=400` exact. See
   [`gateways/wallarm/p05-rl-dynamic-high/NOTES.md`](./gateways/wallarm/p05-rl-dynamic-high/NOTES.md).
-- [ ] `gateways/wallarm/p10-full-pipeline/` (next Phase 3b pass)
+- [x] `gateways/wallarm/p10-full-pipeline/` — **FEATURE-MISSING**
+  (cascade from `p02-jwt` on `wallarm/api-gateway:0.2.0`). The four
+  probes in [`fixtures/p10-full-pipeline.jsonl`](./fixtures/p10-full-pipeline.jsonl)
+  all hinge on a working JWT validator (two expect `401` on missing /
+  expired tokens, two use a valid token to reach the rate-limit
+  stage). Without `jwt_validation`, probes 2 and 3 return `200` and
+  the cell fails functionally. The `FEATURE-MISSING` marker makes
+  the parity runner short-circuit with a proper report. All five
+  other building blocks (`p03`, `p06`, `p07`, `p08`, `p09`) pass
+  independently on this image, so the cell will flip to **PASS**
+  the moment a public Wallarm release exposes
+  `jwt_validation` — the forward-compatible `setup.sh` sketch is
+  already committed in
+  [`gateways/wallarm/p10-full-pipeline/NOTES.md`](./gateways/wallarm/p10-full-pipeline/NOTES.md).
+  Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING (p02, p10),
+  0 FAIL** across all 10 canonical profiles.
 - [ ] `gateways/nginx/` configs for p01..p10
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
@@ -388,9 +403,18 @@
      `2xx=100, 429=400` under a 500-req burst with a 100/s limit.
      Also documented the `duration_s` harness caveat (parity runner
      fires ASAP; Phase 4 k6 profiles do the paced arrivals).
-   - next pass:
-     - `wallarm/p10-full-pipeline` → composition of p02…p09.
-   - then the other gateways (`nginx` → `envoy` → `kong` → `apisix`
-     → `traefik` → `tyk`), one profile column at a time.
+   - `wallarm/p10-full-pipeline` → **FEATURE-MISSING** (cascade from
+     `p02-jwt`). Fixture has two probes that expect `401` on missing
+     / expired JWT; without `jwt_validation` in public `0.2.0`, the
+     cell can't pass functionally. `FEATURE-MISSING` marker installed,
+     forward-compatible `setup.sh` sketch landed in
+     [`p10-full-pipeline/NOTES.md`](./gateways/wallarm/p10-full-pipeline/NOTES.md)
+     so the cell flips to PASS the moment a public tag ships
+     `jwt_validation`. **Wallarm roster is now complete**: `8 PASS,
+     2 FEATURE-MISSING (p02, p10), 0 FAIL` across all 10 canonical
+     profiles on `wallarm/api-gateway:0.2.0`.
+   - next pass: the other gateways (`nginx` → `envoy` → `kong` →
+     `apisix` → `traefik` → `tyk`), one profile column at a time,
+     starting with `nginx/p01-vanilla`.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

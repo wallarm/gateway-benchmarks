@@ -66,7 +66,9 @@ gateways/wallarm/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner + cjson on response_flow)
 │   └── NOTES.md               (JSON rewrite + Content-Length recompute)
-└── p10-full-pipeline/         (to be added)
+└── p10-full-pipeline/
+    ├── FEATURE-MISSING        (cascade from p02-jwt)
+    └── NOTES.md               (forward-compatible setup sketch)
 ```
 
 ## Feature matrix
@@ -82,7 +84,15 @@ gateways/wallarm/
 | `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
 | `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | PASS (3/3)        |
 | `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | PASS (3/3)        |
-| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | planned           |
+| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | FEATURE-MISSING†  |
+
+† Cascade from `p02-jwt`: all other five building blocks (`p03`, `p06`,
+`p07`, `p08`, `p09`) already pass independently on this image. A
+forward-compatible `setup.sh` sketch is included in
+[`p10-full-pipeline/NOTES.md`](./p10-full-pipeline/NOTES.md) — the
+moment `jwt_validation` is exposed by a public Wallarm release, drop
+the marker and this cell flips to `PASS` without touching fixtures or
+the harness.
 
 `PASS` / `FEATURE-MISSING` entries reflect the latest run of
 `make parity-gateway-all PARITY_GATEWAY=wallarm`. See each profile's

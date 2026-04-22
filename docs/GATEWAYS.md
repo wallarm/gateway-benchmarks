@@ -311,9 +311,13 @@ Resolution
   exercise the drop for real.
 
 Impact on ranking
-: `none` for the add side. The drop side is verified transitively
-  via `p10-full-pipeline`, which chains p07 with body-write policies
-  that do surface an upstream `Server` header through `go-httpbin`.
+: `none` for the add side. The drop side was originally intended to
+  be verified transitively via `p10-full-pipeline`, but since `p10`
+  is itself FEATURE-MISSING on this image (cascade from `p02-jwt`),
+  the drop-side check stays structural on wallarm until a public tag
+  ships with either a `preserve_path` knob or `jwt_validation`.
+  Every other gateway in this bench routes `/response-headers`
+  straight to `go-httpbin` and exercises the drop for real.
 
 Status
 : `accepted` — mirrored in `gateways/wallarm/p07-resp-headers/NOTES.md`.
@@ -372,6 +376,41 @@ Impact on ranking
 
 Status
 : `accepted` — mirrored in `gateways/wallarm/p09-resp-body/NOTES.md`.
+
+#### [gw=wallarm, p=p10-full-pipeline]
+
+What differs
+: `p10` is defined by
+  [`docs/POLICIES.md § p10`](./POLICIES.md#p10--full-pipeline) as the
+  composition `p02 → p03 → p06 → p08 → p07 → p09`. The matching
+  fixture ([`fixtures/p10-full-pipeline.jsonl`](../fixtures/p10-full-pipeline.jsonl))
+  has two probes that expect `status=401` on missing / expired JWT
+  and two probes that depend on a valid JWT reaching the rate-limit
+  stage. Without a gateway-side JWT validator those probes return
+  `200` and the cell fails.
+
+Root cause
+: Cascade from
+  [`[gw=wallarm, p=p02-jwt]`](#gwwallarm-pp02-jwt) above — the
+  pinned public image does not ship `jwt_validation`.
+
+Resolution
+: The profile is marked `FEATURE-MISSING` via
+  `gateways/wallarm/p10-full-pipeline/FEATURE-MISSING`, with reason
+  `"cascade from p02-jwt"`. The other five building blocks
+  (`p03`, `p06`, `p07`, `p08`, `p09`) pass independently on this
+  same image, proving the orchestration path works end-to-end.
+  A forward-compatible `setup.sh` sketch is committed in
+  [`gateways/wallarm/p10-full-pipeline/NOTES.md`](../gateways/wallarm/p10-full-pipeline/NOTES.md);
+  once `jwt_validation` appears in a public Wallarm release the
+  cell flips to `PASS` without touching fixtures or harness.
+
+Impact on ranking
+: `excluded from ranking` for this cell. No spillover: every other
+  wallarm cell is green.
+
+Status
+: `feature-missing` — revisit on the next public wallarm release.
 
 #### [harness, p=go-httpbin-echo-shape]
 
@@ -499,7 +538,11 @@ Status
   - `wallarm / p09-resp-body` — **ready**, parity 3/3 green
     (`lua_runner` + `cjson.safe` on `response_flow`,
     Content-Length recomputed).
-  - `wallarm / p10` — pending (next Phase 3b iteration).
+  - `wallarm / p10-full-pipeline` — **FEATURE-MISSING** (cascade from
+    `p02-jwt`; forward-compatible `setup.sh` sketch in
+    `gateways/wallarm/p10-full-pipeline/NOTES.md`).
+  - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING (p02, p10),
+    0 FAIL** across all 10 canonical profiles.
   - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

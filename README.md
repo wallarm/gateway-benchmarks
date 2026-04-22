@@ -132,7 +132,11 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       keyed on `X-Real-IP`, rate=10/s, sliding window
     - [x] `wallarm / p05-rl-dynamic-high` — 3/3 green, same policy
       shape as p04 with rate=100/s
-    - [ ] `wallarm / p10` (next iteration)
+    - [x] `wallarm / p10-full-pipeline` — **FEATURE-MISSING** (cascade
+      from `p02-jwt`; forward-compatible `setup.sh` sketch committed
+      in `p10-full-pipeline/NOTES.md`)
+    - Wallarm roster on `0.2.0`: **8 PASS, 2 FEATURE-MISSING
+      (p02, p10), 0 FAIL** across all 10 canonical profiles
     - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

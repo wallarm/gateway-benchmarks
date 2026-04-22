@@ -35,8 +35,13 @@ gateways/wallarm/
 │   ├── gateway.yaml           (static listener + pool)
 │   ├── setup.sh               (Admin API bootstrap)
 │   └── NOTES.md               (parity compliance, deviations)
-├── p02-jwt/                   (to be added — Phase 3b iteration 2)
-├── p03-rl-static/             (to be added)
+├── p02-jwt/
+│   ├── FEATURE-MISSING        (no jwt_validation policy in 0.2.0)
+│   └── NOTES.md               (explainer + future-ready config)
+├── p03-rl-static/
+│   ├── gateway.yaml           (listener + pool; copied from p01)
+│   ├── setup.sh               (Admin API: ratelimit policy on flow)
+│   └── NOTES.md               (deviation: sliding window, not fixed)
 ├── p04-rl-dynamic-low/        (to be added)
 ├── p05-rl-dynamic-high/       (to be added)
 ├── p06-req-headers/           (to be added)
@@ -48,18 +53,23 @@ gateways/wallarm/
 
 ## Feature matrix
 
-| Profile                 | Primitive                                      | Status  |
-|-------------------------|------------------------------------------------|---------|
-| `p01-vanilla`           | Catch-all service `/ → backend`                | ready   |
-| `p02-jwt`               | `jwt_validator` policy (HS256 via shared secret) | planned |
-| `p03-rl-static`         | `rate_limit` policy, key = service, 1000 rps   | planned |
-| `p04-rl-dynamic-low`    | `rate_limit` keyed on `X-Real-IP`, 10 rps      | planned |
-| `p05-rl-dynamic-high`   | `rate_limit` keyed on `X-Real-IP`, 100 rps     | planned |
-| `p06-req-headers`       | `header_transform` on request                  | planned |
-| `p07-resp-headers`      | `header_transform` on response                 | planned |
-| `p08-req-body`          | `body_transform` (JSON) on request             | planned |
-| `p09-resp-body`         | `body_transform` (JSON) on response            | planned |
-| `p10-full-pipeline`     | Composition of p02…p09 in that exact order     | planned |
+| Profile                 | Primitive                                          | Parity            |
+|-------------------------|----------------------------------------------------|-------------------|
+| `p01-vanilla`           | Catch-all service `/ → backend`                    | PASS (4/4)        |
+| `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret)  | FEATURE-MISSING   |
+| `p03-rl-static`         | `ratelimit` policy, key = service, 1000 rps        | PASS (2/2)        |
+| `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | planned           |
+| `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | planned           |
+| `p06-req-headers`       | `header_transform` on request                      | planned           |
+| `p07-resp-headers`      | `header_transform` on response                     | planned           |
+| `p08-req-body`          | `body_transform` (JSON) on request                 | planned           |
+| `p09-resp-body`         | `body_transform` (JSON) on response                | planned           |
+| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | planned           |
+
+`PASS` / `FEATURE-MISSING` entries reflect the latest run of
+`make parity-gateway-all PARITY_GATEWAY=wallarm`. See each profile's
+`NOTES.md` and [`docs/GATEWAYS.md § Deviations`](../../docs/GATEWAYS.md#deviations)
+for the per-cell rationale.
 
 The full list of canonical values (rate limit, JWT secret, header
 names, JSON body paths) lives in

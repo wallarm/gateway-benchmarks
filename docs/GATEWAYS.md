@@ -123,6 +123,69 @@ Status
 : `accepted` — revisit when a post-0.2.0 public tag ships with
   catch-all.
 
+#### [gw=wallarm, p=p02-jwt]
+
+What differs
+: `wallarm/api-gateway:0.2.0` (public Docker Hub image) does not ship
+  a `jwt_validation` policy. The source tree has one
+  (`wallarm-api-gateway/tests/integration/jwt_validation_test.sh`), but
+  the pinned public tag does not. The `lua_runner` sandbox in 0.2.0 also
+  lacks crypto primitives (no `openssl.hmac`, no `digest`), so a pure
+  Lua HS256 check is impractical and would itself become a deviation.
+
+Root cause
+: Policy gap in the public 0.2.0 image. Tracked as
+  [`gateways/wallarm/p02-jwt/NOTES.md`](../gateways/wallarm/p02-jwt/NOTES.md)
+  and marked with a `FEATURE-MISSING` file that
+  `scripts/parity-gateway.sh` short-circuits on.
+
+Resolution
+: Cell is explicitly tagged `FEATURE-MISSING` in the parity report so
+  it is visible in the matrix but does not block the sweep. Revisit
+  once a public tag ships with `jwt_validation`; the
+  `NOTES.md` already contains the exact Admin API payloads we'll use
+  once that lands.
+
+Impact on ranking
+: `excluded from ranking` for this cell only. Other wallarm cells are
+  unaffected.
+
+Status
+: `feature-missing` — revisit on the next public wallarm release.
+
+#### [gw=wallarm, p=p03-rl-static]
+
+What differs
+: `docs/POLICIES.md` specifies a *rolling* 1 s window. In the public
+  0.2.0 Admin API, the `ratelimit` policy exposes a `window_type` flag
+  with values `fixed` and `sliding`. Empirically, `window_type: fixed`
+  with `window: 1` does not rate-limit (the upstream integration suite
+  only exercises `window: 60`). `window_type: sliding` matches the
+  "rolling" semantics from POLICIES.md and is what the setup script
+  ships.
+
+Root cause
+: Implementation detail of the `fixed` bucket at
+  `window: 1` in 0.2.0. See
+  [`wallarm-api-gateway/tests/integration/single_node_ratelimit_accuracy_test.sh`](../wallarm-api-gateway/tests/integration/single_node_ratelimit_accuracy_test.sh)
+  — no test covers `window: 1` at all.
+
+Resolution
+: `gateways/wallarm/p03-rl-static/setup.sh` picks
+  `window_type: "sliding"`, which is documented, stable, and in line
+  with POLICIES.md's rolling window. Result: parity passes with
+  `burst 1200x/1s → 2xx=998, 429=202`.
+
+Impact on ranking
+: `none` — every gateway is required by
+  [`docs/POLICIES.md`](./POLICIES.md) to implement a rolling window.
+  Any competitor gateway that only supports a fixed window is its own
+  deviation, not wallarm's.
+
+Status
+: `mitigated` — cell is green; document the window-type choice in the
+  NOTES.md so reviewers can see the trade-off at a glance.
+
 ### Known / expected entries
 
 > Will be confirmed as each per-gateway config lands. The ones below
@@ -167,9 +230,14 @@ Status
   Phase 3.
 - Per-gateway configs:
   - `wallarm / p01-vanilla` — **ready**, parity 4/4 green.
-  - `wallarm / p02…p10` — pending (next Phase 3b iteration).
+  - `wallarm / p02-jwt` — **FEATURE-MISSING** on the pinned 0.2.0
+    image (see deviation above).
+  - `wallarm / p03-rl-static` — **ready**, parity 2/2 green
+    (1200 rps burst, `window_type: sliding`).
+  - `wallarm / p04…p10` — pending (next Phase 3b iteration).
   - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
-- Burst parity runner (p03/p04/p05) — **ready**, validated against
-  the bare backend (0 × 429 → correct FAIL, the rate-limiting gateway
-  rows will turn green as each per-gateway config lands).
+- Burst parity runner (p03/p04/p05) — **ready**, now uses
+  `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst
+  actually fits inside its 1 s window. Validated end-to-end against
+  `wallarm / p03-rl-static` → `2xx=998, 429=202, 5xx=0`.
 - Full status by phase: [ROADMAP.md § Phase 3](../ROADMAP.md#phase-3-parity-framework-3-5-days--core-work).

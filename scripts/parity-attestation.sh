@@ -339,10 +339,15 @@ run_burst_probe() {
         while IFS= read -r k; do keys+=("${k}"); done < <(expand_key_pool "${key_pool}")
     fi
 
-    # Compose the per-request work list.
-    local reqs="${tmpdir}/burst_reqs.txt"
+    # Compose a single curl config file with one `--next` block per
+    # request. curl (>= 7.66) runs the whole file in parallel inside
+    # one process when we pass `--parallel --parallel-max N` — no
+    # fork-per-request, no shell round-trips, and bounded concurrency
+    # comes for free. This is what lets the p03 burst actually fit
+    # inside the 1-second window so the rate limiter engages.
+    local config_file="${tmpdir}/burst.curl"
     local codes="${tmpdir}/burst_codes.txt"
-    : > "${reqs}"
+    : > "${config_file}"
     : > "${codes}"
 
     local i header_line=""
@@ -352,45 +357,25 @@ run_burst_probe() {
         else
             header_line=""
         fi
-        printf '%s\t%s\t%s\n' "${method}" "${url}" "${header_line}" >> "${reqs}"
+        {
+            printf -- 'request = "%s"\n' "${method}"
+            [[ -n "${header_line}" ]] && printf -- 'header = "%s"\n' "${header_line}"
+            printf -- 'silent\n'
+            printf -- 'output = "/dev/null"\n'
+            printf -- 'write-out = "%%{http_code}\\n"\n'
+            printf -- 'url = "%s"\n' "${url}"
+            (( i + 1 < total )) && printf -- 'next\n'
+        } >> "${config_file}"
     done
-
-    # A portable "one request" runner. `$1` is a tab-separated triplet
-    # "method\turl\theader" (header may be empty).
-    local runner="${tmpdir}/burst_run_one.sh"
-    cat > "${runner}" <<'EOF'
-#!/usr/bin/env bash
-IFS=$'\t' read -r BURST_M BURST_U BURST_H <<< "$1"
-if [[ -n "${BURST_H}" ]]; then
-    curl -sS -o /dev/null -w '%{http_code}\n' -X "${BURST_M}" -H "${BURST_H}" "${BURST_U}"
-else
-    curl -sS -o /dev/null -w '%{http_code}\n' -X "${BURST_M}" "${BURST_U}"
-fi
-EOF
-    chmod +x "${runner}"
 
     local par="${BURST_PARALLELISM}"
     (( par > total )) && par="${total}"
 
-    # BSD xargs (macOS) does not support `-a`, and the interaction of
-    # `-I {}` with `-P` differs from GNU. We emulate a bounded-concurrency
-    # pool with plain bash: read all rows into an array, then fire batches
-    # of `par` subprocesses and wait for each batch.
-    local -a req_lines=()
-    while IFS= read -r ln; do req_lines+=("${ln}"); done < "${reqs}"
-
     local burst_start burst_end elapsed_s
     burst_start=$(date +%s)
 
-    local b end j
-    for (( b = 0; b < ${#req_lines[@]}; b += par )); do
-        end=$(( b + par ))
-        (( end > ${#req_lines[@]} )) && end=${#req_lines[@]}
-        for (( j = b; j < end; j++ )); do
-            "${runner}" "${req_lines[j]}" >> "${codes}" 2>/dev/null &
-        done
-        wait
-    done
+    curl --parallel --parallel-max "${par}" -K "${config_file}" \
+        > "${codes}" 2>/dev/null || true
 
     burst_end=$(date +%s)
     elapsed_s=$(( burst_end - burst_start ))

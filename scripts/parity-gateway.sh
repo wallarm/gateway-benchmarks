@@ -66,9 +66,9 @@ done
 compose_file="gateways/${GATEWAY}/docker-compose.yaml"
 profile_dir="gateways/${GATEWAY}/${PROFILE}"
 setup_script="${profile_dir}/setup.sh"
+feature_missing="${profile_dir}/FEATURE-MISSING"
 
-[[ -f "${compose_file}" ]] || { printf 'compose file not found: %s\n' "${compose_file}" >&2; exit 2; }
-[[ -f "${setup_script}" ]] || { printf 'setup script not found: %s\n' "${setup_script}" >&2; exit 2; }
+[[ -d "${profile_dir}" ]] || { printf 'profile directory not found: %s\n' "${profile_dir}" >&2; exit 2; }
 
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 if [[ -z "${OUTPUT}" ]]; then
@@ -79,6 +79,12 @@ mkdir -p "$(dirname "${OUTPUT}")" "${LOGS_DIR}"
 
 GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:9080}"
 
+# The burst runner defaults to 32 concurrent workers, which is fine
+# against a bare backend but leaves slack on a cold gateway under
+# x86/arm emulation. Push it to 128 so the 1200-req/s parity probe
+# actually fits inside its 1-second window.
+export BURST_PARALLELISM="${BURST_PARALLELISM:-128}"
+
 # -----------------------------------------------------------------------------
 # Colors
 # -----------------------------------------------------------------------------
@@ -87,6 +93,40 @@ say()  { printf '%s%s%s\n' "${C_C}" "$*" "${C_N}" >&2; }
 warn() { printf '%s%s%s\n' "${C_Y}" "$*" "${C_N}" >&2; }
 ok()   { printf '%s%s%s\n' "${C_G}" "$*" "${C_N}" >&2; }
 bad()  { printf '%s%s%s\n' "${C_R}" "$*" "${C_N}" >&2; }
+
+# -----------------------------------------------------------------------------
+# FEATURE-MISSING short-circuit.
+#
+# A profile directory is allowed to contain a single file named
+# `FEATURE-MISSING` whose body explains *why* the profile is not
+# implementable on this gateway/version. We then:
+#
+#   - do not bring up a stack,
+#   - do not run a setup script,
+#   - produce a valid parity JSON with status=FEATURE-MISSING,
+#
+# which keeps `parity-gateway-all` counting columns correctly.
+# -----------------------------------------------------------------------------
+if [[ -f "${feature_missing}" ]]; then
+    reason="$(head -n 1 "${feature_missing}" 2>/dev/null || true)"
+    say "=> ${GATEWAY} / ${PROFILE}: FEATURE-MISSING marker found"
+    [[ -n "${reason}" ]] && warn "   reason: ${reason}"
+    parity_args=(
+        --gateway "${GATEWAY}"
+        --profile "${PROFILE}"
+        --target  "${GATEWAY_TARGET}"
+        --output  "${OUTPUT}"
+        --feature-missing
+    )
+    (( VERBOSE == 1 )) && parity_args+=(--verbose)
+    bash scripts/parity-attestation.sh "${parity_args[@]}" >/dev/null
+    warn "verdict: FEATURE-MISSING  ${OUTPUT}"
+    exit 0
+fi
+
+# A real run needs both the compose file and a setup script.
+[[ -f "${compose_file}" ]] || { printf 'compose file not found: %s\n' "${compose_file}" >&2; exit 2; }
+[[ -f "${setup_script}" ]] || { printf 'setup script not found: %s\n' "${setup_script}" >&2; exit 2; }
 
 # -----------------------------------------------------------------------------
 # Teardown — always runs, even on Ctrl-C / failure

@@ -124,17 +124,32 @@
 
 - [x] Bursts in the parity runner (p03 static-RL, p04/p05 dynamic-RL)
   — implemented in
-  [`scripts/parity-attestation.sh`](./scripts/parity-attestation.sh)
-  via `xargs`-style bounded-concurrency pool; validated against the
-  bare backend (correct FAIL: 2xx=1200, 429=0 → expected ≥150 × 429)
+  [`scripts/parity-attestation.sh`](./scripts/parity-attestation.sh);
+  final version uses
+  `curl --parallel --parallel-max N -K <config>` so the 1200-rps probe
+  fits inside its 1 s window (validated end-to-end on
+  `wallarm / p03-rl-static`: `2xx=998, 429=202, 5xx=0`)
 - [x] [`scripts/parity-gateway.sh`](./scripts/parity-gateway.sh) +
   `make parity-gateway` / `parity-gateway-all` — full
-  up→setup→parity→down lifecycle with trap-based cleanup
+  up→setup→parity→down lifecycle with trap-based cleanup and a
+  `FEATURE-MISSING` short-circuit that skips the stack entirely when a
+  profile is explicitly unsupported on the pinned image
 - [x] `gateways/wallarm/p01-vanilla/` — real wallarm `0.2.0` image,
   parity **4/4 PASS**; deviations catalogued in
   [`gateways/wallarm/p01-vanilla/NOTES.md`](./gateways/wallarm/p01-vanilla/NOTES.md)
   and [`docs/GATEWAYS.md`](./docs/GATEWAYS.md)
-- [ ] `gateways/wallarm/` configs for p02..p10 (next Phase 3b pass)
+- [x] `gateways/wallarm/p02-jwt/` — **FEATURE-MISSING** on the public
+  `0.2.0` image (no `jwt_validation` policy shipped; `lua_runner`
+  sandbox lacks crypto). Explainer +
+  future-ready Admin API payloads in
+  [`gateways/wallarm/p02-jwt/NOTES.md`](./gateways/wallarm/p02-jwt/NOTES.md)
+- [x] `gateways/wallarm/p03-rl-static/` — real wallarm `0.2.0` image,
+  parity **2/2 PASS** with a documented
+  `window_type: sliding` deviation against the naive
+  `window_type: fixed` reading of POLICIES.md (both semantics agree on
+  "rolling 1 s window"; see
+  [`gateways/wallarm/p03-rl-static/NOTES.md`](./gateways/wallarm/p03-rl-static/NOTES.md))
+- [ ] `gateways/wallarm/` configs for p04..p10 (next Phase 3b pass)
 - [ ] `gateways/nginx/` configs for p01..p10
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
@@ -297,9 +312,12 @@
 4. **Phase 3b in progress**:
    - burst runner, parity-gateway lifecycle, `wallarm/p01-vanilla`
      green — **done**.
+   - `wallarm/p02-jwt` tagged `FEATURE-MISSING` on `0.2.0`;
+     `wallarm/p03-rl-static` **2/2 PASS** with `sliding` window —
+     **done**. `FEATURE-MISSING` short-circuit landed in
+     `scripts/parity-gateway.sh`; burst runner switched to
+     `curl --parallel -K` to actually hit 1200 rps inside 1 s.
    - next passes (in this order):
-     - `wallarm/p02-jwt` + `p03-rl-static` → exercise the JWT and RL
-       primitives on the reference gateway.
      - `wallarm/p06-req-headers` + `p07-resp-headers` → shake out the
        header-transform plumbing.
      - `wallarm/p08-req-body` + `p09-resp-body` → exercise the Lua

@@ -111,8 +111,14 @@ The project is in early phases. No benchmark runs yet — we are building the fo
 - [x] Phase 3a — Parity foundation (canonical values, reference assets, fixtures, `make parity-check[-all]`)
 - [~] Phase 3b — Per-gateway configs (7 gateways × 10 policy profiles)
     - [x] burst runner (p03 / p04 / p05) + `parity-gateway` lifecycle
+      (now using `curl --parallel -K` for sustained 1200 rps bursts)
+    - [x] `FEATURE-MISSING` short-circuit in `scripts/parity-gateway.sh`
     - [x] `wallarm / p01-vanilla` — 4/4 green against `wallarm/api-gateway:0.2.0`
-    - [ ] `wallarm / p02…p10` (next iteration)
+    - [x] `wallarm / p02-jwt` — **FEATURE-MISSING** on 0.2.0 (no native
+      `jwt_validation` policy in the public image)
+    - [x] `wallarm / p03-rl-static` — 2/2 green, `ratelimit` policy with
+      `rate=1000/1s`, sliding window
+    - [ ] `wallarm / p04…p10` (next iteration)
     - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

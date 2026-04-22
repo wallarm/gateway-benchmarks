@@ -71,8 +71,8 @@ status across the matrix.
 | Phase | Scope                                                        | State |
 |-------|--------------------------------------------------------------|-------|
 | 3a    | Parity framework foundation (fixtures, runner, backend-direct baseline) | done |
-| 3b    | Per-gateway configs, starting with wallarm                   | in progress (p01-vanilla landed) |
-| 3c    | p02…p10 + remaining gateways                                 | scheduled |
+| 3b    | Per-gateway configs, starting with wallarm                   | in progress (wallarm p01 / p02 / p03 landed) |
+| 3c    | wallarm p04…p10 + remaining gateways                         | scheduled |
 
 Shared assets (JWT secret, JWKS, TLS cert, canonical JSON bodies) are
 in [`_reference/`](./_reference/README.md).

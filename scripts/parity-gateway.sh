@@ -131,15 +131,29 @@ fi
 # -----------------------------------------------------------------------------
 # Teardown — always runs, even on Ctrl-C / failure
 # -----------------------------------------------------------------------------
+# Per-profile overrides (e.g. GATEWAY_IMAGE to swap in openresty for
+# profiles that need extra modules). The .env file is optional; most
+# profiles rely on the default values baked into docker-compose.yaml.
+# We pass it via `docker compose --env-file` (not `source` into the
+# current shell) so the override is scoped strictly to this invocation
+# of compose — no risk of GATEWAY_IMAGE leaking into sibling profiles
+# inside a `make parity-gateway-all` sweep.
+profile_env="gateways/${GATEWAY}/${PROFILE}/.env"
+compose_cmd=(docker compose)
+if [[ -f "${profile_env}" ]]; then
+    compose_cmd+=(--env-file "${profile_env}")
+fi
+compose_cmd+=(-f "${compose_file}")
+
 teardown() {
     local rc=$?
     set +e
     if (( KEEP_UP == 1 )); then
-        warn "keep-up requested — stack left running (tear down with: docker compose -f ${compose_file} down -v)"
+        warn "keep-up requested — stack left running (tear down with: ${compose_cmd[*]} down -v)"
     else
         say "=> capturing logs & stopping stack"
-        docker compose -f "${compose_file}" logs --no-color > "${LOGS_DIR}/compose.log" 2>&1 || true
-        docker compose -f "${compose_file}" down --remove-orphans -v >/dev/null 2>&1 || true
+        "${compose_cmd[@]}" logs --no-color > "${LOGS_DIR}/compose.log" 2>&1 || true
+        "${compose_cmd[@]}" down --remove-orphans -v >/dev/null 2>&1 || true
     fi
     return "${rc}"
 }
@@ -149,8 +163,13 @@ trap teardown EXIT
 # 1. Bring up the stack
 # -----------------------------------------------------------------------------
 say "=> bringing up stack (${GATEWAY} / ${PROFILE})"
-docker compose -f "${compose_file}" down --remove-orphans -v >/dev/null 2>&1 || true
-GATEWAY_PROFILE="${PROFILE}" docker compose -f "${compose_file}" up -d
+"${compose_cmd[@]}" down --remove-orphans -v >/dev/null 2>&1 || true
+
+if [[ -f "${profile_env}" ]]; then
+    say "=> per-profile env: ${profile_env}"
+fi
+
+GATEWAY_PROFILE="${PROFILE}" "${compose_cmd[@]}" up -d
 
 # -----------------------------------------------------------------------------
 # 2. Wait for the data plane

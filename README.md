@@ -152,7 +152,23 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       `zone=10m rate=100r/s` + `burst=20 nodelay`, zone sized for
       the 50 000-IP pool per POLICIES.md; burst #2 →
       `2xx=24, 429=476`)
-    - [ ] `nginx / p02`, `p06..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+    - [x] `nginx / p06-req-headers` — 3/3 green on mainline
+      (`proxy_set_header X-Bench-In "1";` +
+      `proxy_set_header X-Forwarded-For "";` empty-string drop
+      idiom; no Lua, no extra module)
+    - [x] `nginx / p07-resp-headers` — 2/2 green on
+      `openresty/openresty:1.27.1.2-alpine` (first nginx cell
+      that overrides the base image — uses bundled
+      `ngx_headers_more`'s `more_clear_headers "Server"` because
+      mainline has no directive to remove the built-in Server
+      response header). Image override declared in
+      `gateways/nginx/p07-resp-headers/.env`; `parity-gateway.sh`
+      now passes it via `docker compose --env-file` (generic
+      per-profile override contract — also carries OpenResty pins
+      for upcoming p02/p08/p09/p10 cells).
+    - **nginx column snapshot**: 6 PASS, 0 FAIL, 4 pending
+      (p02/p08/p09/p10)
+    - [ ] `nginx / p02`, `p08..p10`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

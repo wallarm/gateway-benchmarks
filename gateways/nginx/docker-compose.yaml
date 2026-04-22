@@ -18,9 +18,17 @@
 #   setup.sh     - post-up smoke check (nginx is ready at container start)
 #   NOTES.md     - profile-specific notes / deviations
 #
-# Image is pinned by digest for reproducibility; refresh with:
+# Default image is pinned by digest for reproducibility; refresh with:
 #   docker pull nginx:1.27.3-alpine && docker image inspect \
 #     nginx:1.27.3-alpine --format '{{index .RepoDigests 0}}'
+#
+# Profiles that need extra modules (e.g. p07 needs `ngx_headers_more`
+# to drop the Server header) override GATEWAY_IMAGE via a per-profile
+# `.env` file; scripts/parity-gateway.sh sources it automatically.
+# The override image must expose the nginx binary in PATH so the
+# hard-coded `command: ["nginx", ...]` below still launches. OpenResty's
+# `openresty/openresty:*-alpine` images fit that contract out of the
+# box (the `nginx` symlink points at `/usr/local/openresty/nginx/sbin/nginx`).
 
 name: gateway-benchmarks-nginx
 
@@ -38,7 +46,7 @@ services:
         aliases: [backend]
 
   gateway:
-    image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
+    image: ${GATEWAY_IMAGE:-nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4}
     container_name: gwb-nginx
     restart: "no"
     depends_on:

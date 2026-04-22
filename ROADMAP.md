@@ -240,14 +240,29 @@
     burst #2 (1 IP × 500 rps) = `2xx=24, 429=476` (fixture threshold
     260; 1.8× headroom). See
     [`gateways/nginx/p05-rl-dynamic-high/NOTES.md`](./gateways/nginx/p05-rl-dynamic-high/NOTES.md).
+  - [x] `gateways/nginx/p06-req-headers/` — **3/3 PASS** on mainline
+    `nginx:1.27.3-alpine`. Pure `proxy_set_header` — inject via
+    literal value (`X-Bench-In: 1`), drop via empty-string idiom
+    (`proxy_set_header X-Forwarded-For "";` which omits the header
+    from the upstream request rather than forwarding an empty
+    value). No Lua, no extra module. See
+    [`gateways/nginx/p06-req-headers/NOTES.md`](./gateways/nginx/p06-req-headers/NOTES.md).
+  - [x] `gateways/nginx/p07-resp-headers/` — **2/2 PASS**, first
+    nginx cell that overrides the base image. Uses
+    `openresty/openresty:1.27.1.2-alpine@sha256:761047d6…` because
+    mainline nginx has no directive that removes the built-in
+    `Server` response header. Config combines `add_header X-Bench-Out
+    "1" always;` + `proxy_hide_header Server;` + `more_clear_headers
+    "Server";` (the last from bundled `ngx_headers_more-0.37`).
+    Override is declared in
+    [`gateways/nginx/p07-resp-headers/.env`](./gateways/nginx/p07-resp-headers/.env);
+    `scripts/parity-gateway.sh` now passes it via `docker compose
+    --env-file` (per-invocation, no env leak to sibling profiles
+    during a sweep). See
+    [`gateways/nginx/p07-resp-headers/NOTES.md`](./gateways/nginx/p07-resp-headers/NOTES.md).
   - [ ] `p02-jwt`, `p08-req-body`, `p09-resp-body`, `p10-full-pipeline`
-    will switch the image to `openresty/openresty:<pinned>` when
-    their iteration lands.
-  - [ ] `p06-req-headers`, `p07-resp-headers` will use
-    `proxy_set_header` / `add_header` + `more_clear_headers` from
-    `ngx_headers_more` (bundled in openresty; a deviation entry will
-    record whether we stay on mainline or switch to openresty for
-    the drop-side).
+    will reuse the `.env` override contract to pin
+    `openresty/openresty:<pinned>` for `ngx_http_lua_module`.
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
 - [ ] `gateways/apisix/` configs for p01..p10
@@ -468,10 +483,26 @@
      `zone=10m rate=100r/s` + `burst=20 nodelay` (zone sized for the
      50 000-IP pool per POLICIES.md). Burst #1 = `200/0`, burst #2 =
      `2xx=24, 429=476` — 1.8× the fixture's 260 × 429 floor.
-   - next pass: `nginx/p06-req-headers` + `p07-resp-headers` on
-     mainline (`proxy_set_header` / `add_header`, possibly
-     `ngx_headers_more` via openresty for the drop-side), then the
-     openresty-based cluster `p02/p08/p09/p10`, then
-     `envoy` → `kong` → `apisix` → `traefik` → `tyk`.
+   - `nginx/p06-req-headers` → **3/3 PASS** on mainline. Pure
+     `proxy_set_header` — inject literal + empty-string drop idiom.
+     No Lua, no extra module.
+   - `nginx/p07-resp-headers` → **2/2 PASS** on
+     `openresty/openresty:1.27.1.2-alpine` (the first nginx cell to
+     override the base image). Mainline has no directive to remove
+     the built-in `Server` response header; `ngx_headers_more`'s
+     `more_clear_headers "Server";` does, and OpenResty bundles
+     that module. The image override lives in
+     `gateways/nginx/p07-resp-headers/.env` and is passed through
+     `docker compose --env-file` (per-invocation scoping so no env
+     leak during `make parity-gateway-all` sweeps). This generic
+     `.env` mechanism will also carry the OpenResty pin for
+     `p02/p08/p09/p10` in future iterations.
+   - **nginx column snapshot**: `6 PASS, 0 FAIL, 4 pending
+     (p02/p08/p09/p10)` — sweep runs in under 10 s on a warm
+     Docker Desktop.
+   - next pass: `nginx/p02-jwt` (Lua-based JWT validation on
+     OpenResty) + `nginx/p08-req-body` + `nginx/p09-resp-body`
+     (Lua body rewrite), then `envoy` → `kong` → `apisix` →
+     `traefik` → `tyk`.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

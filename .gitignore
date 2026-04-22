@@ -25,6 +25,13 @@ infra/aws/crash.log
 # ---- Docker ----
 *.env
 docker-compose.override.yaml
+# Exception: per-profile .env files under gateways/ are NOT secrets —
+# they carry pinned image digests that override the default gateway
+# image for a specific profile (e.g. openresty in place of mainline
+# nginx for p07-resp-headers). These are read by
+# scripts/parity-gateway.sh via `docker compose --env-file` and must
+# be committed so the benchmark is reproducible.
+!gateways/**/.env
 
 # ---- Editor / OS ----
 .DS_Store

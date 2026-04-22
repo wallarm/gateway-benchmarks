@@ -563,7 +563,23 @@ Status
     burst #2 (1 IP × 500 rps) = `2xx=24, 429=476`. See the `✓†`
     footnote in
     [`docs/POLICIES.md § Feature availability`](./POLICIES.md#feature-availability-as-of-current-images).
-  - `nginx / p02`, `p06..p10` — pending.
+  - `nginx / p06-req-headers` — **ready**, parity 3/3 green on
+    mainline. Pure `proxy_set_header` — inject via literal value,
+    drop via empty-string idiom (`proxy_set_header X-Forwarded-For
+    "";` omits the header from the upstream request rather than
+    forwarding an empty value). No Lua, no extra module.
+  - `nginx / p07-resp-headers` — **ready**, parity 2/2 green on
+    **OpenResty** (`openresty/openresty:1.27.1.2-alpine@sha256:761047d6…`).
+    The first nginx cell that overrides the base image — mainline
+    has no directive that removes the nginx-generated `Server`
+    response header. `ngx_headers_more`'s `more_clear_headers
+    "Server";` does, and OpenResty bundles that module. The
+    override is declared in `gateways/nginx/p07-resp-headers/.env`,
+    which `scripts/parity-gateway.sh` sources automatically
+    (generic per-profile-env mechanism; also covers future
+    `p02/p08/p09/p10` once they land on OpenResty for
+    `ngx_http_lua_module`).
+  - `nginx / p02`, `p08..p10` — pending.
   - `envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

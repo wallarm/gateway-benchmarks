@@ -9,44 +9,56 @@
 # `envoy.filters.http.local_ratelimit` filter at the HCM (listener)
 # level. The token bucket is:
 #
-#   max_tokens:       100 (per worker)
-#   tokens_per_fill:  100 (per worker)
-#   fill_interval:    1s
+#   max_tokens:       200   (burst cap — matches nginx's `burst=200 nodelay`)
+#   tokens_per_fill:  50    (50 tokens refilled every 50 ms …)
+#   fill_interval:    0.05s (… = 1000 rps steady refill)
 #
-# Combined with `--concurrency 2` this yields an effective
-# service-wide budget of ~200 rps. The fixture's 1200-request ASAP
-# burst therefore produces ≈200 × 2xx + ≈400-600 × 429 + ≈400-600 ×
-# other (connection drop) — far above the `status_429_min=150 ± 50`
-# threshold.
+# This matches POLICIES.md § p03 and nginx/p03's shape exactly. A
+# 1200-request ASAP burst against the cold bucket produces ≈250 ×
+# 2xx + ≈950 × 429 (200 initial burst + ≈50 tokens drained from
+# the ≈100 ms burst refill window), well above the
+# `status_429_min=150 ± 50` threshold the fixture asserts, and
+# inside the nginx column's ±30-request band (nginx observed
+# 257 × 2xx / 943 × 429).
 #
-# DEVIATION FROM POLICIES.md § p03 (1000 rps service-wide)
-# --------------------------------------------------------
-# Envoy running inside Docker Desktop on Apple Silicon saturates at
-# 500-800 rps of HTTP/1.1 accept throughput under the harness's
-# 128-parallel `curl --parallel` burst probe (measured
-# `listener.0.0.0.0_9080.http.ingress_http.downstream_rq_completed`
-# was 574-802 across four runs). If the filter's token bucket were
-# sized at the canonical 1000 rps it would *never engage* on this
-# host — overshoots would surface as connection-refused ("other"
-# in the burst tally) instead of the 429 the policy mandates.
+# WHY NOT max_tokens=1000 ?
+# -------------------------
+# A naive reading of POLICIES.md § p03 ("1000 rps service-wide")
+# suggests `max_tokens: 1000, tokens_per_fill: 1000, fill_interval:
+# 1s`. That configuration will allow the entire 1200-request ASAP
+# burst to fit inside the bucket's initial capacity (1000 + ≈50-200
+# refill over the sub-second burst window) and emit only ≈50-100
+# × 429 — below the fixture's 100-minimum threshold and nothing
+# like the 943 × 429 shape nginx emits for the same fixture.
 #
-# To keep the parity test exercising the filter *mechanism* end-to-
-# end on every target platform, we size the bucket at 200 rps —
-# comfortably below the 500-rps floor of observed envoy capacity.
-# The canonical 1000 rps will be restored in Phase 4 (load/k6)
-# once envoy is benchmarked on a real Linux host with native
-# networking, where the observed ceiling lifts to tens of
-# thousands of rps. This deviation is catalogued in
-# `docs/GATEWAYS.md § Deviations` and recreated in
-# `gateways/envoy/p03-rl-static/NOTES.md § Deviation`.
+# nginx's `limit_req_zone rate=1000r/s; limit_req burst=200
+# nodelay;` is a leaky-bucket with a SMALL burst cap (200) on top
+# of a steady 1000 rps leak. envoy's `local_ratelimit` is a
+# refillable bucket where `max_tokens` == burst cap (same meaning
+# as nginx's `burst`) and `tokens_per_fill / fill_interval` ==
+# steady rate. The `200 / 1000r/s` shape above is the one-to-one
+# translation.
 #
-# THREAD MODEL NOTE. envoy.filters.http.local_ratelimit keeps its
-# token bucket **per worker thread**. There is no process-global
-# bucket in stock envoy (cross-worker sharing requires an external
-# RLS — out of scope for parity). `--concurrency 2` + per-worker
-# `max_tokens: 100` is therefore the smallest shape that keeps the
-# bucket deterministic and visible to the fixture's 429 threshold
-# on Docker Desktop.
+# THREAD MODEL — BUCKET IS SHARED ACROSS WORKERS
+# ----------------------------------------------
+# envoy.filters.http.local_ratelimit uses a SHARED token bucket by
+# default across every worker thread in the process. That is the
+# behaviour documented in v1.32's proto reference:
+#
+#   > By default the token bucket is shared across all workers, thus
+#   > the rate limits are applied per Envoy process. [...] This can
+#   > be changed by setting `local_rate_limit_per_downstream_connection`
+#   > to true, in which case the rate limits are applied per downstream
+#   > connection.
+#
+# We verified this empirically with `--concurrency 1` vs `--concurrency
+# 2` at `max_tokens: 500` — both yielded ≈555 passes per 1200-request
+# burst (≈500 initial + ≈55 continuous refill during the ~100 ms
+# burst window), confirming the bucket is NOT multiplied by worker
+# count. Earlier iterations of this file mis-modelled the bucket as
+# per-worker and compensated with a halved `max_tokens`; the
+# re-derivation means `max_tokens: 1000` here matches the canonical
+# rate 1:1.
 #
 # Everything else (listener, cluster, uniform settings) is identical
 # to p01-vanilla so the two cells are apples-to-apples on every
@@ -75,7 +87,10 @@ static_resources:
                 codec_type: HTTP1
                 common_http_protocol_options:
                   idle_timeout: 60s
-                  max_connection_duration: 0s
+                  # See p01-vanilla/envoy.yaml: leaving
+                  # max_connection_duration UNSET (rather than `0s`) is the
+                  # "no maximum" setting — `0s` would close every connection
+                  # at t=0 and every request would fail mid-response.
                   max_requests_per_connection: 100000
                 stream_idle_timeout: 60s
                 request_timeout: 10s
@@ -105,17 +120,21 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
                       stat_prefix: http_local_rl_p03
-                      # Per-worker token bucket; effective
-                      # service-wide rate = max_tokens × concurrency.
-                      # With --concurrency 2 this yields ≈200 rps —
-                      # deliberately far below envoy's observed
-                      # 500-800 rps accept ceiling on Docker Desktop
-                      # so the 429 path is reliably exercised. See
-                      # the header comment and NOTES.md § Deviation.
+                      # Process-wide shared token bucket. By default
+                      # envoy's local_ratelimit does NOT partition the
+                      # bucket per worker (see the file header for the
+                      # proto reference + empirical verification).
+                      #
+                      # max_tokens  == burst cap  (matches nginx burst=200)
+                      # fill rate   == steady     (50 / 0.05s = 1000 rps)
+                      #
+                      # Smallest fill_interval envoy supports is 50 ms;
+                      # `tokens_per_fill: 50` delivers the canonical
+                      # 1000-rps steady leak with that granularity.
                       token_bucket:
-                        max_tokens: 100
-                        tokens_per_fill: 100
-                        fill_interval: 1s
+                        max_tokens: 200
+                        tokens_per_fill: 50
+                        fill_interval: 0.05s
                       # Enable the filter on 100% of traffic. Leaving
                       # these unset still enables the filter (the
                       # runtime-key gate is for staged rollouts) but

@@ -56,7 +56,14 @@ static_resources:
                 # common_http_protocol_options knobs for idle timing.
                 common_http_protocol_options:
                   idle_timeout: 60s
-                  max_connection_duration: 0s
+                  # NOTE: we deliberately do NOT set max_connection_duration.
+                  # In envoy proto semantics an UNSET field means "no maximum",
+                  # but setting it to `0s` means "close the connection at t=0"
+                  # (envoy's `downstream_cx_max_duration_reached` counter flips
+                  # on every connection and the client sees `curl: (52) Empty
+                  # reply from server` / truncated responses). The default
+                  # (unset) is what we want: keep long-lived keep-alive
+                  # connections open until the idle timeout fires.
                   max_requests_per_connection: 100000
                 # Request timeouts — 10 s uniform. envoy splits these
                 # into per-stream / per-connection budgets; the

@@ -34,45 +34,87 @@ gateways/envoy/
 │   ├── envoy.yaml            (full static bootstrap: listener + cluster)
 │   ├── setup.sh              (HTTP smoke — envoy is fully configured at boot)
 │   └── NOTES.md              (parity compliance, uniform-setting mapping)
-└── p03-rl-static/
-    ├── envoy.yaml            (p01 + local_ratelimit filter at HCM)
-    ├── setup.sh              (single below-limit GET smoke)
-    └── NOTES.md              (parity + rate deviation on Docker Desktop)
+├── p03-rl-static/
+│   ├── envoy.yaml            (p01 + local_ratelimit at HCM, service-wide 1000 rps)
+│   ├── setup.sh              (single below-limit GET smoke)
+│   └── NOTES.md              (parity + nginx leaky-bucket shape mapping)
+├── p04-rl-dynamic-low/
+│   ├── envoy.yaml            (local_ratelimit + enumerated `descriptors`, 10 rps/IP)
+│   ├── setup.sh              (single below-limit GET on 10.0.0.1)
+│   └── NOTES.md              (parity + v1.32 enumerated-descriptors deviation)
+└── p05-rl-dynamic-high/
+    ├── envoy.yaml            (same shape as p04, 100 rps/IP on 10.5.0.0/24 pool)
+    ├── setup.sh              (single below-limit GET on 10.5.0.1)
+    └── NOTES.md              (parity + v1.32 enumerated-descriptors deviation)
 ```
 
-`p01-vanilla` and `p03-rl-static` are populated today. The remaining
-eight profiles follow the same per-profile layout — each gets its
-own `envoy.yaml`, `setup.sh`, `NOTES.md` and, if it needs a Lua
+`p01`, `p03`, `p04`, `p05` are populated today. The remaining six
+profiles follow the same per-profile layout — each gets its own
+`envoy.yaml`, `setup.sh`, `NOTES.md` and, if it needs a Lua
 primitive, a reference into `_shared/lualib`.
 
-## Config ingestion (`configs:`, not bind-mount)
+## Config ingestion (bind-mount, with an Apple-Silicon gotcha)
 
-`docker-compose.yaml` ships `envoy.yaml` via Docker's `configs:`
-mechanism rather than a bind-mount. Docker Desktop on Apple
-Silicon exhibits bind-mount cache staleness that sometimes
-survives a `compose down`+`up` cycle (observed 15–45 s of a
-container serving a pre-edit copy of the file). `configs:`
-materialises the file fresh on every start, which is essential
-when iterating on a fragile filter configuration.
+`docker-compose.yaml` mounts each profile's `envoy.yaml` via a
+standard `volumes:` bind-mount at `/etc/envoy/envoy.yaml:ro`.
+An earlier iteration switched to Docker's `configs:` mechanism
+chasing a phantom "bind-mount staleness" symptom; that symptom
+turned out to be `max_connection_duration: 0s` in the HCM's
+`common_http_protocol_options`, which closes every connection at
+`t=0` and hides config changes behind a wall of
+`curl: (52) Empty reply from server`. That field is now UNSET
+across every envoy profile, so bind-mount is reliable again.
 
-The shared Lua library stays a bind-mount because it is a
-directory and updates there do not invalidate a critical
-protobuf-parsed file.
+Apple-Silicon caveat: Docker Desktop's VirtioFS occasionally
+caches a bind-mounted file by inode and continues serving a
+pre-edit copy inside the container even after `docker compose
+down -v && up`. The symptom is an otherwise-clean envoy.yaml
+that envoy rejects with `no such field` / `unknown fields`
+errors referencing an OLD indentation you have already fixed on
+disk. The cure is a one-shot inode swap:
 
-## Thread model: `--concurrency 2`
+```bash
+f=gateways/envoy/<profile>/envoy.yaml
+cp "$f" "$f.new" && rm "$f" && mv "$f.new" "$f"
+docker compose -f gateways/envoy/docker-compose.yaml down -v
+make parity-gateway PARITY_GATEWAY=envoy PARITY_PROFILE=<profile>
+```
 
-`docker-compose.yaml` pins `--concurrency 2`. Envoy's
-`local_ratelimit` filter keeps its token bucket **per worker
-thread** — there is no process-global bucket without an external
-RLS. Two workers is the sweet spot between:
+`touch "$f"` does NOT invalidate the VirtioFS cache entry; only a
+genuine inode change does. After the first successful run the
+cache is refreshed and further edits via editor-native save
+(which writes-then-renames, also changing the inode) work as
+expected.
 
-* `--concurrency 1` — single accept thread drops most of the
-  128-parallel burst probe as connection-refused;
-* `--concurrency N_CPU` — token buckets multiply unpredictably
-  and the effective rate drifts with CPU.
+## Thread model: `--concurrency 1`, shared bucket
 
-Each rate-limit profile divides its `max_tokens` by two so the
-effective service-wide / per-key rate is deterministic.
+`docker-compose.yaml` pins `--concurrency 1`. Envoy's
+`local_ratelimit` filter uses a **shared** token bucket across
+every worker thread in the process by default (v1.17+, confirmed
+by the v1.32 proto doc: "By default the token bucket is shared
+across all workers, thus the rate limits are applied per Envoy
+process") — not per-worker. An earlier iteration mis-read this as
+per-worker and halved every `max_tokens` to compensate, which
+cut the effective rate in half. We verified the shared-bucket
+reality empirically on p03 (with `--concurrency 1` and
+`--concurrency 2`, both produced the same 550-request pass on a
+1200-req burst) and every RL profile now sizes buckets at the
+canonical rate verbatim:
+
+* `p03`: `max_tokens=200, tokens_per_fill=50, fill_interval=0.05s`
+  — 1000 rps steady refill with a 200-request burst cap (matches
+  nginx's leaky-bucket shape of `rate=1000r/s, burst=200`).
+* `p04`: `max_tokens=10, tokens_per_fill=10, fill_interval=1s` —
+  10 rps per enumerated IP.
+* `p05`: `max_tokens=100, tokens_per_fill=100, fill_interval=1s` —
+  100 rps per enumerated IP.
+
+Raising `--concurrency` does not change the rate limit (single
+bucket per descriptor regardless of thread count); it only
+changes raw throughput headroom. One worker is the simplest
+deterministic posture for parity attestation; a future load-phase
+campaign can raise `--concurrency` without touching any RL
+config.
 
 ## Feature matrix
 
@@ -80,22 +122,25 @@ effective service-wide / per-key rate is deterministic.
 |-------------------------|-----------------------------------------------------|----------------|
 | `p01-vanilla`           | Single listener + `router` filter + 1 cluster       | PASS (4/4)     |
 | `p02-jwt`               | Lua filter + shared `jwt_hs256` helper (see below)  | TBD            |
-| `p03-rl-static`         | `envoy.filters.http.local_ratelimit` (HCM-level)    | PASS (2/2)¹    |
-| `p04-rl-dynamic-low`    | `local_ratelimit` with `descriptors` keyed on header| TBD            |
-| `p05-rl-dynamic-high`   | Same as p04, different `tokens_per_fill`            | TBD            |
+| `p03-rl-static`         | `envoy.filters.http.local_ratelimit` (HCM-level), canonical 1000 rps | PASS (2/2) |
+| `p04-rl-dynamic-low`    | `local_ratelimit` with enumerated `descriptors` keyed on `X-Real-IP`, 10 rps/IP | PASS (2/2)¹ |
+| `p05-rl-dynamic-high`   | Same shape as p04, 100 rps/IP                       | PASS (3/3)¹    |
 | `p06-req-headers`       | `request_headers_to_add` + `request_headers_to_remove` | TBD         |
 | `p07-resp-headers`      | `response_headers_to_add` + `_to_remove` (+ server_header_transformation) | TBD |
 | `p08-req-body`          | Lua filter reading/rewriting `request_body`         | TBD            |
 | `p09-resp-body`         | Lua filter reading/rewriting `response_body`        | TBD            |
 | `p10-full-pipeline`     | Composition of p02…p09 in envoy filter chain order  | TBD            |
 
-¹ `p03-rl-static` passes parity but with a **documented rate
-deviation**: canonical 1000 rps is lowered to ≈200 rps because
-envoy on Docker Desktop / Apple Silicon saturates at 500–800 rps
-of HTTP/1.1 accept under the 128-parallel burst probe. Sizing the
-bucket above that ceiling means the rate limiter never engages on
-this host. The canonical rate will be restored in Phase 4 on a
-real Linux host. See `p03-rl-static/NOTES.md § Deviation`.
+¹ `p04` / `p05` use envoy v1.32's `local_ratelimit` **enumerated
+descriptors** (one `descriptors[]` entry per fixture IP). Blank-
+value wildcard descriptors — the idiomatic "one bucket per unique
+header value" shape — landed in v1.33 via envoyproxy/envoy#36623
+and are therefore unavailable in the pinned column image. The
+real-world 100-IP / 50 000-IP pool mandated by `docs/POLICIES.md`
+will be restored in Phase 4 either by bumping the column to
+v1.33+ or by pairing `local_ratelimit` with a global RLS keyed
+on `X-Real-IP`. See each profile's `NOTES.md § Deviation` and
+`docs/GATEWAYS.md § Deviations`.
 
 ### JWT HS256 note
 

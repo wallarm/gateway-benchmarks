@@ -304,25 +304,45 @@
     algorithms (RS/ES/PS), so the canonical HS256 secret goes
     through Lua (same helper the nginx column uses).
   - [x] `gateways/envoy/p03-rl-static/` — parity **2/2 PASS**
-    on the pinned distroless image.
-    `envoy.filters.http.local_ratelimit` at HCM level,
-    `token_bucket: { max_tokens: 100, tokens_per_fill: 100,
-    fill_interval: 1s }` per worker × `--concurrency 2` ⇒ ≈200
-    rps effective. **Rate deviation** (canonical 1000 rps lowered
-    to ≈200 rps on Docker Desktop / Apple Silicon because envoy
-    saturates at 500–800 rps of HTTP/1.1 accept under the
-    128-parallel burst probe). Canonical rate restored in Phase 4
-    on a real Linux host. Config ingestion moved from bind-mount
-    to Docker `configs:` to work around VirtioFS cache staleness.
+    on the pinned distroless image. Canonical 1000 rps
+    service-wide via `envoy.filters.http.local_ratelimit` at HCM
+    level with bucket shape `max_tokens: 200, tokens_per_fill: 50,
+    fill_interval: 0.05s` — mirrors nginx's
+    `rate=1000r/s, burst=200 nodelay` leaky-bucket semantics
+    verbatim. Previous "≈200 rps rate deviation" was traced to a
+    `max_connection_duration: 0s` bug in envoy's
+    `common_http_protocol_options` (closes every connection at
+    t=0) and dropped after that field was unset across every
+    envoy profile. Thread model: `--concurrency 1` with a shared
+    token bucket (envoy v1.17+ defaults to per-process shared
+    buckets for `local_ratelimit`, verified empirically).
     See
     [`gateways/envoy/p03-rl-static/NOTES.md`](./gateways/envoy/p03-rl-static/NOTES.md)
     and
     [`docs/GATEWAYS.md § Deviations`](./docs/GATEWAYS.md#gwenvoy-pp03-rl-static).
-  - [ ] p04/p05 — planned via
-    `envoy.filters.http.local_ratelimit` with `descriptors` keyed
-    on `X-Real-IP`, token buckets `{5, 5} / {50, 50}` per worker
-    × `--concurrency 2` (same deviation workaround as p03 on
-    Docker Desktop).
+  - [x] `gateways/envoy/p04-rl-dynamic-low/` — parity **2/2 PASS**.
+    `envoy.filters.http.local_ratelimit` at HCM with
+    `rate_limits.actions` extracting `X-Real-IP` into a
+    `client_ip` descriptor key, and 10 enumerated `descriptors[]`
+    entries (one per fixture IP `10.0.0.1..10.0.0.10`). Per-IP
+    token bucket `max_tokens: 10, tokens_per_fill: 10,
+    fill_interval: 1s` = canonical 10 rps/IP.
+    `always_consume_default_token_bucket: false` so matched
+    descriptors do not drain the global safety-net bucket. See
+    [`gateways/envoy/p04-rl-dynamic-low/NOTES.md`](./gateways/envoy/p04-rl-dynamic-low/NOTES.md).
+  - [x] `gateways/envoy/p05-rl-dynamic-high/` — parity **3/3 PASS**.
+    Same mechanism as p04, 11 enumerated `descriptors[]` entries
+    (`10.5.0.1..10.5.0.10 + 10.5.9.9`), per-IP bucket sized
+    `max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s`
+    = canonical 100 rps/IP. **Enumerated-descriptors deviation**
+    (shared with p04) documented in
+    [`docs/GATEWAYS.md § Deviations`](./docs/GATEWAYS.md#gwenvoy-pp04-rl-dynamic-low--p05-rl-dynamic-high-infraenumerated-descriptors):
+    v1.32 requires verbatim descriptor matches; wildcard-value
+    descriptors land in v1.33 (envoyproxy/envoy#36623). Full pool
+    cardinality (100 / 50 000 IPs per POLICIES.md) restored in
+    Phase 4 by bumping the column or pairing with a global RLS.
+    See
+    [`gateways/envoy/p05-rl-dynamic-high/NOTES.md`](./gateways/envoy/p05-rl-dynamic-high/NOTES.md).
   - [ ] p06/p07 — planned via native
     `request_headers_to_add` / `request_headers_to_remove` and
     `response_headers_to_add` / `response_headers_to_remove` on
@@ -605,26 +625,49 @@
      uniform setting wired explicitly.
    - **envoy / p03-rl-static**: parity **2/2 PASS** via
      `envoy.filters.http.local_ratelimit` at HCM level with a
-     per-worker `token_bucket`. Two adjustments were landed in
-     the process: (a) `--concurrency 2` pinned on the compose
-     command (envoy's bucket is per-worker, so `N_CPU` workers
-     would multiply the rate unpredictably); (b) config ingestion
-     migrated from a bind-mount to Docker `configs:` because
-     Docker Desktop VirtioFS kept serving a pre-edit copy of
-     `envoy.yaml` for ~30 s after `compose up`, which broke
-     iteration. **Rate deviation** documented: canonical 1000 rps
-     lowered to ≈200 rps on Docker Desktop / Apple Silicon
-     because envoy saturates at 500–800 rps of HTTP/1.1 accept
-     under the 128-parallel burst probe (observed 2xx≈122,
-     429≈166, other≈912 — 166 × 429 above the 150 ± 50
-     threshold). Canonical rate restored in Phase 4 on a real
-     Linux host. Envoy column snapshot: **2 PASS / 0 FAIL /
-     6 probes** (p01 + p03). Remaining 8 profiles planned:
-     `local_ratelimit` with descriptors for p04/p05, native
-     header transforms for p06/p07, Lua filter reusing the
+     shared-across-workers `token_bucket`. Bucket shape
+     `max_tokens: 200, tokens_per_fill: 50, fill_interval: 0.05s`
+     mirrors nginx's `rate=1000r/s, burst=200 nodelay` leaky-
+     bucket semantics — canonical 1000 rps restored after
+     discovering the previous "≈200 rps deviation" was actually
+     caused by `max_connection_duration: 0s` in envoy's
+     `common_http_protocol_options` (which means "close
+     immediately at t=0", not "no maximum"). Unsetting that
+     field across every envoy profile eliminated the phantom
+     connection-churn symptom and made canonical-rate configs
+     reliable. Also disproved the "per-worker bucket" assumption:
+     envoy v1.17+ shares `local_ratelimit` buckets across every
+     worker in the process, confirmed empirically by
+     `--concurrency 1 vs 2` producing identical pass counts on a
+     1200-req burst.
+   - **envoy / p04-rl-dynamic-low + p05-rl-dynamic-high**: parity
+     **2/2 + 3/3 PASS**. `envoy.filters.http.local_ratelimit` with
+     `rate_limits.actions` extracting `X-Real-IP` into a
+     `client_ip` descriptor key, plus enumerated `descriptors[]`
+     entries (10 for p04 on `10.0.0.1..10.0.0.10`, 11 for p05 on
+     `10.5.0.1..10.5.0.10 + 10.5.9.9`). Per-IP token buckets sized
+     at the canonical rate (10 rps/IP for p04, 100 rps/IP for p05),
+     `always_consume_default_token_bucket: false` to isolate each
+     IP's bucket from the safety-net default. **Enumerated-
+     descriptors deviation** documented: v1.32 requires verbatim
+     descriptor matches; blank-value wildcard descriptors (the
+     idiomatic "one bucket per unique value" shape) land in v1.33
+     via envoyproxy/envoy#36623. Full pool cardinality (100 /
+     50 000 IPs) restored in Phase 4 by bumping the column or
+     pairing with a global RLS. Rediscovered an Apple-Silicon
+     VirtioFS bind-mount cache gotcha: a file can stay cached by
+     inode across `compose down -v && up` even after an on-disk
+     edit; `cp f f.new && rm f && mv f.new f` forces a refresh
+     (`touch` alone does not — only a real inode change
+     invalidates the cache). Documented in
+     `gateways/envoy/README.md § Config ingestion`.
+   - **envoy column snapshot**: **11 PASS / 0 FAIL / 11 probes**
+     across p01 + p03 + p04 + p05. Remaining 6 profiles planned:
+     native header transforms for p06/p07, Lua filter reusing the
      shared `jwt_hs256.lua` / `body_rewrite.lua` for p02/p08/p09,
      and composition in HCM filter order for p10.
-   - next pass: `kong` → `apisix` → `traefik` → `tyk`, one
-     profile column at a time (envoy p02..p10 fills in interleaved).
+   - next pass: envoy p06/p07 → p02 → p08/p09 → p10, then
+     `kong` → `apisix` → `traefik` → `tyk`, one profile column
+     at a time.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

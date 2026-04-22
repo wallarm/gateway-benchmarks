@@ -56,26 +56,16 @@ services:
     # log overrides keep filter-level traces silent while the
     # orchestrator still sees real warnings.
     #
-    # `--concurrency 2` pins envoy to exactly two worker threads. That
-    # is deliberate for parity: envoy's local_ratelimit filter keeps its
-    # token bucket *per worker*, so with the default `--concurrency
-    # N_CPU` the canonical limits would scale up by an unpredictable
-    # factor. Two workers is the sweet spot between:
-    #
-    #   * one worker — single-threaded accept() path can not keep up
-    #     with the 128-parallel-curl burst probe; ~40 % of the 1200
-    #     requests get dropped as connection-refused before the
-    #     rate-limit filter sees them;
-    #   * N_CPU workers — token buckets multiply unpredictably (one
-    #     bucket per worker) and the effective rate drifts with CPU.
-    #
-    # With two workers the rate-limit profiles divide their token
-    # buckets by two (p03: tokens_per_fill=500, p04: tokens_per_fill=5,
-    # p05: tokens_per_fill=50) so the *effective* service-wide /
-    # per-key rate matches the canonical value from
-    # docs/POLICIES.md. This is a documented deviation driven by the
-    # filter's per-worker design and is recorded in each profile's
-    # NOTES.md.
+    # `--concurrency 1` pins envoy to a single worker thread. It is
+    # only relevant to throughput, NOT to rate-limit semantics:
+    # envoy's local_ratelimit filter uses a SHARED token bucket
+    # across every worker in the process (see v1.32 proto docs and
+    # the inline comment in each p03/p04/p05 envoy.yaml for the
+    # empirical verification we ran), so the effective service-wide
+    # or per-IP rate is independent of worker count. One worker is
+    # the simplest deterministic posture for parity attestation; a
+    # future load-phase campaign can raise `--concurrency` to
+    # saturate the platform without touching the rate-limit config.
     command:
       - "-c"
       - "/etc/envoy/envoy.yaml"
@@ -84,25 +74,29 @@ services:
       - "--component-log-level"
       - "upstream:warn,connection:error,http:warn"
       - "--concurrency"
-      - "2"
-    # Config ingestion notes:
-    #   * envoy.yaml arrives via `configs:` (not a bind-mount). Docker
-    #     Desktop on Apple Silicon caches bind-mounted host files with
-    #     a TTL that sometimes survives `compose down`+`up` cycles
-    #     (observed 15–45 s of stale content after edits). Using
-    #     `configs:` routes the file through the Docker daemon's
-    #     config store which is re-materialised on every `up`, so
-    #     the container always reads exactly what is on disk right
-    #     now — critical when iterating on a fragile filter
-    #     configuration like local_ratelimit.
-    #   * The shared Lua library stays a bind-mount because it is a
-    #     directory and updates there don't invalidate a critical
-    #     protobuf-parsed file.
-    configs:
-      - source: envoy_yaml
-        target: /etc/envoy/envoy.yaml
-        mode: 0444
+      - "1"
+    # envoy.yaml is mounted read-only per profile. The mount target
+    # is always /etc/envoy/envoy.yaml; the source is picked by the
+    # `GATEWAY_PROFILE` env var (default `p01-vanilla`) — the
+    # scripts/parity-gateway.sh harness sets it per profile.
+    #
+    # We bind-mount rather than use `configs:` because compose's
+    # named configs are cached across `compose down -v` cycles; an
+    # edit to the underlying file is only re-materialised when the
+    # config *name* changes, which means tuning iterations against
+    # the same profile silently reuse a stale file. Bind-mounts read
+    # fresh on every container start, which is what we want.
+    #
+    # A previous iteration (see git log) reversed this decision after
+    # chasing a phantom "bind-mount staleness" symptom. That symptom
+    # turned out to be `max_connection_duration: 0s` in the HCM's
+    # `common_http_protocol_options`, which closes every connection
+    # at t=0 and hides config changes behind a wall of
+    # `curl: (52) Empty reply from server`. That field is now UNSET
+    # across every envoy profile (see the inline comment in each
+    # profile's envoy.yaml), so bind-mount is the right tool again.
     volumes:
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/envoy.yaml:/etc/envoy/envoy.yaml:ro
       - ./_shared/lualib:/etc/envoy/lualib:ro
     ports:
       - "9080:9080"  # data plane (parity-gateway target)
@@ -117,7 +111,3 @@ services:
 networks:
   bench-net:
     driver: bridge
-
-configs:
-  envoy_yaml:
-    file: ./${GATEWAY_PROFILE:-p01-vanilla}/envoy.yaml

@@ -211,22 +211,36 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       sweep wall-clock: ~15 s.
     - [~] `envoy` — column opened on
       `envoyproxy/envoy:distroless-v1.32.6` pinned by digest.
-      **2 PASS / 0 FAIL / 6 probes** so far (p01 + p03).
-      `p01-vanilla` — static bootstrap (listener + HCM + router +
-      STRICT_DNS cluster), every uniform setting wired explicitly.
-      `p03-rl-static` — `envoy.filters.http.local_ratelimit` at
-      HCM level, per-worker `token_bucket` × `--concurrency 2`
-      with a **documented rate deviation**: canonical 1000 rps
-      lowered to ≈200 rps because envoy on Docker Desktop /
-      Apple Silicon saturates at 500–800 rps of HTTP/1.1 accept
-      under the 128-parallel burst probe (the filter would never
-      engage otherwise). Canonical rate restored in Phase 4 on a
-      real Linux host. Config ingestion moved from bind-mount to
-      Docker `configs:` to work around VirtioFS cache staleness.
-      Remaining 8 profiles planned via native `local_ratelimit`
-      with descriptors (p04/p05), `*_headers_to_add/_to_remove`
-      (p06/p07) and a Lua filter reusing the same
-      `jwt_hs256.lua` / `body_rewrite.lua` the nginx column uses
+      **11 PASS / 0 FAIL / 11 probes** so far (p01 + p03 + p04
+      + p05). `p01-vanilla` — static bootstrap (listener + HCM
+      + router + STRICT_DNS cluster), every uniform setting
+      wired explicitly. `p03-rl-static` —
+      `envoy.filters.http.local_ratelimit` at HCM level,
+      canonical 1000 rps service-wide via
+      `max_tokens: 200, tokens_per_fill: 50, fill_interval: 0.05s`
+      (mirrors nginx's `rate=1000r/s, burst=200 nodelay` leaky-
+      bucket shape verbatim; envoy's `max_tokens` is total
+      capacity, not a steady ceiling — a common cross-gateway
+      parity trap). `p04-rl-dynamic-low` / `p05-rl-dynamic-high`
+      — per-IP rate limiting via `local_ratelimit` with
+      `rate_limits.actions` extracting `X-Real-IP` into a
+      `client_ip` descriptor key and enumerated `descriptors[]`
+      (one per fixture IP; blank-value wildcard descriptors land
+      in v1.33 via envoyproxy/envoy#36623). Per-IP buckets at
+      the canonical rate (`p04: 10 rps/IP, p05: 100 rps/IP`),
+      `always_consume_default_token_bucket: false`. Two
+      fundamental corrections landed along the way: (a)
+      `max_connection_duration: 0s` means "close immediately",
+      not "no maximum" — unsetting it across every envoy
+      profile restored canonical-rate RL behaviour on Docker
+      Desktop; (b) `local_ratelimit` uses a **shared** token
+      bucket across workers (v1.17+), confirmed empirically, so
+      `--concurrency` does not multiply rate limits. Remaining
+      6 profiles planned via native
+      `request_headers_to_add/_to_remove` +
+      `response_headers_to_add/_to_remove` (p06/p07) and a Lua
+      filter reusing the same `jwt_hs256.lua` /
+      `body_rewrite.lua` the nginx column uses
       (`envoy.filters.http.jwt_authn` only supports asymmetric
       RS/ES/PS — not the canonical HS256 secret).
     - [ ] `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)

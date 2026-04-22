@@ -85,6 +85,25 @@ GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:9080}"
 # against a bare backend but leaves slack on a cold gateway under
 # x86/arm emulation. Push it to 128 so the 1200-req/s parity probe
 # actually fits inside its 1-second window.
+#
+# Per-gateway override: if `gateways/<gw>/parity.env` exists, source
+# it here so a column can tune its harness posture without touching
+# the default. The file is a plain bash snippet — only simple
+# `KEY=value` lines intended. No column ships one today: an earlier
+# iteration added `gateways/envoy/parity.env` with
+# `BURST_PARALLELISM=32` after misdiagnosing a connection-churn
+# symptom on Docker Desktop as "accept-queue saturation"; the real
+# root cause was `max_connection_duration: 0s` in envoy's HCM
+# `common_http_protocol_options` (closes every connection at t=0,
+# not "no maximum"). Unsetting that field across every envoy
+# profile eliminated the churn and the override was dropped. The
+# mechanism stays here for future columns whose harness posture
+# legitimately differs.
+gateway_parity_env="gateways/${GATEWAY}/parity.env"
+if [[ -f "${gateway_parity_env}" ]]; then
+    # shellcheck disable=SC1090
+    source "${gateway_parity_env}"
+fi
 export BURST_PARALLELISM="${BURST_PARALLELISM:-128}"
 
 # -----------------------------------------------------------------------------

@@ -42,8 +42,14 @@ gateways/wallarm/
 │   ├── gateway.yaml           (listener + pool; copied from p01)
 │   ├── setup.sh               (Admin API: ratelimit policy on flow)
 │   └── NOTES.md               (deviation: sliding window, not fixed)
-├── p04-rl-dynamic-low/        (to be added)
-├── p05-rl-dynamic-high/       (to be added)
+├── p04-rl-dynamic-low/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: ratelimit keyed on X-Real-IP, 10 rps)
+│   └── NOTES.md               (sliding window, scope=service, math check)
+├── p05-rl-dynamic-high/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: ratelimit keyed on X-Real-IP, 100 rps)
+│   └── NOTES.md               (same shape as p04, rate=100)
 ├── p06-req-headers/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner on request_flow)
@@ -70,8 +76,8 @@ gateways/wallarm/
 | `p01-vanilla`           | Catch-all service `/ → backend`                    | PASS (4/4)        |
 | `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret)  | FEATURE-MISSING   |
 | `p03-rl-static`         | `ratelimit` policy, key = service, 1000 rps        | PASS (2/2)        |
-| `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | planned           |
-| `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | planned           |
+| `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | PASS (2/2)        |
+| `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | PASS (3/3)        |
 | `p06-req-headers`       | `lua_runner` on request_flow                       | PASS (3/3)        |
 | `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
 | `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | PASS (3/3)        |

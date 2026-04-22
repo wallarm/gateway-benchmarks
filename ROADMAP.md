@@ -182,8 +182,19 @@
   both accept scalar / array-of-one representations so fixtures stay
   backend-agnostic (go-httpbin echoes headers and query args as
   arrays).
-- [ ] `gateways/wallarm/` configs for p04, p05, p10 (next
-  Phase 3b pass)
+- [x] `gateways/wallarm/p04-rl-dynamic-low/` — real wallarm `0.2.0`
+  image, parity **2/2 PASS**. `ratelimit` policy keyed on
+  `${request.headers.x-real-ip}`, rate 10/s, sliding window,
+  scope=service. Burst of 10 IPs × 45 reqs ASAP lands at
+  `2xx=99, 429=351` vs. the math's `100/350` (one-request
+  sliding-counter drift). See
+  [`gateways/wallarm/p04-rl-dynamic-low/NOTES.md`](./gateways/wallarm/p04-rl-dynamic-low/NOTES.md).
+- [x] `gateways/wallarm/p05-rl-dynamic-high/` — real wallarm `0.2.0`
+  image, parity **3/3 PASS**. Same policy shape as p04, rate=100/s.
+  10 distinct IPs × 20 rps → `2xx=200, 429=0` (all under limit);
+  single-IP saturation of 500 reqs → `2xx=100, 429=400` exact. See
+  [`gateways/wallarm/p05-rl-dynamic-high/NOTES.md`](./gateways/wallarm/p05-rl-dynamic-high/NOTES.md).
+- [ ] `gateways/wallarm/p10-full-pipeline/` (next Phase 3b pass)
 - [ ] `gateways/nginx/` configs for p01..p10
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
 - [ ] `gateways/kong/` configs for p01..p10
@@ -368,10 +379,17 @@
      helper landed in `scripts/parity-attestation.sh` so
      `response_body_json_contains` accepts scalar / array shapes too
      (go-httpbin echoes query args as possibly-multi-value arrays).
-   - next passes (in this order):
-     - `wallarm/p04-rl-dynamic-low` + `p05-rl-dynamic-high` →
-       high-cardinality path with the burst fixtures.
-     - `wallarm/p10-full-pipeline` → composition of the above.
+   - `wallarm/p04-rl-dynamic-low` **2/2 PASS** and
+     `wallarm/p05-rl-dynamic-high` **3/3 PASS** — `ratelimit`
+     policy with a `${request.headers.x-real-ip}` context
+     expression (per-IP bucketing inside a service-scoped namespace),
+     sliding window. Observed counts line up with the math to the
+     request: p05's single-IP saturation gives exactly
+     `2xx=100, 429=400` under a 500-req burst with a 100/s limit.
+     Also documented the `duration_s` harness caveat (parity runner
+     fires ASAP; Phase 4 k6 profiles do the paced arrivals).
+   - next pass:
+     - `wallarm/p10-full-pipeline` → composition of p02…p09.
    - then the other gateways (`nginx` → `envoy` → `kong` → `apisix`
      → `traefik` → `tyk`), one profile column at a time.
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure

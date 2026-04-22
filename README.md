@@ -128,7 +128,11 @@ The project is in early phases. No benchmark runs yet — we are building the fo
     - [x] `wallarm / p09-resp-body` — 3/3 green, `lua_runner` +
       `cjson.safe` on `response_flow` (`+$.bench.injected`,
       `-$.origin`, Content-Length recomputed)
-    - [ ] `wallarm / p04, p05, p10` (next iteration)
+    - [x] `wallarm / p04-rl-dynamic-low` — 2/2 green, `ratelimit`
+      keyed on `X-Real-IP`, rate=10/s, sliding window
+    - [x] `wallarm / p05-rl-dynamic-high` — 3/3 green, same policy
+      shape as p04 with rate=100/s
+    - [ ] `wallarm / p10` (next iteration)
     - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

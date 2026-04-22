@@ -186,6 +186,73 @@ Status
 : `mitigated` — cell is green; document the window-type choice in the
   NOTES.md so reviewers can see the trade-off at a glance.
 
+#### [gw=wallarm, p=p04-rl-dynamic-low / p05-rl-dynamic-high]
+
+What differs
+: Both dynamic-RL profiles use `ratelimit_key:
+  "${request.headers.x-real-ip}"` — a wallarm context expression
+  that resolves at request time. Bucketing happens per unique
+  expression value inside a service-scoped namespace. Same
+  `window_type: sliding` choice as p03 (`fixed` + `window: 1` is a
+  no-op on 0.2.0).
+
+Root cause
+: Public Admin API shape: `scope` namespaces buckets but does not
+  dictate the partition key — the key partition is always the
+  resolved value of `ratelimit_key`. Matches the upstream
+  accuracy-test harness
+  ([`single_node_ratelimit_accuracy_test.sh`](../wallarm-api-gateway/tests/integration/single_node_ratelimit_accuracy_test.sh))
+  exactly.
+
+Resolution
+: `setup.sh` on both profiles binds a single `ratelimit` policy on
+  the service's `request_flow`. The math works out to the
+  request: for p04 with 10 IPs × 45 req/s-sliding-window,
+  `10 × 2xx + 35 × 429` per IP → cross-IP `100 × 2xx, 350 × 429`
+  (observed `99 × 2xx, 351 × 429`). For p05 saturating a single
+  IP with 500 reqs → `100 × 2xx, 400 × 429` exact.
+
+Impact on ranking
+: `none` — every gateway in the matrix implements dynamic RL with
+  an IP-keyed bucket; wallarm's context expression is the same
+  primitive as envoy's `local_ratelimit` descriptors, kong's
+  `rate-limiting` plugin with `limit_by=header`, nginx's
+  `limit_req_zone` keyed on `$http_x_real_ip`, etc.
+
+Status
+: `accepted` — mirrored in `gateways/wallarm/p04-rl-dynamic-low/NOTES.md`
+  and `gateways/wallarm/p05-rl-dynamic-high/NOTES.md`.
+
+#### [harness, p=burst-runner-ignores-duration_s]
+
+What differs
+: Rate-limit fixtures (`p03`, `p04`, `p05`) carry a `duration_s`
+  field, but
+  [`scripts/parity-attestation.sh::run_burst_probe`](../scripts/parity-attestation.sh)
+  fires every request as fast as `curl --parallel` can open
+  connections — it does **not** pace them across `duration_s`.
+
+Root cause
+: The parity harness is deliberately cheap: no `hey`, no `ab`, no
+  `vegeta`. The `duration_s` field is preserved in the fixture
+  for Phase-4 load profiles (k6 with paced arrivals), where it
+  actually matters.
+
+Resolution
+: None needed — the per-window invariant ("≤ R × 2xx per IP per
+  window") is *stricter* under an ASAP burst than under a paced
+  trickle. A gateway that cannot limit under ASAP bursts would
+  fail the parity check, even though it might pass under paced
+  load.
+
+Impact on ranking
+: `none` — parity certifies correctness, not RPS. Phase 4 k6 load
+  profiles produce the actual throughput numbers using paced
+  arrivals.
+
+Status
+: `accepted` — documented here and in each RL profile's NOTES.md.
+
 #### [gw=wallarm, p=p06-req-headers]
 
 What differs
@@ -415,6 +482,12 @@ Status
     image (see deviation above).
   - `wallarm / p03-rl-static` — **ready**, parity 2/2 green
     (1200 rps burst, `window_type: sliding`).
+  - `wallarm / p04-rl-dynamic-low` — **ready**, parity 2/2 green
+    (10 rps/IP, 10 IPs × 45 reqs ASAP → `2xx=99, 429=351`;
+    theoretical `100/350`, one-request drift).
+  - `wallarm / p05-rl-dynamic-high` — **ready**, parity 3/3 green
+    (100 rps/IP; probe 2 `2xx=200/0` exact; probe 3 single IP
+    saturation `2xx=100, 429=400` exact).
   - `wallarm / p06-req-headers` — **ready**, parity 3/3 green
     (`lua_runner` on `request_flow`, base-path-strip backend trick).
   - `wallarm / p07-resp-headers` — **ready**, parity 2/2 green
@@ -426,8 +499,7 @@ Status
   - `wallarm / p09-resp-body` — **ready**, parity 3/3 green
     (`lua_runner` + `cjson.safe` on `response_flow`,
     Content-Length recomputed).
-  - `wallarm / p04 / p05 / p10` — pending (next Phase 3b
-    iterations).
+  - `wallarm / p10` — pending (next Phase 3b iteration).
   - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst

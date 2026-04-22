@@ -33,6 +33,7 @@ jobs:
           use-quiet-mode: "yes"
           use-verbose-mode: "no"
           check-modified-files-only: "yes"
+          base-branch: "main"
           config-file: ".github/markdown-link-check.json"
 
   go-vet:

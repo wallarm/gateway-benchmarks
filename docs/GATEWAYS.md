@@ -650,7 +650,24 @@ Status
   - nginx roster on `1.27.3-alpine` + `openresty:1.27.1.2-alpine`:
     **10 PASS, 0 FAIL, 32/32 probes** across all 10 canonical
     profiles.
-  - `envoy / kong / apisix / traefik / tyk` — pending.
+  - `envoy / p01-vanilla` — **ready**, parity 4/4 green on
+    `envoyproxy/envoy:distroless-v1.32.6@sha256:569ad5b250…acf56`.
+    Static bootstrap (listener + HCM + router), `codec_type: HTTP1`,
+    `reuse_port`, `common_http_protocol_options.idle_timeout: 60s`,
+    `request_timeout: 10s`, single `STRICT_DNS` cluster
+    `backend_cluster`. Admin API exposed read-only on :9901 for
+    debugging; no profile mutates envoy through it — every profile
+    ships its own static `envoy.yaml`.
+  - `envoy / p02…p10` — pending; implementation plan: native
+    `envoy.filters.http.local_ratelimit` for p03/p04/p05;
+    `request_headers_to_add/_to_remove` + `response_headers_*` for
+    p06/p07 (with `server_header_transformation` to drop `Server`);
+    Lua filter + `gateways/envoy/_shared/lualib/jwt_hs256.lua` for
+    p02 (because `envoy.filters.http.jwt_authn` only supports
+    asymmetric RS/ES/PS — not the canonical HS256 secret);
+    Lua body-rewrite for p08/p09; composition in HCM filter order
+    for p10.
+  - `kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst
   actually fits inside its 1 s window. Validated end-to-end against

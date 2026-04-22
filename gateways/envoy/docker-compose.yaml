@@ -1,0 +1,85 @@
+# gateways/envoy/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for parity attestation.
+# Same port contract as every other gateway under `gateways/<gw>/`:
+#
+#     loadgen (host)  →  envoy :9080  →  backend :8080
+#
+# Envoy has a read-only admin API (by convention on :9901). We *do*
+# publish it because parity-gateway.sh's generic wait loop is happy
+# with either port answering and because it is useful for debugging
+# live runs (`curl :9901/stats` / `/clusters`). No profile ever
+# mutates the configuration through it — every profile ships a full
+# static bootstrap file mounted read-only at /etc/envoy/envoy.yaml
+# and reloads by container restart.
+#
+# The policy profile is picked by the GATEWAY_PROFILE env var (default
+# `p01-vanilla`). Each profile directory must contain:
+#
+#   envoy.yaml   - full static bootstrap (listener + clusters + filters)
+#   setup.sh     - post-up smoke check (envoy is ready at container start)
+#   NOTES.md     - profile-specific notes / deviations
+#
+# Default image is pinned by digest for reproducibility; refresh with:
+#   docker pull envoyproxy/envoy:distroless-v1.32.6 && \
+#     docker image inspect envoyproxy/envoy:distroless-v1.32.6 \
+#       --format '{{index .RepoDigests 0}}'
+#
+# The GATEWAY_IMAGE override hook is wired in (per the wallarm/nginx
+# pattern) so a future profile that needs a non-distroless image — or
+# an unreleased build — can swap it via `gateways/envoy/<profile>/.env`
+# without touching this file.
+
+name: gateway-benchmarks-envoy
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-envoy-backend
+    restart: "no"
+    # Backend listens on :8080 inside the container. We do NOT publish
+    # it on the host — only the gateway needs to talk to it, over the
+    # private `bench-net` bridge. Add `- "8088:8080"` temporarily if
+    # you want to probe it from the host.
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-envoyproxy/envoy:distroless-v1.32.6@sha256:569ad5b2503aca24c9f6af48c47449200afdb761bb4d1a021741d6d6692acf56}
+    container_name: gwb-envoy
+    restart: "no"
+    depends_on:
+      - backend
+    # Distroless envoy entrypoint is `envoy` itself; we pass the
+    # bootstrap file and tune log level for a quiet hot path. Component
+    # log overrides keep filter-level traces silent while the
+    # orchestrator still sees real warnings.
+    command:
+      - "-c"
+      - "/etc/envoy/envoy.yaml"
+      - "--log-level"
+      - "warn"
+      - "--component-log-level"
+      - "upstream:warn,connection:error,http:warn"
+    volumes:
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      # Shared Lua library is mounted unconditionally so policy profiles
+      # that want to reuse the jwt/body helpers (p02/p08/p09/p10) can
+      # point `inline_code` / `source_codes` at the same set of files
+      # the nginx column already uses. Mainline p01/p03..p07 profiles
+      # simply do not reference the mount and envoy ignores it.
+      - ./_shared/lualib:/etc/envoy/lualib:ro
+    ports:
+      - "9080:9080"  # data plane (parity-gateway target)
+      - "9901:9901"  # admin (read-only: /stats, /clusters, /config_dump)
+    # Envoy drains gracefully on SIGTERM. A 5 s stop-grace-period keeps
+    # `docker compose down` snappy during the parity sweeps.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+networks:
+  bench-net:
+    driver: bridge

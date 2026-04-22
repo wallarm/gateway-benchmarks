@@ -209,7 +209,17 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       mainline, `openresty:1.27.1.2-alpine` for Lua profiles).
       **nginx is the first gateway to close every cell.** Warm
       sweep wall-clock: ~15 s.
-    - [ ] `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
+    - [~] `envoy` — column opened on
+      `envoyproxy/envoy:distroless-v1.32.6` pinned by digest.
+      `p01-vanilla` parity **4/4 PASS** on the first run (static
+      bootstrap: listener + HCM + router + STRICT_DNS cluster,
+      every uniform setting wired explicitly). Remaining 9
+      profiles planned via native `local_ratelimit` (p03/p04/p05),
+      `*_headers_to_add/_to_remove` (p06/p07) and a Lua filter
+      reusing the same `jwt_hs256.lua` / `body_rewrite.lua` the
+      nginx column uses (`envoy.filters.http.jwt_authn` only
+      supports asymmetric RS/ES/PS — not the canonical HS256 secret).
+    - [ ] `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)
 - [ ] Phase 6 — Go orchestrator

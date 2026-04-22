@@ -286,7 +286,37 @@
   - Full nginx column: **10 PASS / 0 FAIL / 32 probes** on
     `nginx:1.27.3-alpine` (mainline) + `openresty:1.27.1.2-alpine`
     (Lua profiles). Sweep wall-clock: ~15 s warm.
-- [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
+- [~] `gateways/envoy/` configs for p01..p10 (Lua filter for p02/p08/p09)
+  - [x] `gateways/envoy/p01-vanilla/` — real
+    `envoyproxy/envoy:distroless-v1.32.6`, parity **4/4 PASS**.
+    Static bootstrap: HTTP/1.1 listener on :9080, HCM with terminal
+    `envoy.filters.http.router`, `STRICT_DNS` cluster →
+    `backend:8080`. All uniform settings from
+    `docs/GATEWAYS.md §Uniform settings` wired explicitly
+    (`codec_type: HTTP1`, `reuse_port`, `common_http_protocol_options.idle_timeout: 60s`,
+    `request_timeout: 10s`, `connect_timeout: 10s`,
+    `normalize_path: false`, HTTP/1.1 upstream with keepalive).
+    Admin API published read-only on :9901. See
+    [`gateways/envoy/p01-vanilla/NOTES.md`](./gateways/envoy/p01-vanilla/NOTES.md).
+  - [ ] p02-jwt — planned via HCM `lua` filter +
+    shared `gateways/envoy/_shared/lualib/jwt_hs256.lua`;
+    `envoy.filters.http.jwt_authn` only supports asymmetric
+    algorithms (RS/ES/PS), so the canonical HS256 secret goes
+    through Lua (same helper the nginx column uses).
+  - [ ] p03/p04/p05 — planned via
+    `envoy.filters.http.local_ratelimit`, keyed by path for p03
+    and by `X-Real-IP` descriptor for p04/p05.
+  - [ ] p06/p07 — planned via native
+    `request_headers_to_add` / `request_headers_to_remove` and
+    `response_headers_to_add` / `response_headers_to_remove` on
+    the route config, with `server_header_transformation`
+    appropriate for the drop side of p07.
+  - [ ] p08/p09 — planned via HCM `lua` filter reading / rewriting
+    `request_body` / `response_body` and recomputing
+    `Content-Length`.
+  - [ ] p10 — planned as the canonical chain
+    (`jwt_authn` Lua → `local_ratelimit` → header/body filters →
+    `router`) in the HCM `http_filters` array.
 - [ ] `gateways/kong/` configs for p01..p10
 - [ ] `gateways/apisix/` configs for p01..p10
 - [ ] `gateways/traefik/` configs for p01..p10 (community plugin for p02/p03)
@@ -550,7 +580,17 @@
      **full column green**. Sweep runs in ~15 s warm. nginx is
      the first gateway to close every cell, including the
      previously-absent `p10-full-pipeline`.
-   - next pass: `envoy` → `kong` → `apisix` → `traefik` → `tyk`,
-     one profile column at a time.
+   - **envoy column opened**: `envoyproxy/envoy:distroless-v1.32.6`
+     pinned by digest, `gateways/envoy/` scaffolding landed
+     (compose + `_shared/lualib/` + p01-vanilla). `p01-vanilla`
+     parity **4/4 PASS** on the first run, static bootstrap
+     (listener + HCM + router + STRICT_DNS cluster) with every
+     uniform setting wired explicitly. Remaining 9 profiles
+     planned: `local_ratelimit` for p03/p04/p05, native header
+     transforms for p06/p07, Lua filter reusing the shared
+     `jwt_hs256.lua` / `body_rewrite.lua` for p02/p08/p09, and
+     composition in HCM filter order for p10.
+   - next pass: `kong` → `apisix` → `traefik` → `tyk`, one
+     profile column at a time (envoy p02..p10 fills in interleaved).
 5. In parallel, begin Phase 4 (k6 load profiles) and the infrastructure
    sub-tasks in Phase 5.

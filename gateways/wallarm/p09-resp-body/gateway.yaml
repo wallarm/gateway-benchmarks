@@ -1,0 +1,29 @@
+# gateways/wallarm/p09-resp-body/gateway.yaml
+#
+# Profile p09-resp-body: JSON response-body rewrite
+# (`add $.bench.injected = true`, `remove $.origin`).
+# Static config is identical to p01-vanilla — every profile-specific
+# piece lives in setup.sh (Admin API bootstrap) and NOTES.md.
+#
+# NOTE: `streaming_mode: buffered` (the wallarm service-level default
+# per admin-api-openapi.yaml) is required for body mutation, so we
+# rely on that default and do not override it per service.
+
+net:
+  http_port: 9080
+
+admin:
+  listen_address: "0.0.0.0"
+  listen_port: 9081
+
+persistence:
+  enabled: false
+
+upstream:
+  pool:
+    size: 1024
+    idle_timeout_ms: 60000
+  tcp:
+    keepalive_secs: 90
+    nodelay: true
+    reuse_address: true

@@ -494,11 +494,19 @@ assert_all() {
         assert_header_absent "${hdr}" || fails+=("unexpected response header: ${hdr}")
     done < <(jq -r '.expect.response_header_absent // [] | .[]' <<< "${probe_json}")
 
-    # response_body_json_contains (map path -> expected)
+    # response_body_json_contains (map path -> expected).
+    #
+    # Uses assert_json_contains_value, which — like assert_json_has_string
+    # for backend-saw-header — accepts both a scalar and an array-of-one
+    # representation at `${path}`. This matters because go-httpbin encodes
+    # query args as `"q": ["hello"]` (potentially multi-value) while other
+    # echo backends / real upstreams emit `"q": "hello"`. The fixture
+    # should express the *intent* ("arg q equals hello") and stay agnostic
+    # of how the backend chooses to echo it.
     while IFS=$'\t' read -r path expected; do
         [[ -z "${path}" ]] && continue
-        assert_json_eq "${path}" "${expected}" \
-            || fails+=("body at ${path}: expected ${expected}, got $(json_get "${path}")")
+        assert_json_contains_value "${path}" "${expected}" \
+            || fails+=("body at ${path}: expected ${expected}, got $(json_get "${path}" | tr '\n' ' ' | sed 's/  */ /g')")
     done < <(jq -r '(.expect.response_body_json_contains // {}) | to_entries[] | "\(.key)\t\(.value|tostring)"' <<< "${probe_json}")
 
     # response_body_json_absent
@@ -580,6 +588,25 @@ assert_json_has_string() {
             if   \$v | type == \"string\" then \$v == \$want
             elif \$v | type == \"array\"  then (\$v | map(tostring) | index(\$want) != null)
             else false
+            end" \
+        "${tmpdir}/body" >/dev/null 2>&1
+}
+
+# Superset of assert_json_has_string: also accepts booleans/numbers by
+# comparing their `tostring` form. Null / missing is always a miss.
+# Used for `response_body_json_contains`, where a fixture may assert e.g.
+# `$.bench.injected == true` (bool), `$.status == 200` (number), or
+# `$.args.q == "hello"` (scalar-or-array from an echo backend).
+assert_json_contains_value() {
+    local path="$1" want="$2"
+    local jq_path="${path/#\$/}"
+    [[ "${jq_path}" = "" ]] && jq_path="."
+    jq -e --arg want "${want}" \
+        "(${jq_path}) as \$v |
+            if   \$v == null               then false
+            elif \$v | type == \"string\"  then \$v == \$want
+            elif \$v | type == \"array\"   then (\$v | map(tostring) | index(\$want) != null)
+            else (\$v | tostring) == \$want
             end" \
         "${tmpdir}/body" >/dev/null 2>&1
 }

@@ -251,6 +251,88 @@ Impact on ranking
 Status
 : `accepted` — mirrored in `gateways/wallarm/p07-resp-headers/NOTES.md`.
 
+#### [gw=wallarm, p=p08-req-body]
+
+What differs
+: Wallarm 0.2.0 does not expose a dedicated `body_transform` policy.
+  JSON request-body rewrite is performed via `lua_runner` +
+  `cjson.safe`, which is the built-in Lua sandbox documented in the
+  Wallarm policy guide. The policy reads `ctx.request.body`, decodes,
+  mutates (`$.bench.injected = true`, `$.secret = nil`), re-encodes
+  and writes back, and explicitly recomputes `Content-Length`.
+
+Root cause
+: No first-class `body_transform` primitive in 0.2.0. The Lua sandbox
+  is the only available vehicle until a dedicated policy ships in a
+  later release.
+
+Resolution
+: `lua_runner` on `request_flow`. `Transfer-Encoding` is not
+  manipulated because wallarm does not expose chunked framing to Lua
+  and buffered mode has already materialised the body.
+
+Impact on ranking
+: The benchmark measures a Lua-based rewrite path for wallarm on
+  p08/p09; other gateways (envoy Lua filter, openresty ngx_http_lua,
+  apisix serverless Lua) will do the same. A gateway that ships a
+  native body-transform policy will show it against the same
+  fixture and the manifest will mark the mechanism explicitly.
+
+Status
+: `accepted` — mirrored in `gateways/wallarm/p08-req-body/NOTES.md`.
+
+#### [gw=wallarm, p=p09-resp-body]
+
+What differs
+: Same `lua_runner` + `cjson.safe` idiom as p08, but on
+  `response_flow`. Content-Length is explicitly recomputed
+  (`ctx.response.headers["content-length"] = tostring(#body)`),
+  otherwise wallarm forwards the rewritten body with the stale
+  upstream header and clients either see a truncated payload or hang
+  on keep-alive.
+
+Root cause
+: No first-class `body_transform` primitive in 0.2.0.
+
+Resolution
+: `lua_runner` on `response_flow`, robust to non-JSON upstream
+  bodies (they pass through unmodified).
+
+Impact on ranking
+: `none` — the same Lua path is exercised on every wallarm profile
+  that touches bodies, so the numbers are comparable across p08, p09
+  and p10.
+
+Status
+: `accepted` — mirrored in `gateways/wallarm/p09-resp-body/NOTES.md`.
+
+#### [harness, p=go-httpbin-echo-shape]
+
+What differs
+: Fixtures express intent ("arg `q` equals `hello`", "header
+  `X-Foo` equals `1`"), but `go-httpbin` echoes both query args and
+  request headers as arrays-of-strings (`"q": ["hello"]`,
+  `"X-Foo": ["1"]`) to preserve multi-value semantics. Other echo
+  backends may emit the scalar form.
+
+Root cause
+: `go-httpbin`'s echo schema, not any gateway.
+
+Resolution
+: `scripts/parity-attestation.sh` exposes
+  `assert_json_contains_value` (for `response_body_json_contains`)
+  and `assert_json_has_string` (for `backend_saw_header`) — both
+  accept scalar and array-of-one representations. Fixtures stay
+  backend-agnostic.
+
+Impact on ranking
+: `none` — the assertion is purely structural.
+
+Status
+: `accepted` — lives in `scripts/parity-attestation.sh` and is
+  exercised on every gateway that routes to the shared go-httpbin
+  backend.
+
 #### [platform, p=qemu-amd64-on-arm64]
 
 What differs
@@ -338,7 +420,13 @@ Status
   - `wallarm / p07-resp-headers` — **ready**, parity 2/2 green
     (`lua_runner` on `response_flow`; `Server`-drop side is
     structural — see deviation below).
-  - `wallarm / p04 / p05 / p08 / p09 / p10` — pending (next Phase 3b
+  - `wallarm / p08-req-body` — **ready**, parity 3/3 green
+    (`lua_runner` + `cjson.safe` on `request_flow`,
+    Content-Length recomputed).
+  - `wallarm / p09-resp-body` — **ready**, parity 3/3 green
+    (`lua_runner` + `cjson.safe` on `response_flow`,
+    Content-Length recomputed).
+  - `wallarm / p04 / p05 / p10` — pending (next Phase 3b
     iterations).
   - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
 - Burst parity runner (p03/p04/p05) — **ready**, now uses

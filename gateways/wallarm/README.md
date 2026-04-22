@@ -52,8 +52,14 @@ gateways/wallarm/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner on response_flow)
 │   └── NOTES.md               (`Server`-drop is tautological on go-httpbin)
-├── p08-req-body/              (to be added)
-├── p09-resp-body/             (to be added)
+├── p08-req-body/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: lua_runner + cjson on request_flow)
+│   └── NOTES.md               (JSON rewrite + Content-Length recompute)
+├── p09-resp-body/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: lua_runner + cjson on response_flow)
+│   └── NOTES.md               (JSON rewrite + Content-Length recompute)
 └── p10-full-pipeline/         (to be added)
 ```
 
@@ -68,8 +74,8 @@ gateways/wallarm/
 | `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | planned           |
 | `p06-req-headers`       | `lua_runner` on request_flow                       | PASS (3/3)        |
 | `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
-| `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | planned           |
-| `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | planned           |
+| `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | PASS (3/3)        |
+| `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | PASS (3/3)        |
 | `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | planned           |
 
 `PASS` / `FEATURE-MISSING` entries reflect the latest run of

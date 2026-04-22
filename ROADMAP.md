@@ -164,10 +164,25 @@
   `/anything/*` doesn't emit `Server:`) — every other gateway in the
   bench will exercise the drop for real. See
   [`gateways/wallarm/p07-resp-headers/NOTES.md`](./gateways/wallarm/p07-resp-headers/NOTES.md).
-- [x] `scripts/parity-attestation.sh::assert_json_has_string` — header-
-  echo helper that accepts both scalar strings and arrays (go-httpbin
-  always emits arrays), so fixtures stay gateway-agnostic.
-- [ ] `gateways/wallarm/` configs for p04, p05, p08, p09, p10 (next
+- [x] `gateways/wallarm/p08-req-body/` — real wallarm `0.2.0` image,
+  parity **3/3 PASS**. `lua_runner` + `cjson.safe` on `request_flow`
+  (`+$.bench.injected`, `-$.secret`). `Content-Length` is recomputed
+  explicitly; empty / non-JSON bodies are coerced to `{}` so the
+  inject invariant always holds. See
+  [`gateways/wallarm/p08-req-body/NOTES.md`](./gateways/wallarm/p08-req-body/NOTES.md).
+- [x] `gateways/wallarm/p09-resp-body/` — real wallarm `0.2.0` image,
+  parity **3/3 PASS**. `lua_runner` + `cjson.safe` on `response_flow`
+  (`+$.bench.injected`, `-$.origin`). Robust to non-JSON upstreams
+  (pass-through). `Content-Length` is recomputed — stale value
+  otherwise truncates the payload. See
+  [`gateways/wallarm/p09-resp-body/NOTES.md`](./gateways/wallarm/p09-resp-body/NOTES.md).
+- [x] `scripts/parity-attestation.sh` helpers —
+  `assert_json_has_string` (for `backend_saw_header`) and
+  `assert_json_contains_value` (for `response_body_json_contains`)
+  both accept scalar / array-of-one representations so fixtures stay
+  backend-agnostic (go-httpbin echoes headers and query args as
+  arrays).
+- [ ] `gateways/wallarm/` configs for p04, p05, p10 (next
   Phase 3b pass)
 - [ ] `gateways/nginx/` configs for p01..p10
 - [ ] `gateways/envoy/` configs for p01..p10 (Lua filter for p08/p09)
@@ -344,9 +359,16 @@
      gotcha documented. The `assert_json_has_string` helper was added
      to `scripts/parity-attestation.sh` so header-echo assertions
      work against both array and scalar shapes.
+   - `wallarm/p08-req-body` **3/3 PASS** and
+     `wallarm/p09-resp-body` **3/3 PASS** — `lua_runner` +
+     `cjson.safe` on the service's request/response flow. The policy
+     decodes the body, mutates (`+$.bench.injected`,
+     `-$.secret` / `-$.origin`), re-encodes and recomputes
+     `Content-Length`. A generalised `assert_json_contains_value`
+     helper landed in `scripts/parity-attestation.sh` so
+     `response_body_json_contains` accepts scalar / array shapes too
+     (go-httpbin echoes query args as possibly-multi-value arrays).
    - next passes (in this order):
-     - `wallarm/p08-req-body` + `p09-resp-body` → exercise the Lua
-       body-rewrite primitive.
      - `wallarm/p04-rl-dynamic-low` + `p05-rl-dynamic-high` →
        high-cardinality path with the burst fixtures.
      - `wallarm/p10-full-pipeline` → composition of the above.

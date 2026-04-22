@@ -122,7 +122,13 @@ The project is in early phases. No benchmark runs yet — we are building the fo
       `request_flow` (`+X-Bench-In`, `-X-Forwarded-For`)
     - [x] `wallarm / p07-resp-headers` — 2/2 green, `lua_runner` on
       `response_flow` (`+X-Bench-Out`, `-Server`)
-    - [ ] `wallarm / p04, p05, p08, p09, p10` (next iteration)
+    - [x] `wallarm / p08-req-body` — 3/3 green, `lua_runner` +
+      `cjson.safe` on `request_flow` (`+$.bench.injected`,
+      `-$.secret`, Content-Length recomputed)
+    - [x] `wallarm / p09-resp-body` — 3/3 green, `lua_runner` +
+      `cjson.safe` on `response_flow` (`+$.bench.injected`,
+      `-$.origin`, Content-Length recomputed)
+    - [ ] `wallarm / p04, p05, p10` (next iteration)
     - [ ] `nginx`, `envoy`, `kong`, `apisix`, `traefik`, `tyk` (subsequent iterations)
 - [ ] Phase 4 — k6 load framework (4 profiles)
 - [ ] Phase 5 — Infra (local + AWS 3-EC2)

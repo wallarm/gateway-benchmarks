@@ -4,7 +4,7 @@
 	orchestrator-build orchestrator-test \
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
-	parity-check parity-check-all
+	parity-check parity-check-all parity-gateway parity-gateway-all
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -73,8 +73,10 @@ help: ## Show this help
 	@echo "  $(GREEN)perf-aws-down$(NC)         Destroy the EC2 hosts (enable_perf_test=false + tofu apply)"
 	@echo ""
 	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
-	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile (see PARITY_* vars)"
+	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile against a live target"
 	@echo "  $(GREEN)parity-check-all$(NC)      Sweep parity across all 10 profiles against PARITY_TARGET"
+	@echo "  $(GREEN)parity-gateway$(NC)        End-to-end: bring up <PARITY_GATEWAY>, run one profile, tear down"
+	@echo "  $(GREEN)parity-gateway-all$(NC)    End-to-end sweep of p01…p10 against <PARITY_GATEWAY>"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
@@ -249,4 +251,55 @@ parity-check-all: ## Run parity across every profile p01..p10 against PARITY_TAR
 	 done; \
 	 echo ""; \
 	 echo "$(CYAN)Summary:$(NC) $$passed passed, $$failed not-PASS (reports in $(PARITY_OUT)/)"
+
+# ---------------------------------------------------------------------------
+# Parity (Phase 3b): bring up a single gateway, run one profile, tear down.
+#
+# This differs from `parity-check` above: `parity-check` assumes the
+# target is already running (cheap, fast), while `parity-gateway`
+# drives the full lifecycle:
+#    docker compose up -> setup.sh -> parity -> docker compose down.
+#
+# Override PARITY_GATEWAY / PARITY_PROFILE on the command line:
+#   make parity-gateway PARITY_GATEWAY=wallarm PARITY_PROFILE=p01-vanilla
+# ---------------------------------------------------------------------------
+PARITY_RUN_ID ?= $(RUN_ID)
+
+parity-gateway: ## Bring up <PARITY_GATEWAY>, run <PARITY_PROFILE>, tear down
+	@RUN_ID=$(PARITY_RUN_ID) bash scripts/parity-gateway.sh \
+		--gateway $(PARITY_GATEWAY) \
+		--profile $(PARITY_PROFILE) \
+		--output  reports/$(PARITY_RUN_ID)/parity/$(PARITY_GATEWAY)-$(PARITY_PROFILE).json \
+		--verbose
+
+parity-gateway-all: ## Run every profile p01..p10 end-to-end against <PARITY_GATEWAY>
+	@echo "$(YELLOW)parity-gateway: sweeping p01..p10 against $(PARITY_GATEWAY)$(NC)"
+	@mkdir -p reports/$(PARITY_RUN_ID)/parity
+	@passed=0; failed=0; missing=0; \
+	 for p in p01-vanilla p02-jwt p03-rl-static p04-rl-dynamic-low \
+	          p05-rl-dynamic-high p06-req-headers p07-resp-headers \
+	          p08-req-body p09-resp-body p10-full-pipeline; do \
+	     out=reports/$(PARITY_RUN_ID)/parity/$(PARITY_GATEWAY)-$$p.json; \
+	     if [ ! -d gateways/$(PARITY_GATEWAY)/$$p ]; then \
+	         printf '  %-22s  %-16s  (directory missing — not yet implemented)\n' "$$p" "FEATURE-MISSING"; \
+	         missing=$$((missing+1)); \
+	         continue; \
+	     fi; \
+	     RUN_ID=$(PARITY_RUN_ID) bash scripts/parity-gateway.sh \
+	         --gateway $(PARITY_GATEWAY) \
+	         --profile $$p \
+	         --output  $$out \
+	         > /dev/null 2>&1 || true; \
+	     st=$$(jq -r '.status // "UNKNOWN"' $$out 2>/dev/null); \
+	     ps=$$(jq -r '.passed // 0'         $$out 2>/dev/null); \
+	     tot=$$(jq -r '.probes // 0'        $$out 2>/dev/null); \
+	     printf '  %-22s  %-16s  %2s/%-2s\n' "$$p" "$$st" "$$ps" "$$tot"; \
+	     case "$$st" in \
+	         PASS) passed=$$((passed+1));; \
+	         FAIL) failed=$$((failed+1));; \
+	         *)    missing=$$((missing+1));; \
+	     esac; \
+	 done; \
+	 echo ""; \
+	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$missing other (reports in reports/$(PARITY_RUN_ID)/parity/)"
 

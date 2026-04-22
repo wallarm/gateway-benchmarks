@@ -12,7 +12,7 @@ back into this table whenever a pin is bumped.
 
 | Gateway  | Version       | Docker image                           | Digest        | Language       | Source |
 |----------|---------------|----------------------------------------|---------------|----------------|--------|
-| wallarm  | `v0.2.x`      | `wallarm/api-gateway:v0.2.x`           | `sha256:TBD`  | Rust           | https://github.com/wallarm/wallarm-api-gateway |
+| wallarm  | `0.2.0`       | `wallarm/api-gateway:0.2.0`            | `sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825` | Rust | https://hub.docker.com/r/wallarm/api-gateway |
 | nginx    | `1.27.3-alpine` | `nginx:1.27.3-alpine`                | `sha256:TBD`  | C              | https://hub.docker.com/_/nginx |
 | envoy    | `v1.31.5`     | `envoyproxy/envoy:v1.31.5`             | `sha256:TBD`  | C++            | https://hub.docker.com/r/envoyproxy/envoy |
 | kong     | `3.8.0`       | `kong:3.8.0`                           | `sha256:TBD`  | Lua / OpenResty | https://hub.docker.com/_/kong |
@@ -93,10 +93,40 @@ Status
 : `open` | `mitigated` | `accepted`.
 ```
 
+### Landed deviations
+
+#### [gw=wallarm, p=p01-vanilla]
+
+What differs
+: `base_path: "/"` is rejected by the Admin API with
+  `INVALID_BASE_PATH` on `wallarm/api-gateway:0.2.0`, so we register
+  one service per path prefix that the fixtures touch instead of a
+  single catch-all.
+
+Root cause
+: Validation in `wallarm-api-gateway` (`crates/validation/src/base_path.rs`)
+  required a non-empty suffix at the 0.2.0 tag; catch-all support
+  landed in a later internal build (upstream ticket `NODE-7630`).
+
+Resolution
+: `gateways/wallarm/p01-vanilla/setup.sh` registers `bench-anything`,
+  `bench-bytes`, `bench-status`, `bench-headers`,
+  `bench-response-headers`. Each service's `target.endpoint.url`
+  points at the already-prefixed backend URL so that the wallarm
+  base-path strip is followed by a same-prefix append — net effect is
+  identity forwarding.
+
+Impact on ranking
+: none; the user-observable data plane is identical across gateways.
+
+Status
+: `accepted` — revisit when a post-0.2.0 public tag ships with
+  catch-all.
+
 ### Known / expected entries
 
-> Filled in during Phase 3 as each per-gateway config lands. The ones
-> below are placeholders that we already know we will hit.
+> Will be confirmed as each per-gateway config lands. The ones below
+> are the deviations we already anticipate.
 
 - **Traefik / p02 jwt, p03 rl-static, p04 rl-dyn-low, p05 rl-dyn-high**
   — requires a community plugin. Expect one entry per profile pinned to
@@ -135,5 +165,11 @@ Status
 - Uniform settings: documented (this file).
 - HTTP/1.1 enforcement knobs: documented; verified per gateway during
   Phase 3.
-- Per-gateway configs: in progress — see
-  [ROADMAP.md § Phase 3](../ROADMAP.md#phase-3-parity-framework-3-5-days--core-work).
+- Per-gateway configs:
+  - `wallarm / p01-vanilla` — **ready**, parity 4/4 green.
+  - `wallarm / p02…p10` — pending (next Phase 3b iteration).
+  - `nginx / envoy / kong / apisix / traefik / tyk` — pending.
+- Burst parity runner (p03/p04/p05) — **ready**, validated against
+  the bare backend (0 × 429 → correct FAIL, the rate-limiting gateway
+  rows will turn green as each per-gateway config lands).
+- Full status by phase: [ROADMAP.md § Phase 3](../ROADMAP.md#phase-3-parity-framework-3-5-days--core-work).

@@ -31,10 +31,11 @@
 #
 # Dependencies: bash, curl, jq. No root, no containers needed.
 #
-# Coverage in the Phase 3 foundation commit:
-#   - All "simple" probes (HTTP request + assertion set).
-#   - "burst" probes: recorded, marked "skipped" for now; a follow-up
-#     turns them into parallel hey/xargs bursts.
+# Coverage:
+#   - Simple probes (single HTTP request + assertion set).
+#   - Burst probes: fanned out over `xargs -P` with per-request key-header
+#     rotation, then the 2xx / 429 / 5xx counts are asserted against the
+#     tolerances in docs/POLICIES.md § rate-limit probes.
 #   - Placeholder substitution: ${JWT_VALID}, ${JWT_EXPIRED}, ${JWT_WRONG}.
 
 set -euo pipefail
@@ -187,16 +188,21 @@ run_probe() {
     local kind
     kind=$(jq -r '.kind // "simple"' <<< "${probe_json}")
 
-    if [[ "${kind}" != "simple" ]]; then
-        SKIPPED=$(( SKIPPED + 1 ))
-        (( VERBOSE == 1 )) && \
-            printf '  ~ SKIP   [burst] %s\n' "$(jq -r '.name' <<< "${probe_json}")"
-        RESULTS_JSON=$(jq -c \
-            --argjson p "${probe_json}" \
-            '. + [$p + {_runtime: {status: "skipped", reason: "burst runner not yet implemented"}}]' \
-            <<< "${RESULTS_JSON}")
-        return
-    fi
+    case "${kind}" in
+        simple) ;;                                   # falls through to the simple runner below
+        burst)  run_burst_probe "${probe_json}"; return;;
+        *)
+            SKIPPED=$(( SKIPPED + 1 ))
+            (( VERBOSE == 1 )) && \
+                printf '  ~ SKIP   [%s] %s\n' "${kind}" "$(jq -r '.name' <<< "${probe_json}")"
+            RESULTS_JSON=$(jq -c \
+                --argjson p "${probe_json}" \
+                --arg    reason "unknown probe kind: ${kind}" \
+                '. + [$p + {_runtime: {status: "skipped", reason: $reason}}]' \
+                <<< "${RESULTS_JSON}")
+            return
+            ;;
+    esac
 
     local name method path body_raw url
     name=$(jq -r '.name' <<< "${probe_json}")
@@ -277,6 +283,203 @@ run_probe() {
         --argjson status "${status_code:-0}" \
         --argjson fails "${fail_arr}" \
         '. + [$p + {_runtime: {status: $outcome, http_status: $status, failures: $fails}}]' \
+        <<< "${RESULTS_JSON}")
+}
+
+# -----------------------------------------------------------------------------
+# Burst probes — rate-limit parity attestation
+#
+# A "burst" probe fires N requests over D seconds, optionally distributing
+# them across K different keys (e.g. X-Real-IP values). Responses are
+# tallied into {2xx, 429, 5xx, other} and compared against the expected
+# thresholds from the fixture (`status_429_min`, `status_2xx_min`,
+# `status_429_tolerance`).
+#
+# Parallelism is capped at BURST_PARALLELISM to keep the harness portable
+# (no `hey`, no `ab`, no `vegeta` — just `curl` + `xargs -P`).
+# -----------------------------------------------------------------------------
+BURST_PARALLELISM="${BURST_PARALLELISM:-32}"
+
+expand_key_pool() {
+    # "10.0.0.1..10.0.0.10" -> "10.0.0.1 10.0.0.2 ... 10.0.0.10"
+    # "10.5.9.9"            -> "10.5.9.9"
+    local pool="$1"
+    if [[ "${pool}" != *..* ]]; then
+        printf '%s\n' "${pool}"
+        return
+    fi
+    local start_ip="${pool%..*}" end_ip="${pool#*..}"
+    local prefix="${start_ip%.*}"
+    local first="${start_ip##*.}" last="${end_ip##*.}"
+    local i
+    for (( i = first; i <= last; i++ )); do
+        printf '%s.%s\n' "${prefix}" "${i}"
+    done
+}
+
+run_burst_probe() {
+    local probe_json="$1"
+
+    local name method path
+    name=$(jq -r '.name'                           <<< "${probe_json}")
+    method=$(jq -r '.burst.request.method // "GET"' <<< "${probe_json}")
+    path=$(jq -r   '.burst.request.path   // "/"'  <<< "${probe_json}")
+
+    local total duration_s key_header key_pool
+    total=$(jq -r       '.burst.total_requests'     <<< "${probe_json}")
+    duration_s=$(jq -r  '.burst.duration_s // 1'    <<< "${probe_json}")
+    key_header=$(jq -r  '.burst.key_header // ""'   <<< "${probe_json}")
+    key_pool=$(jq -r    '.burst.key_pool   // ""'   <<< "${probe_json}")
+
+    local url="${TARGET}${path}"
+
+    # Key rotation
+    local -a keys=()
+    if [[ -n "${key_pool}" ]]; then
+        while IFS= read -r k; do keys+=("${k}"); done < <(expand_key_pool "${key_pool}")
+    fi
+
+    # Compose the per-request work list.
+    local reqs="${tmpdir}/burst_reqs.txt"
+    local codes="${tmpdir}/burst_codes.txt"
+    : > "${reqs}"
+    : > "${codes}"
+
+    local i header_line=""
+    for (( i = 0; i < total; i++ )); do
+        if [[ -n "${key_header}" && ${#keys[@]} -gt 0 ]]; then
+            header_line="${key_header}: ${keys[$(( i % ${#keys[@]} ))]}"
+        else
+            header_line=""
+        fi
+        printf '%s\t%s\t%s\n' "${method}" "${url}" "${header_line}" >> "${reqs}"
+    done
+
+    # A portable "one request" runner. `$1` is a tab-separated triplet
+    # "method\turl\theader" (header may be empty).
+    local runner="${tmpdir}/burst_run_one.sh"
+    cat > "${runner}" <<'EOF'
+#!/usr/bin/env bash
+IFS=$'\t' read -r BURST_M BURST_U BURST_H <<< "$1"
+if [[ -n "${BURST_H}" ]]; then
+    curl -sS -o /dev/null -w '%{http_code}\n' -X "${BURST_M}" -H "${BURST_H}" "${BURST_U}"
+else
+    curl -sS -o /dev/null -w '%{http_code}\n' -X "${BURST_M}" "${BURST_U}"
+fi
+EOF
+    chmod +x "${runner}"
+
+    local par="${BURST_PARALLELISM}"
+    (( par > total )) && par="${total}"
+
+    # BSD xargs (macOS) does not support `-a`, and the interaction of
+    # `-I {}` with `-P` differs from GNU. We emulate a bounded-concurrency
+    # pool with plain bash: read all rows into an array, then fire batches
+    # of `par` subprocesses and wait for each batch.
+    local -a req_lines=()
+    while IFS= read -r ln; do req_lines+=("${ln}"); done < "${reqs}"
+
+    local burst_start burst_end elapsed_s
+    burst_start=$(date +%s)
+
+    local b end j
+    for (( b = 0; b < ${#req_lines[@]}; b += par )); do
+        end=$(( b + par ))
+        (( end > ${#req_lines[@]} )) && end=${#req_lines[@]}
+        for (( j = b; j < end; j++ )); do
+            "${runner}" "${req_lines[j]}" >> "${codes}" 2>/dev/null &
+        done
+        wait
+    done
+
+    burst_end=$(date +%s)
+    elapsed_s=$(( burst_end - burst_start ))
+
+    # Aggregate
+    local n_total n_2xx n_429 n_5xx n_other
+    n_total=$(wc -l < "${codes}" | tr -d ' ')
+    n_2xx=$(grep -cE '^2[0-9]{2}$' "${codes}" || true)
+    n_429=$(grep -c '^429$'        "${codes}" || true)
+    n_5xx=$(grep -cE '^5[0-9]{2}$' "${codes}" || true)
+    n_other=$(( n_total - n_2xx - n_429 - n_5xx ))
+
+    # Assertions
+    fails=()
+    local e_429_min e_429_tol e_2xx_min
+    e_429_min=$(jq -r '.expect.status_429_min // empty'      <<< "${probe_json}")
+    e_429_tol=$(jq -r '.expect.status_429_tolerance // 0'    <<< "${probe_json}")
+    e_2xx_min=$(jq -r '.expect.status_2xx_min // empty'      <<< "${probe_json}")
+
+    if [[ -n "${e_429_min}" ]]; then
+        local threshold=$(( e_429_min - e_429_tol ))
+        (( threshold < 0 )) && threshold=0
+        if (( n_429 < threshold )); then
+            fails+=("burst: expected >= ${e_429_min} (+/- ${e_429_tol}) × 429, got ${n_429}")
+        fi
+    fi
+
+    if [[ -n "${e_2xx_min}" ]]; then
+        if (( n_2xx < e_2xx_min )); then
+            fails+=("burst: expected >= ${e_2xx_min} × 2xx, got ${n_2xx}")
+        fi
+    fi
+
+    # Some gateways surface rate-limit denials as 5xx when the upstream
+    # is saturated. That's a real signal worth catching.
+    if (( n_5xx > 0 )); then
+        fails+=("burst: unexpected ${n_5xx} × 5xx (should be 2xx or 429)")
+    fi
+
+    TOTAL=$(( TOTAL + 1 ))
+    local outcome
+    if (( ${#fails[@]} == 0 )); then
+        PASSED=$(( PASSED + 1 ))
+        outcome="pass"
+        (( VERBOSE == 1 )) && printf '  %s PASS   %s  [burst: %dx, %.0fs, 2xx=%d 429=%d 5xx=%d]\n' \
+            "$(printf '\xe2\x9c\x93')" "${name}" "${n_total}" "${elapsed_s}" \
+            "${n_2xx}" "${n_429}" "${n_5xx}"
+    else
+        FAILED=$(( FAILED + 1 ))
+        outcome="fail"
+        if (( VERBOSE == 1 )); then
+            printf '  %s FAIL   %s  [burst: %dx, %.0fs, 2xx=%d 429=%d 5xx=%d]\n' \
+                "$(printf '\xe2\x9c\x97')" "${name}" "${n_total}" "${elapsed_s}" \
+                "${n_2xx}" "${n_429}" "${n_5xx}"
+            for msg in "${fails[@]}"; do printf '           - %s\n' "${msg}"; done
+        fi
+    fi
+
+    local fail_arr
+    if (( ${#fails[@]} == 0 )); then
+        fail_arr='[]'
+    else
+        fail_arr=$(printf '%s\n' "${fails[@]}" | jq -R . | jq -cs .)
+    fi
+
+    RESULTS_JSON=$(jq -c \
+        --argjson p "${probe_json}" \
+        --arg     outcome    "${outcome}" \
+        --argjson total      "${n_total}" \
+        --argjson n_2xx      "${n_2xx}" \
+        --argjson n_429      "${n_429}" \
+        --argjson n_5xx      "${n_5xx}" \
+        --argjson n_other    "${n_other}" \
+        --argjson elapsed_s  "${elapsed_s}" \
+        --argjson parallel   "${par}" \
+        --argjson fails      "${fail_arr}" \
+        '. + [$p + {_runtime: {
+            status: $outcome,
+            burst: {
+                total: $total,
+                "2xx": $n_2xx,
+                "429": $n_429,
+                "5xx": $n_5xx,
+                other: $n_other,
+                elapsed_s: $elapsed_s,
+                parallelism: $parallel
+            },
+            failures: $fails
+        }}]' \
         <<< "${RESULTS_JSON}")
 }
 

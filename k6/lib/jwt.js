@@ -16,7 +16,7 @@
 // load time (k6 init phase); a missing or empty token raises a clear
 // error before any traffic is generated.
 
-import { benchJwtValid } from './env.js';
+import { benchJwtValid, benchJwtValidRs256 } from './env.js';
 
 export function validBearer() {
     const token = benchJwtValid();
@@ -33,4 +33,27 @@ export function validBearer() {
 
 export function authHeader() {
     return { Authorization: validBearer() };
+}
+
+// RS256 twin of validBearer(). Used by the s03-jwks-rs256-basic
+// scenario, which exercises RS256 + JWKS kid-lookup instead of the
+// shared-secret HS256 path. The runner script mints this via
+// `scripts/gen-jwt-rs256.sh valid` when the scenario name matches
+// `*jwks*`. An empty token is a hard error at scenario init time so
+// a silent misconfiguration never feeds bogus 401s into the report.
+export function validRs256Bearer() {
+    const token = benchJwtValidRs256();
+    if (!token) {
+        throw new Error(
+            '[k6/lib/jwt] BENCH_JWT_VALID_RS256 is empty. The scenario ' +
+            'asks for a valid RS256 token but none was injected. The ' +
+            "runner script (scripts/load-gateway.sh) sets it via " +
+            "'gen-jwt-rs256.sh valid' on the host before invoking k6.",
+        );
+    }
+    return `Bearer ${token}`;
+}
+
+export function authHeaderRs256() {
+    return { Authorization: validRs256Bearer() };
 }

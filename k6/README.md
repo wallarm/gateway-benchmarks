@@ -9,21 +9,36 @@ two HTTPS variants from `docs/POLICIES.md § p01-tls / p12-tls`.
 
 ## Status
 
-> **Phase 4 — Iteration 29: framework foundation landed**, 1
-> scenario green end-to-end against `nginx`. Remaining 13 scenarios
-> are next iteration; HTTPS variants land alongside Phase 5 (TLS
-> infrastructure). See `ROADMAP.md` and `.notes/PROGRESS.md` for
-> the running journal.
+> **Phase 4 — Iteration 30: full 12-scenario HTTP matrix landed** plus
+> the matrix-sweep harness (orchestrator + docker-stats sidecar +
+> CSV aggregator). All 12 HTTP scenarios smoke-tested against `nginx`
+> end-to-end (`p1-baseline` × 12 scenarios, 12/12 PASS). HTTPS variants
+> land alongside Phase 5 (TLS infrastructure). See `ROADMAP.md` and
+> `.notes/PROGRESS.md` for the running journal.
 
-| Component                              | Status       | Notes                                                          |
-|----------------------------------------|--------------|----------------------------------------------------------------|
-| `k6/lib/{env,options,jwt,payloads,metrics}.js` | landed   | helpers + 4-bucket error classifier per `TASK.md §8`           |
-| `k6/profiles/{p1,p2,p3,p4}-*.js`        | landed       | all 4 load profiles wired                                      |
-| `k6/scenarios/s01-vanilla-http.js`     | landed       | smoke-tested: 1.4M reqs / 60s on nginx, p95=1.23ms, 0 failures |
-| `k6/scenarios/s02..s12-*-http.js`      | TODO         | one scenario per `pNN` policy; next iteration                  |
-| `k6/scenarios/s{01,12}-*-https.js`     | TODO         | TLS variants; lands alongside Phase 5 cert plumbing            |
-| `scripts/load-gateway.sh`              | landed       | mirrors `scripts/parity-gateway.sh` lifecycle                  |
-| `make load-gateway[-load-sweep]`       | landed       | wraps the runner above                                          |
+| Component                                      | Status  | Notes                                                                          |
+|------------------------------------------------|---------|--------------------------------------------------------------------------------|
+| `k6/lib/{env,options,jwt,payloads,metrics}.js` | landed  | helpers + 4-bucket error classifier per `TASK.md §8`; RS256 twin for `jwks-*`  |
+| `k6/profiles/{p1,p2,p3,p4}-*.js`               | landed  | all 4 load profiles wired                                                      |
+| `k6/scenarios/s01-vanilla-http.js`             | landed  | smoke: 1.4M reqs / 60s on nginx, p95 = 1.23 ms, 0 failures                     |
+| `k6/scenarios/s02-jwt-http.js`                 | landed  | HS256 JWT + happy-path 200; smoke: 1.33M / 60s on nginx, p95 = 1.27 ms         |
+| `k6/scenarios/s03-jwks-rs256-basic-http.js`    | landed  | RS256 / JWKS kid-lookup; runner mints via `gen-jwt-rs256.sh valid`             |
+| `k6/scenarios/s04-rl-static-http.js`           | landed  | service-wide 1000 rps; expects mixed 200 + 429                                 |
+| `k6/scenarios/s05-rl-endpoint-http.js`         | landed  | 100 rps scoped to `/anything/limited`; `/anything/free` must stay 200          |
+| `k6/scenarios/s06-rl-dynamic-low-http.js`      | landed  | 10 rps × 100-IP pool (init-time deterministic)                                 |
+| `k6/scenarios/s07-rl-dynamic-high-http.js`     | landed  | 100 rps × 50k-IP pool (on-the-fly)                                             |
+| `k6/scenarios/s08-req-headers-http.js`         | landed  | header add+drop on request                                                     |
+| `k6/scenarios/s09-resp-headers-http.js`        | landed  | header add+drop on response                                                    |
+| `k6/scenarios/s10-req-body-http.js`            | landed  | JSON add+drop on request body                                                  |
+| `k6/scenarios/s11-resp-body-http.js`           | landed  | JSON add+drop on response body                                                 |
+| `k6/scenarios/s12-full-pipeline-http.js`       | landed  | composition of p02 + p03 + p07 + p09 + p08 + p10                               |
+| `k6/scenarios/s{13,14}-*-https.js`             | TODO    | TLS variants; lands alongside Phase 5 cert plumbing                            |
+| `scripts/load-gateway.sh`                      | landed  | mirrors `scripts/parity-gateway.sh` lifecycle; runs docker-stats sidecar       |
+| `scripts/docker-stats-sidecar.sh`              | landed  | per-second Docker REST sampler → `docker-stats.csv` per cell                   |
+| `scripts/load-orchestrator.sh`                 | landed  | matrix sweep: gateways × policies × scenarios × loads → `matrix.tsv`           |
+| `scripts/aggregate-csv.sh`                     | landed  | walks `reports/<RUN_ID>/raw/**` → wide CSV (or TSV / Markdown)                 |
+| `make load-gateway[-load-sweep]`               | landed  | single-cell runner                                                             |
+| `make load-sweep / load-aggregate`             | landed  | full matrix sweep + aggregator                                                 |
 
 ## Layout
 
@@ -43,17 +58,17 @@ k6/
 │   └── p4-stress.js                constant 1000 VUs × 120s
 └── scenarios/                      14 scenarios (one per policy + 2 HTTPS variants)
     ├── s01-vanilla-http.js              drives p01-vanilla              [LANDED]
-    ├── s02-jwt-http.js                  drives p02-jwt                  [TODO]
-    ├── s03-jwks-rs256-basic-http.js     drives p03-jwks-rs256-basic     [TODO]
-    ├── s04-rl-static-http.js            drives p04-rl-static            [TODO]
-    ├── s05-rl-endpoint-http.js          drives p05-rl-endpoint          [TODO]
-    ├── s06-rl-dynamic-low-http.js       drives p06-rl-dynamic-low       [TODO]
-    ├── s07-rl-dynamic-high-http.js      drives p07-rl-dynamic-high      [TODO]
-    ├── s08-req-headers-http.js          drives p08-req-headers          [TODO]
-    ├── s09-resp-headers-http.js         drives p09-resp-headers         [TODO]
-    ├── s10-req-body-http.js             drives p10-req-body             [TODO]
-    ├── s11-resp-body-http.js            drives p11-resp-body            [TODO]
-    ├── s12-full-pipeline-http.js        drives p12-full-pipeline        [TODO]
+    ├── s02-jwt-http.js                  drives p02-jwt                  [LANDED]
+    ├── s03-jwks-rs256-basic-http.js     drives p03-jwks-rs256-basic     [LANDED]
+    ├── s04-rl-static-http.js            drives p04-rl-static            [LANDED]
+    ├── s05-rl-endpoint-http.js          drives p05-rl-endpoint          [LANDED]
+    ├── s06-rl-dynamic-low-http.js       drives p06-rl-dynamic-low       [LANDED]
+    ├── s07-rl-dynamic-high-http.js      drives p07-rl-dynamic-high      [LANDED]
+    ├── s08-req-headers-http.js          drives p08-req-headers          [LANDED]
+    ├── s09-resp-headers-http.js         drives p09-resp-headers         [LANDED]
+    ├── s10-req-body-http.js             drives p10-req-body             [LANDED]
+    ├── s11-resp-body-http.js            drives p11-resp-body            [LANDED]
+    ├── s12-full-pipeline-http.js        drives p12-full-pipeline        [LANDED]
     ├── s13-vanilla-https.js             drives p01 over TLS             [TODO — Phase 5]
     └── s14-full-pipeline-https.js       drives p12 over TLS             [TODO — Phase 5]
 ```
@@ -133,17 +148,18 @@ Every variable consumed by k6 — exhaustive list. The runner script
 sets all of them; manual `k6 run` invocations must mirror the same
 set or `k6/lib/env.js` will fail fast at init time.
 
-| Variable                | Required | Default          | Set by                                    |
-|-------------------------|----------|------------------|-------------------------------------------|
-| `BENCH_TARGET_URL`      | yes      | —                | runner: `http://gateway:9080`             |
-| `BENCH_LOAD_PROFILE`    | yes      | —                | runner: `--load`                          |
-| `BENCH_POLICY_PROFILE`  | yes      | —                | runner: `--policy`                        |
-| `BENCH_SCENARIO`        | yes      | —                | runner: `--scenario`                      |
-| `BENCH_GATEWAY`         | yes      | —                | runner: `--gateway`                       |
-| `BENCH_RUN_ID`          | yes      | —                | runner: env `RUN_ID` or auto-timestamp    |
-| `BENCH_RUN_SEED`        | no       | `42`             | runner: `--seed`                          |
-| `BENCH_JWT_VALID`       | scenario-conditional | `""` | runner: `gen-jwt.sh valid` when scenario name contains `jwt` or `full-pipeline` |
-| `BENCH_STREAM_METRICS`  | no       | `0`              | runner: `--stream`                        |
+| Variable                    | Required             | Default | Set by                                                                                |
+|-----------------------------|----------------------|---------|---------------------------------------------------------------------------------------|
+| `BENCH_TARGET_URL`          | yes                  | —       | runner: `http://gateway:9080`                                                         |
+| `BENCH_LOAD_PROFILE`        | yes                  | —       | runner: `--load`                                                                      |
+| `BENCH_POLICY_PROFILE`      | yes                  | —       | runner: `--policy`                                                                    |
+| `BENCH_SCENARIO`            | yes                  | —       | runner: `--scenario`                                                                  |
+| `BENCH_GATEWAY`             | yes                  | —       | runner: `--gateway`                                                                   |
+| `BENCH_RUN_ID`              | yes                  | —       | runner: env `RUN_ID` or auto-timestamp                                                |
+| `BENCH_RUN_SEED`            | no                   | `42`    | runner: `--seed`                                                                      |
+| `BENCH_JWT_VALID`           | scenario-conditional | `""`    | runner: `gen-jwt.sh valid` when scenario name contains `jwt` / `full-pipeline`        |
+| `BENCH_JWT_VALID_RS256`     | scenario-conditional | `""`    | runner: `gen-jwt-rs256.sh valid` when scenario name matches `*jwks*`                  |
+| `BENCH_STREAM_METRICS`      | no                   | `0`     | runner: `--stream`                                                                    |
 
 ## k6 version
 
@@ -176,17 +192,45 @@ make load-gateway-load-sweep \
     LOAD_SCENARIO=s01-vanilla-http
 ```
 
-Reference smoke result (Iteration 29, nginx p01 + p1-baseline + s01,
-Apple Silicon Docker Desktop):
+Reference smoke results (Iteration 30, nginx + p1-baseline, Apple
+Silicon Docker Desktop):
 
 ```
-verdict:    PASS
-reqs:       1417860            (1m of constant 10 VUs)
-p95 (ms):   1.23
-failed:     0                  (out of 1.4M)
-checks:     100% (2.8M passes / 0 fails across 2 checks)
-parity:     PASS (4/4 probes)
+p01-vanilla    / s01:   PASS  1 417 860 reqs / 60s  p95 1.23 ms  fail 0
+p02-jwt        / s02:   PASS  1 334 498 reqs / 60s  p95 1.27 ms  fail 0
 ```
+
+HS256 JWT verification on nginx costs ~0.04 ms at p95 (≈6 % over
+`p01-vanilla`) at this VU level — useful sanity-check that the
+scenario / runner / sidecar stack is all wired correctly.
+
+## Full matrix sweep
+
+`scripts/load-orchestrator.sh` fans the runner out across a
+gateways × policies × loads × scenarios matrix and writes one
+`matrix.tsv` summary plus per-cell `reports/<RUN_ID>/raw/<gw>/<cell>/`.
+
+```bash
+make load-sweep \
+    LOAD_GATEWAY=nginx \
+    LOAD_POLICIES=p01-vanilla,p02-jwt \
+    LOAD_LOADS=p1-baseline \
+    LOAD_SEED=42
+
+make load-aggregate LOAD_RUN_ID=<run-id> LOAD_FORMAT=csv
+```
+
+Omitting `LOAD_POLICIES` runs all 12 (`p01..p12`), and each policy
+is paired with its canonical `sNN-<slug>-http` scenario from the
+table above (e.g. `p04-rl-static → s04-rl-static-http`). Drop
+`LOAD_STOP_ON_FAIL=1` to abort the sweep on the first non-PASS cell.
+
+The aggregator walks `reports/<RUN_ID>/raw/**` and emits one wide
+row per cell: all k6 latency quantiles (p50/p90/p95/p99/max), RPS,
+the 4-bucket error split, check counts, plus peak + steady-state
+memory (`mem_rss_peak` / `mem_rss_steady`) and CPU percentages
+(`cpu_pct_peak` / `cpu_pct_steady`) sampled by the
+`docker-stats-sidecar`.
 
 ## Known gaps (not blockers — recorded for cycle-to-cycle planning)
 
@@ -201,16 +245,14 @@ parity:     PASS (4/4 probes)
    k6, so apples-to-apples with the prior art holds. A follow-up
    iteration will land paced variants under `k6/profiles/p1c-paced.js`
    etc., gated behind `BENCH_ARRIVAL=paced`.
-2. **No docker-stats sampling yet** — TASK §8 wants RSS peak +
-   steady-state per cell. The runner captures a `compose.log` on
-   teardown but doesn't sample memory/cpu. Phase 6 (orchestrator)
-   adds the per-second `docker stats` sidecar; for now, single-cell
-   memory readings are an explicit gap.
-3. **Hot-path access logs ON** — every `gateways/<gw>/<policy>/`
-   config still emits access logs (the parity attestation needed
-   them). TASK §10 requires access logs OFF in the load phase. A
-   sweep through the 84 profile configs will land alongside Phase 5
-   infrastructure (it's coupled to the cpuset/memory pinning work).
+2. **HTTPS scenarios (s13, s14)** — land alongside Phase 5 TLS
+   plumbing (cert chain + `tls.yaml` gateway configs). Until then,
+   the matrix runs over plain HTTP on the internal `bench-net`.
+3. **Orchestrator ≠ Phase 6** — `scripts/load-orchestrator.sh` is
+   the minimal shell-only harness for Path-A local runs. Phase 6
+   replaces it with a Go binary that also writes the
+   `docs/REPRODUCIBILITY.md` manifest, handles multi-repetition
+   runs + tolerance gating, and drives AWS topology.
 
 See [docs/LOAD-PROFILES.md](../docs/LOAD-PROFILES.md) and
 [docs/POLICIES.md](../docs/POLICIES.md) for the canonical specs.

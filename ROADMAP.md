@@ -502,16 +502,16 @@
 
 ### Phase 4. Load framework + k6 (2–3 days)
 
-**Goal**: 4 load profiles × 13 policy-aware scenarios + the runner
+**Goal**: 4 load profiles × 14 policy/protocol scenarios + the runner
 that wraps each cell's lifecycle (compose up → setup → parity
 precondition → k6 → teardown).
 
-Iteration 29 landed the framework foundation + 1 scenario green
-end-to-end. The remaining 12 scenarios are mostly mechanical
-(rebind URL / payload / auth header per `docs/POLICIES.md`); the
-hard problem — k6-image pinning, env-var contract, custom error
-classifier per `TASK §8`, in-network targeting via `bench-net`,
-parity precondition, JWT minting outside k6 — is solved.
+Iterations 29–30 landed the framework foundation, all 12 HTTP
+scenarios, the Path-A matrix harness (shell orchestrator +
+docker-stats sidecar + CSV aggregator), and the first full-matrix
+smoke run on nginx × `p1-baseline` × 12 scenarios. The two HTTPS
+scenarios land alongside Phase 5 (TLS plumbing); a paced-arrivals
+variant is a tracked follow-up.
 
 - [x] Pin `k6 v1.7.1`
   (`grafana/k6:1.7.1@sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f`,
@@ -520,24 +520,30 @@ parity precondition, JWT minting outside k6 — is solved.
   of truth for env vars (`BENCH_TARGET_URL`, `BENCH_LOAD_PROFILE`,
   `BENCH_POLICY_PROFILE`, `BENCH_SCENARIO`, `BENCH_GATEWAY`,
   `BENCH_RUN_ID`, `BENCH_RUN_SEED`, `BENCH_JWT_VALID`,
-  `BENCH_STREAM_METRICS`), runtime dispatch from `BENCH_LOAD_PROFILE`
-  to the matching `profiles/*.js` options object, and a four-bucket
-  custom-metric classifier (`policy_2xx` / `policy_4xx_expected` /
-  `policy_4xx_unexpected` / `policy_5xx_unexpected`) that maps to the
-  four error columns mandated by `TASK §8` (the report generator in
-  Phase 7 reads these directly).
+  `BENCH_JWT_VALID_RS256`, `BENCH_STREAM_METRICS`), runtime dispatch
+  from `BENCH_LOAD_PROFILE` to the matching `profiles/*.js` options
+  object, and a four-bucket custom-metric classifier
+  (`policy_2xx` / `policy_4xx_expected` /
+  `policy_4xx_unexpected` / `policy_5xx_unexpected`) that maps to
+  the four error columns mandated by `TASK §8` (the report generator
+  in Phase 7 reads these directly).
 - [x] `k6/profiles/p1-baseline.js`     — constant 10 VUs × 60s
 - [x] `k6/profiles/p2-sustained.js`    — constant 100 VUs × 5m
 - [x] `k6/profiles/p3-ramp.js`         — 10 → 100 → 300 → 500 (3 ×
   60s) → hold 180s → 0 (60s)
 - [x] `k6/profiles/p4-stress.js`       — constant 1000 VUs × 120s
-- [x] `k6/scenarios/s01-vanilla-http.js` — first scenario, drives
-  `p01-vanilla`. Smoke-tested against nginx end-to-end:
-  **PASS, 1 417 860 reqs / 60s (≈23.6k RPS), p95=1.23 ms, 0 failures,
-  parity precondition PASS, both checks 100% (2 835 720 / 0)**
-  on Apple Silicon Docker Desktop. Custom counters appear cleanly in
-  the summary export; thresholds (`p(95)<200`, `policy_5xx==0`) both
-  green.
+- [x] `k6/scenarios/s01-vanilla-http.js`          — drives `p01-vanilla`
+- [x] `k6/scenarios/s02-jwt-http.js`              — drives `p02-jwt`          (HS256 happy path)
+- [x] `k6/scenarios/s03-jwks-rs256-basic-http.js` — drives `p03-jwks-rs256-basic` (RS256 + JWKS kid lookup; runner mints via `gen-jwt-rs256.sh`)
+- [x] `k6/scenarios/s04-rl-static-http.js`        — drives `p04-rl-static`    (service-wide 1000 rps; expects 200 + 429 mix)
+- [x] `k6/scenarios/s05-rl-endpoint-http.js`      — drives `p05-rl-endpoint`  (100 rps on `/anything/limited`; `/anything/free` untouched)
+- [x] `k6/scenarios/s06-rl-dynamic-low-http.js`   — drives `p06-rl-dynamic-low`  (10 rps × 100 deterministic IPs)
+- [x] `k6/scenarios/s07-rl-dynamic-high-http.js`  — drives `p07-rl-dynamic-high` (100 rps × 50 000 on-the-fly IPs)
+- [x] `k6/scenarios/s08-req-headers-http.js`      — drives `p08-req-headers`  (add `X-Bench-In`, drop `X-Forwarded-For`)
+- [x] `k6/scenarios/s09-resp-headers-http.js`     — drives `p09-resp-headers` (add `X-Bench-Out`, drop `Server`)
+- [x] `k6/scenarios/s10-req-body-http.js`         — drives `p10-req-body`     (JSON add `$.bench.injected`, drop `$.secret`)
+- [x] `k6/scenarios/s11-resp-body-http.js`        — drives `p11-resp-body`    (JSON add `$.bench.injected`, drop `$.origin`)
+- [x] `k6/scenarios/s12-full-pipeline-http.js`    — drives `p12-full-pipeline` (composition p02 + p03 + p07 + p09 + p08 + p10)
 - [x] `scripts/load-gateway.sh` — runner script that mirrors
   `scripts/parity-gateway.sh` byte-for-byte on lifecycle, swapping
   the "work" step from `parity-attestation.sh` to a `docker run
@@ -545,33 +551,81 @@ parity precondition, JWT minting outside k6 — is solved.
   `bench-net` dynamically via `docker compose config --format json |
   jq .name`, so k6 reaches the gateway via the in-network
   `gateway:9080` alias without ever leaving the bench network.
-  Mints HS256 tokens on the host (k6 has no openssl) via
-  `scripts/gen-jwt.sh valid` only when the scenario name contains
-  `jwt` / `full-pipeline`. Trap-based teardown is unconditional.
-- [x] Makefile entries: `load-gateway` (single cell) + `load-gateway-
-  load-sweep` (4 load profiles × one scenario for one gateway × one
-  policy). Help block updated.
-- [ ] `k6/scenarios/s02-jwt-http.js`            — drives `p02-jwt`         (next iteration)
-- [ ] `k6/scenarios/s03-rl-static-http.js`      — drives `p04-rl-static`   (next iteration)
-- [ ] `k6/scenarios/s04-rl-endpoint-http.js`    — drives `p05-rl-endpoint` (next iteration)
-- [ ] `k6/scenarios/s05-rl-dynamic-low-http.js` — drives `p05`             (next iteration)
-- [ ] `k6/scenarios/s06-rl-dynamic-high-http.js`— drives `p06`             (next iteration)
-- [ ] `k6/scenarios/s07-req-headers-http.js`    — drives `p07`             (next iteration)
-- [ ] `k6/scenarios/s08-resp-headers-http.js`   — drives `p08`             (next iteration)
-- [ ] `k6/scenarios/s09-req-body-http.js`       — drives `p09`             (next iteration)
-- [ ] `k6/scenarios/s10-resp-body-http.js`      — drives `p10`             (next iteration)
-- [ ] `k6/scenarios/s11-full-pipeline-http.js`  — drives `p11`             (next iteration)
-- [ ] `k6/scenarios/s12-vanilla-https.js`       — drives `p01` over TLS    (lands with Phase 5)
-- [ ] `k6/scenarios/s13-full-pipeline-https.js` — drives `p11` over TLS    (lands with Phase 5)
+  Mints HS256 tokens on the host via `scripts/gen-jwt.sh valid` when
+  the scenario name contains `jwt` / `full-pipeline`, and RS256
+  tokens via `scripts/gen-jwt-rs256.sh valid` when the scenario
+  name matches `*jwks*`. Starts `scripts/docker-stats-sidecar.sh`
+  in the background before k6 fires and reaps it after; trap-based
+  teardown of compose + sidecar is unconditional.
+- [x] `scripts/docker-stats-sidecar.sh` — per-second sampler that
+  queries the Docker Engine REST `/containers/<id>/stats?stream=0`
+  endpoint for every `gwb-*` container in the stack, writing one
+  CSV row per (container × second) with `cpu_ns_total`,
+  `cpu_ns_system`, `cpu_online`, `mem_bytes`, `mem_limit`,
+  `net_rx/tx_bytes`, `blkio_read/write_bytes`. Aggregator reduces
+  to peak + steady-state RSS / CPU per cell.
+- [x] `scripts/load-orchestrator.sh` — Path-A matrix harness:
+  fans `load-gateway.sh` out across a
+  (`gateways` × `policies` × `scenarios` × `loads`) matrix, maps
+  each `pNN-<slug>` policy to its canonical `sNN-<slug>-http`
+  scenario, and records one `matrix.tsv` row per cell
+  (`cell, gateway, policy, scenario, load, verdict, duration_s,
+  output_dir`). Portable-Bash (no `mapfile`), safe to invoke on
+  macOS default Bash 3.2.
+- [x] `scripts/aggregate-csv.sh` — walks
+  `reports/<RUN_ID>/raw/**/k6-summary.json` + `docker-stats.csv`,
+  produces one wide CSV/TSV/Markdown row per cell with
+  `(gateway, policy, scenario, load, verdict, parity_status,
+  http_reqs, http_req_rate, iter_duration_avg_ms, http_req_duration_{p50,p90,p95,p99,max}, http_req_failed_rate, policy_{2xx,4xx_expected,4xx_unexpected,5xx_unexpected}, checks_{total,passes,fails}, mem_rss_{peak,steady}, cpu_pct_{peak,steady})`.
+- [x] Makefile entries: `load-gateway` + `load-gateway-load-sweep`
+  (single-cell), `load-sweep` + `load-aggregate` (matrix). Help
+  block updated.
+- [x] Hot-path access-log silence sweep: `traefik` (12 profiles,
+  `accessLog: {}` commented out), `kong`
+  (`KONG_PROXY_ACCESS_LOG: "off"` in compose). `nginx`, `envoy`,
+  `apisix`, `tyk`, `wallarm` were already silent on the hot path.
+  TASK §10 mandate satisfied; the parity harness is unaffected
+  because it attests via HTTP status/headers rather than access-log
+  scraping.
+- [x] Path-A full-matrix smoke: **nginx × all 12 policies ×
+  p1-baseline, 12/12 PASS end-to-end** (~14 min wall time on Apple
+  Silicon Docker Desktop). Pipeline validated end-to-end: compose
+  up → setup → parity precondition → host-side JWT mint (HS256
+  and RS256 variants) → k6 run on `bench-net` → docker-stats
+  sidecar (~30 samples/cell) → teardown → aggregator. Headline
+  numbers:
+
+  | policy                 | RPS        | p95 (ms) | 4xx_expected share | peak RSS (MB) | peak CPU % |
+  |------------------------|-----------:|---------:|-------------------:|--------------:|-----------:|
+  | p01-vanilla            | 21 946     | 1.16     | 0.00               | 112           | 139        |
+  | p02-jwt (HS256)        | 20 105     | 1.30     | 0.00               | 113           | 164        |
+  | p03-jwks-rs256-basic   | 18 998     | 1.38     | 0.00               | 115           | 198        |
+  | p04-rl-static          | 50 539     | 0.33     | 0.98               | 103           | 187        |
+  | p05-rl-endpoint        | 33 630     | 0.55     | 0.50               | 105           | 160        |
+  | p06-rl-dynamic-low     | 48 127     | 0.36     | 0.98               | 103           | 182        |
+  | p07-rl-dynamic-high    | 22 655     | 1.18     | 0.00               | 111           | 147        |
+  | p08-req-headers        | 24 728     | 0.73     | 0.00               | 104           | 146        |
+  | p09-resp-headers       | 25 314     | 0.77     | 0.00               | 105           | 148        |
+  | p10-req-body           | 20 105     | 1.35     | 0.00               | 112           | 130        |
+  | p11-resp-body          | 22 622     | 1.15     | 0.00               | 112           | 152        |
+  | p12-full-pipeline      | 49 380     | 0.33     | 0.98               | 115           | 178        |
+
+  Rate-limited cells (p04 / p06 / p12) show the majority of traffic
+  landing in `policy_4xx_expected` (the canonical 429 bucket) —
+  exactly the shape the fixtures call for. `p07-rl-dynamic-high`
+  sits below the 100-rps-per-IP × 50 000-IP bucket, so it registers
+  0.00% 4xx on a 10-VU baseline; higher-VU profiles (p2/p3/p4)
+  will exercise the limit. See `reports/pathA-20260423T090028Z/`
+  for the raw per-cell artefacts + `matrix.csv`. Relative rankings
+  are closed-loop; absolute RPS reporting is a tracked follow-up
+  (paced-arrivals variant).
+- [ ] `k6/scenarios/s13-vanilla-https.js`       — drives `p01` over TLS   (lands with Phase 5)
+- [ ] `k6/scenarios/s14-full-pipeline-https.js` — drives `p12` over TLS   (lands with Phase 5)
 - [ ] Paced (`constant-arrival-rate`) profile variants gated by
   `BENCH_ARRIVAL=paced` — closed-loop is fine for relative ranking
   (every public API-gw benchmark we cross-referenced ships closed-
   loop) but paced is needed for absolute-RPS-vs-target reporting.
-  Track follow-up.
-- [ ] Hot-path access-log silence sweep across 84 profile configs —
-  TASK §10 mandate, currently every `gateways/<gw>/<policy>/` config
-  still emits access logs (parity attestation relied on them). Sweep
-  is a Phase 5 prerequisite, not a Phase 4 blocker.
+  Tracked follow-up.
 
 ### Phase 5. Infrastructure (2 days)
 

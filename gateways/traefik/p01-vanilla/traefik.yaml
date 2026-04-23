@@ -35,7 +35,8 @@ log:
   level: ERROR
   format: common
 
-accessLog: {}
+# accessLog: {}  — OFF on the hot path: log I/O biases p95 latency.
+# Re-enable by uncommenting (JSON-format stdout) when debugging parity.
 
 api:
   dashboard: false

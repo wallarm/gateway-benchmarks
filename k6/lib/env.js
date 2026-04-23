@@ -92,6 +92,14 @@ export const runSeed = () => readInt('BENCH_RUN_SEED', 42);
 // k6/lib/jwt.js); scenarios that don't need a token never read this.
 export const benchJwtValid = () => readOptional('BENCH_JWT_VALID', '');
 
+// Pre-minted RS256 JWT for the p03-jwks-rs256-basic scenario. Same
+// contract as BENCH_JWT_VALID but signed with the canonical RS256
+// private key (gateways/_reference/jwks-rs256/private.pem). Minted
+// by `scripts/gen-jwt-rs256.sh valid` on the host; k6 never sees
+// openssl. Empty / unset is a hard error in scenarios that opt in
+// via `validRs256Bearer()`.
+export const benchJwtValidRs256 = () => readOptional('BENCH_JWT_VALID_RS256', '');
+
 // Stream every request's timing data to JSON when STREAM=1. Off by
 // default because the file balloons fast (~50 MB / minute on a
 // p4-stress run); the summary export is enough for ranking.

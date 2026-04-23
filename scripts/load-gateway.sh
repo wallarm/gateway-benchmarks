@@ -335,12 +335,22 @@ esac
 
 # -----------------------------------------------------------------------------
 # 5. Mint JWT(s) on the host (k6 has no openssl). Scenarios that do
-#    not need a token simply ignore BENCH_JWT_VALID; the env var is
-#    always set (even if to an empty string) so k6's `__ENV` reader
-#    yields a stable shape.
+#    not need a token simply ignore BENCH_JWT_VALID /
+#    BENCH_JWT_VALID_RS256; both env vars are always set (even if to
+#    an empty string) so k6's `__ENV` reader yields a stable shape.
+#
+#    Scenario name → token mint:
+#      *jwt* | *full-pipeline*  → HS256 via gen-jwt.sh        (p02, p12)
+#      *jwks*                   → RS256 via gen-jwt-rs256.sh  (p03)
 # -----------------------------------------------------------------------------
 BENCH_JWT_VALID=""
+BENCH_JWT_VALID_RS256=""
 case "${SCENARIO}" in
+    *jwks*)
+        say "=> minting RS256 token via scripts/gen-jwt-rs256.sh"
+        BENCH_JWT_VALID_RS256="$(bash scripts/gen-jwt-rs256.sh valid)"
+        [[ -n "${BENCH_JWT_VALID_RS256}" ]] || { bad "gen-jwt-rs256.sh returned empty"; exit 4; }
+        ;;
     *jwt*|*full-pipeline*)
         say "=> minting HS256 token via scripts/gen-jwt.sh"
         BENCH_JWT_VALID="$(bash scripts/gen-jwt.sh valid)"
@@ -383,6 +393,39 @@ fi
 # fast once the digest is local.
 docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 
+# -----------------------------------------------------------------------------
+# docker-stats sidecar — per-second CPU / RSS / net-io / blkio CSV of the
+# gateway container, started RIGHT BEFORE k6 so the baseline idle RSS
+# is captured on row 1 and the "steady-state + peak" pair comes out
+# cleanly in the post-run CSV aggregator.
+#
+# The container name follows the `gwb-<gateway>` convention enforced
+# by every gateways/<gw>/docker-compose.yaml (the `gateway:` service
+# block sets `container_name: gwb-<gw>`). Non-gateway service containers
+# in the same compose (e.g. gwb-<gw>-oidc-server, gwb-<gw>-redis) are
+# deliberately NOT sampled — only the data-plane process matters for
+# the policy-overhead number.
+# -----------------------------------------------------------------------------
+STATS_CSV="${OUTPUT}/docker-stats.csv"
+GATEWAY_CONTAINER="gwb-${GATEWAY}"
+SIDECAR_PID=""
+if [[ -x scripts/docker-stats-sidecar.sh ]]; then
+    bash scripts/docker-stats-sidecar.sh \
+        --container "${GATEWAY_CONTAINER}" \
+        --output    "${STATS_CSV}" \
+        --interval  1 \
+        >/dev/null 2>&1 &
+    SIDECAR_PID=$!
+    # Give it a moment to ping the engine, resolve the container id,
+    # and write the CSV header. If it died early (container not found),
+    # the kill below is a no-op and k6 still runs cleanly.
+    sleep 1
+    if ! kill -0 "${SIDECAR_PID}" 2>/dev/null; then
+        warn "docker-stats sidecar failed to stay up (container ${GATEWAY_CONTAINER} not reachable?); continuing without sampling"
+        SIDECAR_PID=""
+    fi
+fi
+
 docker_run_args=(
     --rm
     --network "${bench_network}"
@@ -396,12 +439,20 @@ docker_run_args=(
     -e "BENCH_RUN_ID=${RUN_ID}"
     -e "BENCH_RUN_SEED=${SEED}"
     -e "BENCH_JWT_VALID=${BENCH_JWT_VALID}"
+    -e "BENCH_JWT_VALID_RS256=${BENCH_JWT_VALID_RS256}"
     -e "BENCH_STREAM_METRICS=${STREAM}"
 )
 
 k6_rc=0
 docker run "${docker_run_args[@]}" "${K6_IMAGE}" "${k6_args[@]}" \
     > "${k6_log}" 2>&1 || k6_rc=$?
+
+# Stop the stats sidecar now that k6 has finished. SIGTERM makes the
+# loop break cleanly; `wait` reaps so the shell doesn't leave a zombie.
+if [[ -n "${SIDECAR_PID}" ]]; then
+    kill -TERM "${SIDECAR_PID}" 2>/dev/null || true
+    wait "${SIDECAR_PID}" 2>/dev/null || true
+fi
 
 if (( STREAM == 1 )) && [[ -f "${OUTPUT}/k6-stream.json" ]]; then
     gzip -f "${OUTPUT}/k6-stream.json"
@@ -434,5 +485,9 @@ ok "  summary:   ${k6_summary}"
 ok "  log:       ${k6_log}"
 [[ -f "${k6_stream}" ]] && ok "  stream:    ${k6_stream}"
 [[ -s "${parity_out}" ]] && ok "  parity:    ${parity_out}"
+if [[ -s "${STATS_CSV}" ]]; then
+    stats_rows="$(($(wc -l < "${STATS_CSV}") - 1))"
+    ok "  stats:     ${STATS_CSV} (${stats_rows} samples)"
+fi
 
 exit 0

@@ -102,10 +102,11 @@ services:
       KONG_REAL_IP_HEADER: "X-Real-IP"
       KONG_REAL_IP_RECURSIVE: "on"
       # --- Logging ---------------------------------------------------
-      # Both access_log and error_log go to the container's stdout /
-      # stderr, which `scripts/parity-gateway.sh` captures via
-      # `docker logs` for the post-run artefact bundle.
-      KONG_PROXY_ACCESS_LOG: "/dev/stdout"
+      # access_log is off on the hot path — log I/O biases p95 latency
+      # under load. error_log remains on /dev/stderr so parity
+      # attestation and post-run log bundles still capture gateway
+      # errors (scripts/parity-gateway.sh reads it via `docker logs`).
+      KONG_PROXY_ACCESS_LOG: "off"
       KONG_ADMIN_ACCESS_LOG: "off"
       KONG_PROXY_ERROR_LOG: "/dev/stderr"
       KONG_ADMIN_ERROR_LOG: "/dev/stderr"

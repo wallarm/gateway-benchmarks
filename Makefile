@@ -5,7 +5,7 @@
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
-	load-gateway load-gateway-load-sweep
+	load-gateway load-gateway-load-sweep load-sweep load-aggregate
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -82,6 +82,8 @@ help: ## Show this help
 	@echo "$(YELLOW)Load (Phase 4):$(NC)"
 	@echo "  $(GREEN)load-gateway$(NC)              Single load cell end-to-end (compose up → parity → k6 → tear down)"
 	@echo "  $(GREEN)load-gateway-load-sweep$(NC)   Sweep all 4 load profiles for one (LOAD_GATEWAY × LOAD_POLICY × LOAD_SCENARIO)"
+	@echo "  $(GREEN)load-sweep$(NC)                Matrix sweep (LOAD_GATEWAY × LOAD_POLICIES × LOAD_LOADS via orchestrator)"
+	@echo "  $(GREEN)load-aggregate$(NC)            Aggregate reports/\$$(LOAD_RUN_ID)/ into wide CSV/TSV/MD"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
@@ -373,4 +375,21 @@ load-gateway-load-sweep: ## Sweep all 4 load profiles for one (LOAD_GATEWAY, LOA
 	 done; \
 	 echo ""; \
 	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$excluded EXCLUDED (reports in reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/)"
+
+# ---------------------------------------------------------------------------
+# Orchestrator + aggregator (Phase 4 "Путь A" shell pipeline).
+# ---------------------------------------------------------------------------
+LOAD_POLICIES  ?=
+LOAD_LOADS     ?= p1-baseline
+LOAD_STOP_ON_FAIL ?= 0
+
+load-sweep: ## Full matrix sweep: LOAD_GATEWAY × LOAD_POLICIES (default=all 12) × LOAD_LOADS (default=p1-baseline)
+	@orch_args="--gateway $(LOAD_GATEWAY) --loads $(LOAD_LOADS) --seed $(LOAD_SEED)"; \
+	 if [ -n "$(LOAD_POLICIES)" ]; then orch_args="$$orch_args --policies $(LOAD_POLICIES)"; fi; \
+	 if [ "$(LOAD_STOP_ON_FAIL)" = "1" ]; then orch_args="$$orch_args --stop-on-fail"; fi; \
+	 if [ -n "$(LOAD_RUN_ID)" ]; then orch_args="$$orch_args --run-id $(LOAD_RUN_ID)"; fi; \
+	 bash scripts/load-orchestrator.sh $$orch_args
+
+load-aggregate: ## Aggregate reports/$(LOAD_RUN_ID)/ into a wide CSV (format: csv|tsv|md)
+	@bash scripts/aggregate-csv.sh --run-id $(LOAD_RUN_ID) --format $(or $(LOAD_FORMAT),csv)
 

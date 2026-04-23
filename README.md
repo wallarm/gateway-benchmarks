@@ -88,7 +88,7 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 │   ├── local/        # docker-compose + resource pins
 │   └── aws/          # Terraform (3 EC2 cluster PG)
 ├── scripts/          # prereqs, parity, deploy, fetch
-├── reports/          # output runs
+├── reports/          # output runs (local-only, never tracked — see docs/REPORT.md)
 └── docs/             # ARCHITECTURE / POLICIES / LOAD-PROFILES / GATEWAYS / REPRODUCIBILITY / REPORT
 ```
 

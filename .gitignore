@@ -9,27 +9,20 @@ orchestrator/vendor/
 *.out
 
 # ---- Reports ----
-# Per-run artefacts stay local (a single run weighs multiple GB of k6
-# NDJSON + docker-stats CSVs). Aggregated / combined reports DO ship in
-# git — they are the user-facing deliverable reviewers expect next to the
-# source. Raw per-cell data is published as GitHub Release assets, not
-# in-tree.
-reports/*
-!reports/README.md
-# Re-include any directory named `combined-*` as a whole — git needs the
-# directory un-ignored BEFORE its contents can be considered. We list the
-# bare directory name (no trailing slash) because `reports/*` matches both
-# files and dirs, and git only re-scans the directory when the exception
-# covers the same form as the original match.
-!reports/combined-*
-# Inside a re-included directory, ignore everything that is NOT one of the
-# three reviewer-facing artefacts, so we do not accidentally ship the
-# per-cell raw/ sub-trees if someone drops them under combined-*.
-reports/combined-*/raw
-reports/combined-*/raw/**
-reports/combined-*/*.log
-reports/combined-*/*.tmp
-reports/combined-*/*.json
+# `reports/` is strictly local output — per-run artefacts easily weigh
+# tens of GB. NOTHING inside it is tracked: no README, no aggregates.
+# That way users are free to replace the directory with a symlink to
+# external storage (e.g. /Volumes/…/reports) without git ever trying
+# to "restore" a tracked path and clobbering the symlink on checkout /
+# reset / clean. Reviewer-facing aggregated reports ship as GitHub
+# Release assets, documented in docs/REPORT.md.
+#
+# The pattern `reports` (no trailing slash) intentionally matches BOTH
+# a plain directory AND a symlink named `reports`. If we used
+# `reports/`, git would leave the symlink showing up as untracked and
+# `git clean -f` could remove it.
+reports
+reports/**
 
 # ---- Terraform / OpenTofu ----
 infra/aws/.terraform/

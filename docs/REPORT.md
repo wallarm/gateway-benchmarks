@@ -86,21 +86,50 @@ The formula is implemented in the orchestrator and can be recomputed independent
 
 ## 5. Where the raw data lives
 
-Everything the aggregator ingested:
+### Phase-4 (current) layout — produced by `scripts/load-orchestrator.sh`
 
 ```
-reports/<run>/raw/<gw>/<profile>__<scenario>/
-├── k6-summary.json        # final summary
-├── k6-stream.json.gz      # per-request time series (only when env STREAM=1)
-├── docker-stats.json      # per-second resources
-├── parity.json            # the parity attestation result for this cell
-└── logs/
-    ├── gateway-stdout.log
-    ├── gateway-stderr.log
-    └── watchdog-events.log  # if restarts happened
+reports/<run-id>/                           # e.g. pathA-20260423T090028Z
+├── matrix.tsv                              # cell-level PASS/FAIL ledger
+├── matrix.csv                              # wide CSV: gateway × policy × metric
+├── matrix.md                               # same, Markdown table
+└── <gateway>/<policy>__<scenario>/         # one directory per cell
+    ├── k6-summary.json                     # k6 end-of-run summary
+    ├── k6-stream.ndjson.gz                 # per-request time series (when STREAM=1)
+    ├── docker-stats.csv                    # per-second resources (CPU / RSS / net / blk)
+    ├── parity.json                         # parity attestation result
+    └── logs/
+        ├── gateway-stdout.log
+        ├── gateway-stderr.log
+        └── k6.log
+```
+
+Cross-run roll-ups live at `reports/combined-<label>/` and contain only
+`matrix.csv`, `matrix.md`, `report.html` — reviewer-facing artefacts
+small enough to ship as GitHub Release assets.
+
+### Phase-7 (planned) layout — produced by the Go orchestrator
+
+```
+reports/<timestamp>_<git-sha>/
+├── manifest.json                           # TASK §7: digests, seeds, host info
+├── report.html                             # single-page Chart.js report
+├── summary.csv                             # wide table
+├── summary.json                            # same data, JSON
+├── parity/<policy>.json                    # attestation results
+└── raw/<gateway>/<profile>__<scenario>/    # same per-cell shape as above
 ```
 
 Anyone can open these files and recompute the metrics by hand.
+
+### `reports/` is local-only
+
+The directory is **never** committed — a single run easily weighs tens
+of GB. Reviewers regenerate it with `make load-sweep` (see
+[REPRODUCIBILITY.md](./REPRODUCIBILITY.md)) and/or download release
+assets from GitHub. If you want `reports/` on external storage, make it
+a symlink **before** running any git operation: the directory has no
+tracked files, so git will leave the symlink alone.
 
 ## 6. Comparing two runs
 

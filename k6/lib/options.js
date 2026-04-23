@@ -20,17 +20,31 @@
 // the run cleanly before any traffic is generated.
 
 import { options as p1Baseline  } from '../profiles/p1-baseline.js';
+import { options as p1cPaced    } from '../profiles/p1c-paced.js';
 import { options as p2Sustained } from '../profiles/p2-sustained.js';
+import { options as p2cPaced    } from '../profiles/p2c-paced.js';
 import { options as p3Ramp      } from '../profiles/p3-ramp.js';
+import { options as p3cPaced    } from '../profiles/p3c-paced.js';
 import { options as p4Stress    } from '../profiles/p4-stress.js';
+import { options as p4cPaced    } from '../profiles/p4c-paced.js';
 
 import { loadProfile, gatewayName, policyProfile, scenarioName, runId } from './env.js';
 
+// The `-paced` suffix in a profile slug IS the gate for opting into
+// the `constant-arrival-rate` / `ramping-arrival-rate` executors;
+// there is no separate BENCH_ARRIVAL env var. Closed-loop twins
+// (no suffix) keep the original shape byte-for-byte — adding paced
+// entries below does not alter the closed-loop code path at all.
+// See docs/LOAD-PROFILES.md § Paced-arrivals variants for the why.
 const profileMap = {
     'p1-baseline':  p1Baseline,
+    'p1c-paced':    p1cPaced,
     'p2-sustained': p2Sustained,
+    'p2c-paced':    p2cPaced,
     'p3-ramp':      p3Ramp,
+    'p3c-paced':    p3cPaced,
     'p4-stress':    p4Stress,
+    'p4c-paced':    p4cPaced,
 };
 
 const selectedSlug = loadProfile();

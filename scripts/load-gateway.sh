@@ -110,9 +110,16 @@ done
 [[ -n "${SCENARIO}" ]] || { printf '%s\n' "--scenario is required" >&2; exit 2; }
 [[ -n "${LOAD}"     ]] || { printf '%s\n' "--load is required"     >&2; exit 2; }
 
+# Accepted load profiles — closed-loop (p1/p2/p3/p4-*) plus paced-
+# arrivals twins (p1c/p2c/p3c/p4c-paced). The `-paced` suffix is the
+# gate for the `constant-arrival-rate` executors; see
+# docs/LOAD-PROFILES.md § Paced-arrivals variants. Any new profile
+# MUST be added here AND in `k6/lib/options.js`'s profileMap AND in
+# `scripts/load-orchestrator.sh`.
 case "${LOAD}" in
     p1-baseline|p2-sustained|p3-ramp|p4-stress) ;;
-    *) printf 'unknown --load %s; valid: p1-baseline|p2-sustained|p3-ramp|p4-stress\n' "${LOAD}" >&2; exit 2;;
+    p1c-paced|p2c-paced|p3c-paced|p4c-paced) ;;
+    *) printf 'unknown --load %s; valid: p1-baseline|p2-sustained|p3-ramp|p4-stress|p1c-paced|p2c-paced|p3c-paced|p4c-paced\n' "${LOAD}" >&2; exit 2;;
 esac
 
 scenario_file="k6/scenarios/${SCENARIO}.js"

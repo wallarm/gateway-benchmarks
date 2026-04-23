@@ -5,7 +5,7 @@
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
-	load-gateway load-gateway-load-sweep load-sweep load-aggregate
+	load-gateway load-gateway-load-sweep load-sweep load-aggregate load-combine load-report
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -84,6 +84,8 @@ help: ## Show this help
 	@echo "  $(GREEN)load-gateway-load-sweep$(NC)   Sweep all 4 load profiles for one (LOAD_GATEWAY × LOAD_POLICY × LOAD_SCENARIO)"
 	@echo "  $(GREEN)load-sweep$(NC)                Matrix sweep (LOAD_GATEWAY × LOAD_POLICIES × LOAD_LOADS via orchestrator)"
 	@echo "  $(GREEN)load-aggregate$(NC)            Aggregate reports/\$$(LOAD_RUN_ID)/ into wide CSV/TSV/MD"
+	@echo "  $(GREEN)load-combine$(NC)              Combine N reports/<run-id>/ into one CSV (LOAD_RUN_IDS=id1,id2,…)"
+	@echo "  $(GREEN)load-report$(NC)               Render Chart.js HTML report from a combined CSV (LOAD_REPORT_INPUT=, LOAD_REPORT_OUTPUT=)"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
@@ -392,4 +394,18 @@ load-sweep: ## Full matrix sweep: LOAD_GATEWAY × LOAD_POLICIES (default=all 12)
 
 load-aggregate: ## Aggregate reports/$(LOAD_RUN_ID)/ into a wide CSV (format: csv|tsv|md)
 	@bash scripts/aggregate-csv.sh --run-id $(LOAD_RUN_ID) --format $(or $(LOAD_FORMAT),csv)
+
+load-combine: ## Combine N reports/<run-id>/ into one wide CSV (LOAD_RUN_IDS=id1,id2,…, format: csv|tsv|md)
+	@bash scripts/aggregate-multi-csv.sh \
+	    --run-ids $(LOAD_RUN_IDS) \
+	    --format  $(or $(LOAD_FORMAT),csv) \
+	    $(if $(LOAD_REGENERATE),--regenerate,) \
+	    $(if $(LOAD_OUTPUT),--output $(LOAD_OUTPUT),)
+
+load-report: ## Render a Chart.js HTML report from a combined CSV (LOAD_REPORT_INPUT=reports/<dir>/matrix.csv, LOAD_REPORT_OUTPUT=…/report.html)
+	@python3 scripts/render-html-report.py \
+	    --input  "$(LOAD_REPORT_INPUT)" \
+	    --output "$(LOAD_REPORT_OUTPUT)" \
+	    $(if $(LOAD_REPORT_TITLE),--title "$(LOAD_REPORT_TITLE)",) \
+	    $(if $(LOAD_REPORT_ENV),--env "$(LOAD_REPORT_ENV)",)
 

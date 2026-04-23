@@ -58,6 +58,23 @@ function readInt(name, fallback) {
 // the service alias declared in every gateways/<gw>/docker-compose.yaml.
 export const targetUrl = () => readRequired('BENCH_TARGET_URL').replace(/\/+$/, '');
 
+// Target URL for the HTTPS scenarios (s13-vanilla-https,
+// s14-full-pipeline-https). Must start with `https://` — a plain-HTTP
+// URL here would produce a connection-reset avalanche the moment the
+// first TLS ClientHello bytes hit the gateway's http parser, so the
+// opt-in scenarios validate the scheme at init and fail fast.
+//
+// DEAD until Phase 5: the Phase 5 TLS plumbing (cert chain under
+// `gateways/_reference/tls/`, `listen 443 ssl;` on each gateway
+// config, `:8443` host-port binding in `docker-compose.yaml`) is the
+// prerequisite that lets the runner actually point here; until that
+// ships, the orchestrator leaves BENCH_TARGET_URL_HTTPS unset and s13
+// / s14 throw at init — a clear trigger contract rather than silent
+// dormancy. Trailing slashes are stripped for symmetry with
+// targetUrl() so callers can always append `/<path>` without caring
+// about the canonical form.
+export const benchTargetUrlHttps = () => readOptional('BENCH_TARGET_URL_HTTPS', '').replace(/\/+$/, '');
+
 // Which load profile is active for this run — one of:
 //   p1-baseline, p2-sustained, p3-ramp, p4-stress
 // `lib/options.js` switches on this to pick the k6 `options` object.

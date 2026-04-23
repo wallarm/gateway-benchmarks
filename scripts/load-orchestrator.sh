@@ -151,10 +151,16 @@ else
 fi
 
 split_csv_into_array LOADS "${LOADS_CSV}"
+# Accepted load profiles — both closed-loop (p1/p2/p3/p4-*) and
+# their paced-arrivals twins (p1c/p2c/p3c/p4c-paced). The `-paced`
+# suffix is the gate for the `constant-arrival-rate` executors; see
+# docs/LOAD-PROFILES.md § Paced-arrivals variants. Any new profile
+# MUST be added here AND in `k6/lib/options.js`'s profileMap.
 for l in "${LOADS[@]}"; do
     case "${l}" in
         p1-baseline|p2-sustained|p3-ramp|p4-stress) ;;
-        *) printf 'unknown load profile: %s (valid: p1-baseline|p2-sustained|p3-ramp|p4-stress)\n' "${l}" >&2; exit 2;;
+        p1c-paced|p2c-paced|p3c-paced|p4c-paced) ;;
+        *) printf 'unknown load profile: %s (valid: p1-baseline|p2-sustained|p3-ramp|p4-stress|p1c-paced|p2c-paced|p3c-paced|p4c-paced)\n' "${l}" >&2; exit 2;;
     esac
 done
 

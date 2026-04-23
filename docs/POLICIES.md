@@ -527,6 +527,78 @@ profile. See
 for the full breakdown · `?` pending capability pass (none
 outstanding).
 
+## HTTPS scenarios (s13, s14)
+
+The k6 load harness ships two scenarios that re-exercise the canonical
+`p01-vanilla` and `p12-full-pipeline` policies over **HTTPS/1.1**
+instead of plain HTTP:
+
+| Scenario                            | Drives policy         | Protocol | Activation                                   |
+|-------------------------------------|-----------------------|----------|----------------------------------------------|
+| `k6/scenarios/s13-vanilla-https.js` | `p01-vanilla`         | HTTPS    | Phase 5 prerequisite (TLS plumbing)          |
+| `k6/scenarios/s14-full-pipeline-https.js` | `p12-full-pipeline` | HTTPS    | Phase 5 prerequisite (TLS plumbing)          |
+
+These two scenarios are **orthogonal** to the 12 HTTP scenarios
+(`s01..s12`): they do not replace s01 or s12, they sit alongside on a
+separate protocol axis. The canonical policy → scenario mapping in
+[`scripts/load-orchestrator.sh`](../scripts/load-orchestrator.sh)
+stays `p01 → s01-vanilla-http` / `p12 → s12-full-pipeline-http`; s13
+and s14 are invoked explicitly via `--scenarios s13-vanilla-https`
+(or a `--scenarios` list pairing `p01,p12` with `s13-…,s14-…`).
+
+### Why just two HTTPS scenarios, not all twelve
+
+The TLS handshake cost is **uniform across policy profiles** — the
+gateway terminates the same ClientHello / Finished bytes regardless
+of whether the downstream request then hits a pure proxy (p01), a
+JWT validator (p02), a rate-limit bucket (p03..p07), a header / body
+rewriter (p08..p11), or the full pipeline (p12). Measuring TLS
+overhead on `p01` (the simplest downstream path, minimum gateway
+work) and on `p12` (the most complex downstream path, maximum gateway
+work) **sandwiches** the real TLS impact:
+
+- `s13 − s01` → isolates the TLS-termination cost with every other
+  downstream stage held at zero. Gives the "pure TLS" number.
+- `s14 − s12` → isolates the TLS-termination cost when the gateway is
+  also running every policy axis in parallel. Gives the "TLS under
+  load" number.
+- `(s14 − s12) − (s13 − s01)` → any non-zero residual is an
+  **interaction** between TLS and the policy pipeline (e.g. a gateway
+  doing synchronous TLS record-sealing on the same event-loop turn
+  that runs Lua filters).
+
+Running HTTPS variants for p02..p11 individually would add no
+information — every one of them would land somewhere inside the
+bracket defined by s13 and s14 (exactly by construction, since each
+single-stage policy is a strict subset of p12). The two-scenario
+bracket is the canonical design; a full 12-scenario HTTPS sweep is
+explicitly out of scope.
+
+### When the HTTPS scenarios activate
+
+s13 and s14 are **dead code** until Phase 5 ships the TLS plumbing:
+
+1. **Cert chain** under
+   [`gateways/_reference/tls/`](../gateways/_reference/tls/) — the
+   canonical `bench.local` leaf + CA + key, same uniform shape every
+   gateway mounts.
+2. **`listen 443 ssl;` (or equivalent)** on every gateway's
+   configuration, reading the cert from the shared reference mount.
+3. **`:8443` host-port binding** in each `gateways/<gw>/docker-compose.yaml`
+   so the k6 loadgen on `bench-net` (and operators on the host) can
+   reach the TLS listener.
+
+Each scenario validates at init that `BENCH_TARGET_URL_HTTPS` is
+both non-empty AND starts with `https://`, so an operator who tries
+to run s13 / s14 before Phase 5 lands — or with a plain-HTTP URL by
+mistake — gets a clear, actionable error message pointing at the
+missing plumbing. Until Phase 5, the orchestrator leaves
+`BENCH_TARGET_URL_HTTPS` unset and the scenarios are never invoked.
+
+Phase 5's cert and TLS-config work is tracked in
+[ROADMAP.md § Phase 5](../ROADMAP.md#phase-5-infrastructure-2-days);
+the scenarios themselves are already landed and dormant.
+
 ## Status
 
 Phase 3 foundation (this document, `gateways/_reference/`, `fixtures/`,

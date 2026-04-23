@@ -9,17 +9,25 @@ two HTTPS variants from `docs/POLICIES.md § p01-tls / p12-tls`.
 
 ## Status
 
-> **Phase 4 — Iteration 30: full 12-scenario HTTP matrix landed** plus
-> the matrix-sweep harness (orchestrator + docker-stats sidecar +
-> CSV aggregator). All 12 HTTP scenarios smoke-tested against `nginx`
-> end-to-end (`p1-baseline` × 12 scenarios, 12/12 PASS). HTTPS variants
-> land alongside Phase 5 (TLS infrastructure). See `ROADMAP.md` and
+> **Phase 4 — Iteration 32: path-A breadth + scale sweeps complete.**
+> All 7 gateways swept on `p1-baseline` (80/84 PASS + 3 EXCLUDED +
+> 1 FAIL, see `ROADMAP.md § Phase 4` for the breakdown), plus
+> `nginx × 12 × p2-sustained` (12/12 PASS after a targeted repair).
+> Paced-arrivals twin profiles and HTTPS scenarios landed as
+> init-guarded shells (dead until Phase 5 TLS plumbing). Cross-run
+> aggregator (`scripts/aggregate-multi-csv.sh` + `make load-combine`)
+> rolls N runs into one wide CSV: see `reports/combined-pathA-
+> p1-baseline/matrix.csv` (83 cells × 27 columns) and `reports/
+> combined-pathA-nginx-p2/matrix.csv` (12 cells × 27 columns).
+> Iteration 31 landed the 12 HTTP scenarios + matrix harness +
+> hot-path access-log silence sweep. See `ROADMAP.md` and
 > `.notes/PROGRESS.md` for the running journal.
 
 | Component                                      | Status  | Notes                                                                          |
 |------------------------------------------------|---------|--------------------------------------------------------------------------------|
 | `k6/lib/{env,options,jwt,payloads,metrics}.js` | landed  | helpers + 4-bucket error classifier per `TASK.md §8`; RS256 twin for `jwks-*`  |
-| `k6/profiles/{p1,p2,p3,p4}-*.js`               | landed  | all 4 load profiles wired                                                      |
+| `k6/profiles/{p1,p2,p3,p4}-*.js`               | landed  | all 4 closed-loop load profiles wired                                          |
+| `k6/profiles/{p1c,p2c,p3c,p4c}-paced.js`       | landed  | paced-arrivals twins (constant/ramping-arrival-rate) — opt-in by `-paced` slug |
 | `k6/scenarios/s01-vanilla-http.js`             | landed  | smoke: 1.4M reqs / 60s on nginx, p95 = 1.23 ms, 0 failures                     |
 | `k6/scenarios/s02-jwt-http.js`                 | landed  | HS256 JWT + happy-path 200; smoke: 1.33M / 60s on nginx, p95 = 1.27 ms         |
 | `k6/scenarios/s03-jwks-rs256-basic-http.js`    | landed  | RS256 / JWKS kid-lookup; runner mints via `gen-jwt-rs256.sh valid`             |
@@ -32,7 +40,8 @@ two HTTPS variants from `docs/POLICIES.md § p01-tls / p12-tls`.
 | `k6/scenarios/s10-req-body-http.js`            | landed  | JSON add+drop on request body                                                  |
 | `k6/scenarios/s11-resp-body-http.js`           | landed  | JSON add+drop on response body                                                 |
 | `k6/scenarios/s12-full-pipeline-http.js`       | landed  | composition of p02 + p03 + p07 + p09 + p08 + p10                               |
-| `k6/scenarios/s{13,14}-*-https.js`             | TODO    | TLS variants; lands alongside Phase 5 cert plumbing                            |
+| `k6/scenarios/s13-vanilla-https.js`            | landed — dead until Phase 5 TLS plumbing | drives `p01-vanilla` over TLS; init-throws on empty / non-`https://` `BENCH_TARGET_URL_HTTPS` |
+| `k6/scenarios/s14-full-pipeline-https.js`      | landed — dead until Phase 5 TLS plumbing | drives `p12-full-pipeline` over TLS; widens `http_req_duration` p95 to 240 ms (+20% of s12) |
 | `scripts/load-gateway.sh`                      | landed  | mirrors `scripts/parity-gateway.sh` lifecycle; runs docker-stats sidecar       |
 | `scripts/docker-stats-sidecar.sh`              | landed  | per-second Docker REST sampler → `docker-stats.csv` per cell                   |
 | `scripts/load-orchestrator.sh`                 | landed  | matrix sweep: gateways × policies × scenarios × loads → `matrix.tsv`           |
@@ -51,11 +60,15 @@ k6/
 │   ├── jwt.js                      reads pre-minted HS256 token from env
 │   ├── payloads.js                 canonical request bodies (mirrors fixtures/)
 │   └── metrics.js                  custom counters: 2xx / 4xx-expected / 4xx-other / 5xx
-├── profiles/                       4 load profiles (TASK §5, docs/LOAD-PROFILES.md)
+├── profiles/                       4 closed-loop + 4 paced-arrivals (TASK §5, docs/LOAD-PROFILES.md)
 │   ├── p1-baseline.js              constant 10 VUs × 60s
+│   ├── p1c-paced.js                constant 500 RPS × 60s                              [paced twin of p1]
 │   ├── p2-sustained.js             constant 100 VUs × 5m
+│   ├── p2c-paced.js                constant 2 000 RPS × 5m                             [paced twin of p2]
 │   ├── p3-ramp.js                  10 → 100 → 300 → 500 (3×60s) → hold 180s → 0 (60s)
-│   └── p4-stress.js                constant 1000 VUs × 120s
+│   ├── p3c-paced.js                500 → 2k → 5k → 10k RPS (3×60s) → hold 180s → 0 (60s) [paced twin of p3]
+│   ├── p4-stress.js                constant 1000 VUs × 120s
+│   └── p4c-paced.js                constant 20 000 RPS × 120s                          [paced twin of p4]
 └── scenarios/                      14 scenarios (one per policy + 2 HTTPS variants)
     ├── s01-vanilla-http.js              drives p01-vanilla              [LANDED]
     ├── s02-jwt-http.js                  drives p02-jwt                  [LANDED]
@@ -69,8 +82,8 @@ k6/
     ├── s10-req-body-http.js             drives p10-req-body             [LANDED]
     ├── s11-resp-body-http.js            drives p11-resp-body            [LANDED]
     ├── s12-full-pipeline-http.js        drives p12-full-pipeline        [LANDED]
-    ├── s13-vanilla-https.js             drives p01 over TLS             [TODO — Phase 5]
-    └── s14-full-pipeline-https.js       drives p12 over TLS             [TODO — Phase 5]
+    ├── s13-vanilla-https.js             drives p01 over TLS             [LANDED — Phase 5]
+    └── s14-full-pipeline-https.js       drives p12 over TLS             [LANDED — Phase 5]
 ```
 
 Total when complete: **56 cells per gateway** (12 HTTP scenarios × 4
@@ -192,17 +205,27 @@ make load-gateway-load-sweep \
     LOAD_SCENARIO=s01-vanilla-http
 ```
 
-Reference smoke results (Iteration 30, nginx + p1-baseline, Apple
-Silicon Docker Desktop):
+Reference smoke results (Iteration 32, p1-baseline closed-loop
+10 VUs × 60 s, Apple Silicon Docker Desktop) — full cross-gateway
+breadth for `p01-vanilla` and the composite `p12-full-pipeline`:
 
-```
-p01-vanilla    / s01:   PASS  1 417 860 reqs / 60s  p95 1.23 ms  fail 0
-p02-jwt        / s02:   PASS  1 334 498 reqs / 60s  p95 1.27 ms  fail 0
-```
+| gateway | p01 RPS | p01 p95 (ms) | p12 RPS | p12 p95 (ms) |
+|---------|--------:|-------------:|--------:|-------------:|
+| tyk     | 32 331  | sub-ms       | *excl.* | *excl.*      |
+| nginx   | 21 946  | 1.16         | 49 380  | 0.33         |
+| wallarm | 21 876  | 0.97         | 36 800  | 0.40         |
+| apisix  | 19 875  | 1.31         | 34 532  | 0.47         |
+| kong    | 18 788  | 1.38         | 28 935  | 0.72         |
+| envoy   | 18 100  | 1.06         |  1 261  | 0.95         |
+| traefik | 17 272  | 1.40         | 33 199  | 0.61         |
 
-HS256 JWT verification on nginx costs ~0.04 ms at p95 (≈6 % over
-`p01-vanilla`) at this VU level — useful sanity-check that the
-scenario / runner / sidecar stack is all wired correctly.
+RPS on `p12-full-pipeline` sits above `p01-vanilla` for most
+gateways because the composed pipeline includes rate-limit buckets
+(p04 + p06) and 429 rejects are cheaper than full-proxy 200s.
+Envoy's p12 collapse to 1.3k RPS is genuine — every composed
+policy runs through a separate Lua filter with serial string
+manipulation. See `reports/combined-pathA-p1-baseline/matrix.csv`
+for the full 83-cell roll-up.
 
 ## Full matrix sweep
 
@@ -232,22 +255,54 @@ memory (`mem_rss_peak` / `mem_rss_steady`) and CPU percentages
 (`cpu_pct_peak` / `cpu_pct_steady`) sampled by the
 `docker-stats-sidecar`.
 
+## Cross-run roll-up
+
+`make load-combine LOAD_RUN_IDS=a,b,c LOAD_OUTPUT=path LOAD_FORMAT=md`
+(wrapper around `scripts/aggregate-multi-csv.sh`) concatenates N
+per-run matrices into one wide file. It auto-regenerates any
+per-run CSV that is stale or missing, so the typical flow is:
+
+```bash
+# 7 independent runs (one per gateway, same load profile)
+for gw in nginx wallarm envoy traefik kong apisix tyk; do
+  make load-sweep LOAD_GATEWAY=$gw LOAD_LOADS=p1-baseline \
+      LOAD_RUN_ID=pathA-p1-$gw-$(date -u +%Y%m%dT%H%M%SZ)
+done
+
+# roll them into one wide report
+make load-combine \
+    LOAD_RUN_IDS=pathA-p1-nginx-…,pathA-p1-wallarm-…,… \
+    LOAD_OUTPUT=reports/combined-pathA-p1-baseline/matrix.csv
+```
+
 ## Known gaps (not blockers — recorded for cycle-to-cycle planning)
 
-1. **Closed-loop vs paced arrivals** — every load profile uses
+1. **Closed-loop vs paced arrivals** — the four canonical profiles
+   (`p1-baseline`, `p2-sustained`, `p3-ramp`, `p4-stress`) use
    `constant-vus` / `ramping-vus`, which is closed-loop (a faster
-   gateway gets more iterations because each VU cycles faster). The
-   `docs/LOAD-PROFILES.md` table mentions "target RPS" figures that
-   imply paced arrivals (`constant-arrival-rate`). Phase 4
-   intentionally lands closed-loop first — it's how every public
-   API-gateway benchmark we cross-referenced (`api7/apisix-benchmark`,
-   `Kong/insomnia`, `jkaninda/goma-gateway-vs-traefik`) configures
-   k6, so apples-to-apples with the prior art holds. A follow-up
-   iteration will land paced variants under `k6/profiles/p1c-paced.js`
-   etc., gated behind `BENCH_ARRIVAL=paced`.
-2. **HTTPS scenarios (s13, s14)** — land alongside Phase 5 TLS
-   plumbing (cert chain + `tls.yaml` gateway configs). Until then,
-   the matrix runs over plain HTTP on the internal `bench-net`.
+   gateway gets more iterations because each VU cycles faster). That
+   is how every public API-gateway benchmark we cross-referenced
+   (`api7/apisix-benchmark`, `Kong/insomnia`,
+   `jkaninda/goma-gateway-vs-traefik`) configures k6, so relative
+   ranking is apples-to-apples with the prior art. For
+   absolute-RPS-vs-target claims (e.g. "gateway X sustains 10k RPS"),
+   four paced twins have landed alongside: `p{1,2,3,4}c-paced` use
+   `constant-arrival-rate` / `ramping-arrival-rate` with a 50%-wider
+   `http_req_duration` p(95) budget and a `dropped_iterations` threshold
+   (see `docs/LOAD-PROFILES.md § Paced-arrivals variants`). The
+   `-paced` suffix in the profile slug is the gate — no separate env
+   var. `p1c-paced` and `p2c-paced` run on a developer laptop;
+   `p3c-paced` and `p4c-paced` need a dedicated Linux bench host with
+   raised `ulimit -n` (≥65 536) and `net.core.somaxconn`.
+2. **HTTPS scenarios (s13, s14)** — `s13-vanilla-https.js` and
+   `s14-full-pipeline-https.js` are landed but dormant: they
+   `throw` at init unless `BENCH_TARGET_URL_HTTPS` is an `https://`
+   URL, and the canonical policy → scenario mapping
+   (`p01 → s01-vanilla-http`, `p12 → s12-full-pipeline-http`) keeps
+   HTTP as the default. Phase 5 lands the TLS plumbing (cert chain
+   under `gateways/_reference/tls/`, `listen 443 ssl;` in each
+   gateway config, `:8443` exposed in `docker-compose.yaml`) and
+   flips the switch.
 3. **Orchestrator ≠ Phase 6** — `scripts/load-orchestrator.sh` is
    the minimal shell-only harness for Path-A local runs. Phase 6
    replaces it with a Go binary that also writes the

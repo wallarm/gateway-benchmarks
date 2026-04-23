@@ -444,12 +444,6 @@ The project is in early phases. No benchmark runs yet — we are building the fo
 
 See [ROADMAP.md](./ROADMAP.md) for details.
 
-## Contact
-
-- Issues / Discussions: this repository
-- Security: `security@wallarm.com`
-- Wallarm API Gateway: https://github.com/wallarm/wallarm-api-gateway
-
 ## License
 
 Apache 2.0 — see [LICENSE](./LICENSE).

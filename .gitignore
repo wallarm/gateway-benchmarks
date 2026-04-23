@@ -9,10 +9,27 @@ orchestrator/vendor/
 *.out
 
 # ---- Reports ----
-# Actual runs stay local; only the directory README ships in git.
-# (We publish aggregated reports as GitHub Release assets, not in-tree.)
+# Per-run artefacts stay local (a single run weighs multiple GB of k6
+# NDJSON + docker-stats CSVs). Aggregated / combined reports DO ship in
+# git — they are the user-facing deliverable reviewers expect next to the
+# source. Raw per-cell data is published as GitHub Release assets, not
+# in-tree.
 reports/*
 !reports/README.md
+# Re-include any directory named `combined-*` as a whole — git needs the
+# directory un-ignored BEFORE its contents can be considered. We list the
+# bare directory name (no trailing slash) because `reports/*` matches both
+# files and dirs, and git only re-scans the directory when the exception
+# covers the same form as the original match.
+!reports/combined-*
+# Inside a re-included directory, ignore everything that is NOT one of the
+# three reviewer-facing artefacts, so we do not accidentally ship the
+# per-cell raw/ sub-trees if someone drops them under combined-*.
+reports/combined-*/raw
+reports/combined-*/raw/**
+reports/combined-*/*.log
+reports/combined-*/*.tmp
+reports/combined-*/*.json
 
 # ---- Terraform / OpenTofu ----
 infra/aws/.terraform/
@@ -45,3 +62,7 @@ docker-compose.override.yaml
 /tmp/
 *.tmp
 *.log
+
+# ---- Python ----
+__pycache__/
+*.pyc

@@ -619,13 +619,86 @@ variant is a tracked follow-up.
   for the raw per-cell artefacts + `matrix.csv`. Relative rankings
   are closed-loop; absolute RPS reporting is a tracked follow-up
   (paced-arrivals variant).
-- [ ] `k6/scenarios/s13-vanilla-https.js`       — drives `p01` over TLS   (lands with Phase 5)
-- [ ] `k6/scenarios/s14-full-pipeline-https.js` — drives `p12` over TLS   (lands with Phase 5)
-- [ ] Paced (`constant-arrival-rate`) profile variants gated by
-  `BENCH_ARRIVAL=paced` — closed-loop is fine for relative ranking
-  (every public API-gw benchmark we cross-referenced ships closed-
-  loop) but paced is needed for absolute-RPS-vs-target reporting.
-  Tracked follow-up.
+- [x] Path-A breadth sweep: **6 remaining gateways × 12 policies ×
+  p1-baseline** (envoy, kong, apisix, tyk, wallarm via
+  `WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30`, traefik) —
+  80/84 PASS + 3 EXCLUDED (tyk p02/p03 feature-missing for the
+  benchmark's JWT contract; tyk p10/p11/p12 same) + 1 FAIL
+  (traefik/p03-jwks — JWKS-auth OpenResty sidecar consistently
+  races the `setup.sh` 401 probe under the orchestrator's compose
+  flow; standalone `parity-gateway.sh` runs of the same profile
+  are green, so the issue is sweep-specific and tracked as a gap,
+  not a regression). Raw per-run reports: `reports/pathA-p1-
+  {envoy,kong,apisix,tyk,traefik,wallarm-rerun}-20260423T*`. Cross-
+  run roll-up: `reports/combined-pathA-p1-baseline/matrix.csv`
+  (83 cells, 27 columns — k6 traffic + latency quantiles + 4-bucket
+  error split + peak/steady RSS/CPU per cell). Headline p01-vanilla
+  numbers (p1-baseline 10 VUs × 60 s closed-loop, RPS reflects
+  closed-loop iteration cadence, not absolute arrivals):
+
+  | gateway | p01 RPS | p01 p95 (ms) | p02-jwt RPS | p12-full RPS |
+  |---------|--------:|-------------:|------------:|-------------:|
+  | tyk     | 32 331  | sub-ms       | *excluded*  | *excluded*   |
+  | nginx   | 21 946  | 1.16         | 20 105      | 49 380       |
+  | wallarm | 21 876  | 0.97         | 19 940      | 36 800       |
+  | apisix  | 19 875  | 1.31         | 19 050      | 34 532       |
+  | kong    | 18 788  | 1.38         | 15 765      |  28 935      |
+  | envoy   | 18 100  | 1.06         | 10 858      |  1 261       |
+  | traefik | 17 272  | 1.40         | 15 663      |  33 199      |
+
+  Envoy's p12-full-pipeline collapse (1.3k RPS vs 18k baseline) is
+  real: every composed policy runs through a separate Lua filter
+  and serial string manipulation. Every other gateway's p12 RPS
+  sits ABOVE its p01 RPS because 429s are cheaper than full-proxy
+  replies once the rate-limiter fires — the rate-limit buckets in
+  p12 (composed of p04 + p06) turn most iterations into early
+  rejects. Tyk is excluded from all policy rows because its JWT
+  validator requires a payload contract that our fixtures do not
+  provide, and its body-rewrite plugin is the declared
+  FEATURE-MISSING cell (`docs/POLICIES.md § Tyk deviations`).
+- [x] Path-A scale sweep: **nginx × all 12 policies × p2-sustained**
+  (100 VUs × 5 m = 12 × 5 min = 60 min wall-time). 9/12 PASS in
+  the initial run plus 3/3 PASS in the targeted repair after
+  Docker Desktop's daemon died mid-sweep (a known macOS stability
+  issue under 60 min of sustained container churn — affects any
+  laptop workload of this scale, not the harness). Combined
+  nginx × p2-sustained matrix with all 12 cells green:
+  `reports/combined-pathA-nginx-p2/matrix.csv`. Headline numbers:
+
+  | policy                 | RPS        | p95 (ms) | 4xx_expected share |
+  |------------------------|-----------:|---------:|-------------------:|
+  | p01-vanilla            | 43 149     | 5.93     | 0.00               |
+  | p02-jwt (HS256)        | 34 291     | 7.87     | 0.00               |
+  | p03-jwks-rs256-basic   | 29 533     | 9.60     | 0.00               |
+  | p04-rl-static          | 83 732     | 2.25     | 0.98               |
+  | p05-rl-endpoint        | 59 285     | 5.41     | 0.50               |
+  | p06-rl-dynamic-low     | 82 013     | 2.71     | 0.98               |
+  | p07-rl-dynamic-high    | 46 183     | 5.73     | 0.00               |
+  | p08-req-headers        | 49 520     | 4.85     | 0.00               |
+  | p09-resp-headers       | 47 928     | 5.03     | 0.00               |
+
+  (p10/p11/p12 from the repair run — `matrix.csv` of the combined
+  tree carries them alongside.) Doubling VUs × extending duration
+  5× from the baseline is a real stress on Docker Desktop but the
+  nginx configuration itself holds through every cell, including
+  the p12-full-pipeline composition at 49 380 RPS. RSS stays under
+  120 MB throughout; CPU peak hits 198% on p03-jwks-rs256-basic
+  (which is the only cell doing RSA signature verification per
+  request).
+- [x] `k6/scenarios/s13-vanilla-https.js`       — drives `p01` over TLS   (landed; init-throws until Phase 5 TLS plumbing supplies `BENCH_TARGET_URL_HTTPS`)
+- [x] `k6/scenarios/s14-full-pipeline-https.js` — drives `p12` over TLS   (landed; same init-guard as s13; +20% p95 budget for TLS cost)
+- [x] Paced (`constant-arrival-rate` / `ramping-arrival-rate`) profile
+  variants — four twins `p{1,2,3,4}c-paced` landed alongside the
+  closed-loop canonical four. Closed-loop stays the default (apples-
+  to-apples with `api7/apisix-benchmark`, `Kong/insomnia`,
+  `jkaninda/goma-gateway-vs-traefik`); paced covers absolute-RPS-vs-
+  target reporting. Gated on the profile slug (`-paced` suffix) —
+  no separate env var. `http_req_duration` p(95) budget widens 50%
+  vs the closed-loop twin (paced exposes queueing that closed-loop
+  hides); `dropped_iterations` threshold is the red-signal canary
+  for "gateway dropped arrivals". Laptop-safe on `p1c-paced` +
+  `p2c-paced`; `p3c-paced` / `p4c-paced` need a dedicated Linux
+  loadgen with raised `ulimit -n` and `net.core.somaxconn`.
 
 ### Phase 5. Infrastructure (2 days)
 

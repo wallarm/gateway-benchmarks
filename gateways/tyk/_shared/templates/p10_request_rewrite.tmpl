@@ -1,0 +1,59 @@
+{{- /*
+  gateways/tyk/_shared/templates/p10_request_rewrite.tmpl
+
+  Tyk Classic body-transform template shared by tyk/p10-req-body and
+  tyk/p12-full-pipeline. Tyk's `transform` middleware uses the
+  Go text/template engine plus the bundled Sprig v3 FuncMap (wired in
+  apidef/api_definitions.go via APIDefinitionLoader.filterSprigFuncs;
+  the only Sprig funcs stripped are the env-leak pair
+  `env`/`expandenv`). Critically this is a NATIVE Go primitive — no
+  otto JSVM, no MiniRequestObject (de)serialisation, no per-request
+  VM context switch. p11's burst probe (1200 valid-JWT GETs in 1 s)
+  cannot fire global_rate_limit if the chain is gated by JSVM
+  pre-middleware: otto caps Tyk's throughput at ~830 rps on this
+  hardware, well below the 1000-rps RL threshold, so the RL bucket
+  never reaches capacity and 0 × 429 results.
+
+  The canonical req-body contract is:
+
+      * inject  $.bench.injected = true   (preserving any sibling
+                                           keys already present
+                                           under .bench, e.g.
+                                           .bench.from_client used
+                                           by p11 probe 1)
+      * drop    $.secret
+
+  Sprig provides exactly the helpers we need:
+
+      * `unset DICT KEY`      — delete KEY from DICT, return the dict
+      * `set DICT KEY VALUE`  — set KEY in DICT to VALUE, return the dict
+      * `dict K1 V1 K2 V2 …`  — construct a literal map[string]any
+      * `hasKey DICT KEY`     — bool, true iff DICT has KEY
+      * `index DICT KEY`      — return DICT[KEY] (interface{})
+      * `mustToJson VALUE`    — JSON-marshal VALUE, error out on failure
+
+  Both `unset` and `set` mutate their first argument in place AND return
+  the (now-mutated) dict; we pin the return to `$_` so it is not
+  rendered into the output stream. After the two mutations, we
+  serialise the entire (still-the-same) `.` map back to JSON and emit
+  it as the new request body. mw_transform.go takes the rendered bytes,
+  replaces r.Body and recomputes r.ContentLength on the way through.
+
+  The template is `input_type: "json"` so `.` is map[string]interface{}
+  decoded by encoding/json from the request body. mw_transform.go
+  treats len(body)==0 as `{}` (line 77-79 of v5.11.1 mw_transform.go)
+  so the empty-body path lands as an empty dict and the contract still
+  holds: `{"bench":{"injected":true}}`.
+
+  The .bench branch preserves any already-present sibling fields
+  (p11 probe 1 ships {"bench":{"from_client":true}} on the wire and
+  expects $.bench.from_client and $.bench.injected to BOTH be true
+  on the upstream-echoed body).
+*/ -}}
+{{- $_ := unset . "secret" -}}
+{{- if hasKey . "bench" -}}
+{{-   $_ := set (index . "bench") "injected" true -}}
+{{- else -}}
+{{-   $_ := set . "bench" (dict "injected" true) -}}
+{{- end -}}
+{{- mustToJson . -}}

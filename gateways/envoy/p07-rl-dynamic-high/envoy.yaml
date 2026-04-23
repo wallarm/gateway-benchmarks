@@ -1,0 +1,201 @@
+# gateways/envoy/p07-rl-dynamic-high/envoy.yaml
+#
+# Profile: p07-rl-dynamic-high (per-client-IP rate limit, high cardinality).
+# Canonical spec:     docs/POLICIES.md § p06
+# Canonical fixture:  fixtures/p07-rl-dynamic-high.jsonl
+#
+# Limit:        100 req/s per client IP
+# Key source:   X-Real-IP header
+# IP pool:      50 000 distinct IPs per POLICIES.md (fixture probes 11
+#               of them — the column-wide cardinality deviation is in
+#               this file's `descriptors:` block; see § Deviation).
+# Over-limit:   HTTP 429 with Retry-After: 1
+#
+# Same `envoy.filters.http.local_ratelimit` mechanism as p05. The
+# difference from p05 is purely quantitative:
+#
+#   * Per-descriptor bucket: `max_tokens: 100, tokens_per_fill: 100,
+#     fill_interval: 1s` — exactly 100 rps per IP, matching
+#     POLICIES.md § p06 1:1. Envoy's bucket is shared across workers
+#     (see p04-rl-static/envoy.yaml header for the proto reference
+#     and empirical verification), so no per-worker multiplication.
+#   * The bucket shape also serves as burst headroom for the "10 IPs
+#     × 20 req below limit" probe — 100 per-IP tokens is five times
+#     the 20-per-IP probe load, so every request in that probe must
+#     return 2xx even on a cold bucket.
+#
+# ENUMERATED DESCRIPTORS — same caveat as p05
+# -------------------------------------------
+# Envoy v1.32's local_ratelimit requires VERBATIM descriptor matches;
+# blank-value wildcard descriptors landed in v1.33 via
+# https://github.com/envoyproxy/envoy/pull/36623. Until the column
+# moves to ≥ v1.33 the descriptors below enumerate exactly the IPs
+# that the fixture touches (10.5.0.1 … 10.5.0.10 + 10.5.9.9 = 11
+# entries). For the full 50 000-IP pool Phase 4 will flood, bump the
+# image to ≥ v1.33 or pair local_ratelimit with a global RLS. See
+# NOTES.md § Deviation and docs/GATEWAYS.md § Deviations.
+#
+# NO BURST_PARALLELISM DEVIATION
+# ------------------------------
+# Unlike an earlier iteration of this profile, the envoy column now
+# runs parity at the default `BURST_PARALLELISM=128`. The "accept
+# throughput ceiling" / "connection drops" symptom that motivated a
+# temporary `BURST_PARALLELISM=32` override was traced to
+# `max_connection_duration: 0s` in the HCM's
+# `common_http_protocol_options` — envoy interprets `0s` literally
+# as "close the connection at t=0", so every connection was being
+# force-closed before any response could fly back. The field is now
+# UNSET (see the inline comment near every envoy.yaml's
+# common_http_protocol_options) and the column passes cleanly at
+# 128-parallel.
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9080
+      reuse_port: true
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                codec_type: HTTP1
+                common_http_protocol_options:
+                  idle_timeout: 60s
+                  # See p01-vanilla/envoy.yaml: leaving
+                  # max_connection_duration UNSET (rather than `0s`) is the
+                  # "no maximum" setting — `0s` would close every connection
+                  # at t=0 and every request would fail mid-response.
+                  max_requests_per_connection: 100000
+                stream_idle_timeout: 60s
+                request_timeout: 10s
+                normalize_path: false
+                merge_slashes: false
+                server_header_transformation: OVERWRITE
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: backend_vh
+                      domains: ["*"]
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: backend_cluster
+                            timeout: 10s
+                http_filters:
+                  # -----------------------------------------------------------
+                  # p06 — per-IP rate limit (100 rps per X-Real-IP, 50k pool)
+                  # -----------------------------------------------------------
+                  - name: envoy.filters.http.local_ratelimit
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                      stat_prefix: http_local_rl_p06
+                      # Safety-net default bucket for requests that
+                      # produce no descriptor match (unknown IPs or
+                      # requests without X-Real-IP). Sized far above
+                      # any single-burst throughput so it never
+                      # trips during parity.
+                      token_bucket:
+                        max_tokens: 100000
+                        tokens_per_fill: 100000
+                        fill_interval: 1s
+                      # Only consume the default bucket when NO
+                      # descriptor matches — otherwise per-IP buckets
+                      # would leak into a shared counter.
+                      always_consume_default_token_bucket: false
+                      rate_limits:
+                        - actions:
+                            - request_headers:
+                                header_name: x-real-ip
+                                descriptor_key: client_ip
+                      # Enumerated per-IP descriptors. Every entry gets
+                      # its own shared-across-workers token bucket
+                      # sized at:
+                      #
+                      # max_tokens=100, tokens_per_fill=100, fill_interval=1s
+                      #  -> exactly 100 rps per IP, 100-request burst
+                      #  -> matches POLICIES.md § p06 1:1
+                      #  -> matches nginx/p06 shape
+                      #     (rate=100r/s, burst=20 nodelay)
+                      descriptors:
+                        - entries: [{ key: client_ip, value: "10.5.0.1" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.2" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.3" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.4" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.5" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.6" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.7" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.8" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.9" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.0.10" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                        - entries: [{ key: client_ip, value: "10.5.9.9" }]
+                          token_bucket: { max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s }
+                      filter_enabled:
+                        runtime_key: local_rate_limit_enabled
+                        default_value:
+                          numerator: 100
+                          denominator: HUNDRED
+                      filter_enforced:
+                        runtime_key: local_rate_limit_enforced
+                        default_value:
+                          numerator: 100
+                          denominator: HUNDRED
+                      status:
+                        code: TooManyRequests
+                      response_headers_to_add:
+                        - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                          header:
+                            key: retry-after
+                            value: "1"
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: backend_cluster
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      connect_timeout: 10s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          common_http_protocol_options:
+            idle_timeout: 60s
+            max_requests_per_connection: 100000
+      upstream_connection_options:
+        tcp_keepalive:
+          keepalive_time: 60
+          keepalive_interval: 10
+          keepalive_probes: 3
+      load_assignment:
+        cluster_name: backend_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: backend
+                      port_value: 8080

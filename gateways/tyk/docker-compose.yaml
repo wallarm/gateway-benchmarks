@@ -1,0 +1,156 @@
+# gateways/tyk/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for parity attestation.
+# The stack follows the canonical port contract used by every other
+# gateway column:
+#
+#     loadgen (host)  →  tyk :9080  →  backend :8080
+#
+# Unlike wallarm/nginx/envoy, Tyk OSS Gateway has two mandatory
+# infrastructure dependencies that every other column can skip:
+#
+#   1. `tyk-redis`     — Tyk stores session/keys/rate-limit state in
+#                        Redis. Even the smallest file-based API
+#                        definition will refuse to boot until the
+#                        `/hello` endpoint confirms the Redis
+#                        connection is healthy. This is well-documented
+#                        upstream (see tyk-gateway-docker/README).
+#
+#   2. `jwks-server`   — Tyk's native JWT middleware reads a JWKS only
+#                        from an **HTTP URL** (source: mw_jwt.go
+#                        `getSecretFromURL`). Static inline JWKS is not
+#                        wired in Classic APIs; the only alternative is
+#                        a base64-encoded PEM public key, which is a
+#                        single key with NO `kid` lookup and therefore
+#                        cannot distinguish a valid-kid token from an
+#                        unknown-kid token — the third probe of
+#                        `p03-jwks-rs256-basic` would silently pass.
+#
+#                        Serving the canonical `_reference/jwks-rs256/
+#                        jwks.json` from a tiny nginx-alpine sidecar
+#                        keeps Tyk on the *native* kid-lookup path
+#                        without dragging Redis-based secrets or
+#                        vault-style indirection into the test.
+#
+# The sidecar is shared across every profile (4 services, always up)
+# because conditional `docker compose --profile` plumbing would be a
+# bespoke codepath in `scripts/parity-gateway.sh` that other columns
+# do not use. The sidecar runs ~5 MiB and is firewalled to `bench-net`,
+# so the cost of "always on" is negligible and profiles that ignore it
+# (future p01…p12) simply never send traffic there.
+#
+# The policy profile is picked by the GATEWAY_PROFILE env var (default
+# `p01-vanilla` — the canonical entry point for the 12-profile core
+# matrix). Each profile directory must contain:
+#
+#   apis/<api>.json   - Tyk API definition(s) mounted at
+#                       /opt/tyk-gateway/apps
+#   setup.sh          - post-up readiness + smoke for the profile
+#   NOTES.md          - profile-specific notes / deviations
+#
+# Shared across profiles (mounted read-only into every boot):
+#
+#   tyk.standalone.conf          → /opt/tyk-gateway/tyk.conf
+#   _policies/policies.json      → /opt/tyk-gateway/policies/policies.json
+#   _jwks-server/nginx.conf      → jwks-server /etc/nginx/conf.d/default.conf
+#
+# Image pins are refreshed with:
+#   docker pull tykio/tyk-gateway:v5.11.1 && docker image inspect \
+#     tykio/tyk-gateway:v5.11.1 --format '{{index .RepoDigests 0}}'
+#   docker pull redis:7.4-alpine           && ...
+#   docker pull nginx:1.27.3-alpine        && ...
+
+name: gateway-benchmarks-tyk
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-tyk-backend
+    restart: "no"
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  tyk-redis:
+    # Tyk OSS insists on Redis at startup — the /hello handler reports
+    # `"redis": {"status":"fail"}` until the port answers, and most
+    # middleware (including JWT) will refuse to load until Tyk has a
+    # working Redis pool. We pin a recent minor so the rate-limit /
+    # key-storage semantics do not shift silently if Docker Hub ever
+    # retags the `redis:7` moving tag.
+    image: redis:7.4-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
+    container_name: gwb-tyk-redis
+    restart: "no"
+    # No volume mount: the bench is intentionally stateless across
+    # runs. Session keys minted during one parity sweep must not
+    # survive into the next.
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    networks:
+      bench-net:
+        aliases: [tyk-redis]
+
+  jwks-server:
+    # Same alpine image as the nginx column so we do not introduce a
+    # new pull surface; the digest is identical to
+    # `gateways/nginx/docker-compose.yaml`.
+    image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
+    container_name: gwb-tyk-jwks-server
+    restart: "no"
+    # Read-only bind mounts:
+    #  - the tiny server block that whitelists /.well-known/jwks.json
+    #  - the canonical JWKS file from _reference (single source of truth)
+    volumes:
+      - ./_jwks-server/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../_reference/jwks-rs256/jwks.json:/usr/share/nginx/html/.well-known/jwks.json:ro
+    # No port publish on the host — only Tyk needs to reach it, and it
+    # reaches it via the `jwks-server` DNS alias on `bench-net`. This
+    # keeps the JWKS endpoint off the host surface (parity probes never
+    # touch it directly).
+    networks:
+      bench-net:
+        aliases: [jwks-server]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-tykio/tyk-gateway:v5.11.1@sha256:225624f56be59a54614ff8ba88255fec1c430037a4f7232fc141d2615bdff598}
+    container_name: gwb-tyk
+    restart: "no"
+    depends_on:
+      - backend
+      - tyk-redis
+      - jwks-server
+    # TYK_GW_SECRET pins the `/tyk/*` admin-API shared secret. The
+    # bench never exposes the admin API on the host, but Tyk still
+    # requires the variable to be set — and a deterministic value
+    # means compose logs are reproducible across runs.
+    environment:
+      TYK_GW_SECRET: gateway-benchmarks
+    # The `tyk.standalone.conf` template is sourced verbatim from the
+    # upstream `tyk-gateway-docker` repo with two edits:
+    #   * `storage.host` is set to the compose service name `tyk-redis`
+    #   * `policies.policy_source` is `file` (no Dashboard)
+    # Everything else matches upstream defaults so comparisons with
+    # a stock Tyk Classic deployment stay honest.
+    volumes:
+      - ./tyk.standalone.conf:/opt/tyk-gateway/tyk.conf:ro
+      - ./_policies:/opt/tyk-gateway/policies:ro
+      - ./_shared/middleware:/opt/tyk-gateway/middleware/bench:ro
+      # Go templates rendered by `transform_response` (p10/p11). Lives
+      # alongside the JSVM middleware mount so every "shared bench
+      # asset" is reachable at /opt/tyk-gateway/middleware/bench-*.
+      # The Tyk image ships its own /opt/tyk-gateway/templates with
+      # built-in error pages — we deliberately do NOT mount over that
+      # path so the gateway keeps its default error rendering.
+      - ./_shared/templates:/opt/tyk-gateway/middleware/bench-templates:ro
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/apis:/opt/tyk-gateway/apps:ro
+    ports:
+      - "9080:8080"  # data plane (parity-gateway target → Tyk listens :8080 internally)
+    # Tyk handles SIGTERM gracefully; 5 s is plenty for `docker
+    # compose down` between parity runs.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+networks:
+  bench-net:
+    driver: bridge

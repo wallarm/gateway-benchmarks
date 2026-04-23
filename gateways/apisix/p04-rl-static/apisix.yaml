@@ -1,0 +1,70 @@
+# gateways/apisix/p04-rl-static/apisix.yaml
+#
+# Profile: p04-rl-static (static service-wide rate limit, 1000 rps,
+# rolling 1 s window).
+# Canonical spec: docs/POLICIES.md § p03
+# Canonical fixture: fixtures/p04-rl-static.jsonl
+#
+# APISIX realises "1000 rps service-wide, rolling 1s" with the native
+# `limit-count` plugin in `local` policy (in-memory shared-dict, no
+# Redis). Contract:
+#
+#   * count: 1000, time_window: 1, rejected_code: 429
+#       Rolling 1-second window, 1000 requests max; everything over
+#       gets a 429.
+#
+#   * key_type: constant, key: "bench-service"
+#       A single constant key so every request on this service lands
+#       in the same bucket — the "service-wide" semantics from
+#       POLICIES.md § p03. The enum literal is spelled "constant"
+#       (not "const" as older docs sometimes show); APISIX 3.15
+#       validates the schema at load time and hard-rejects the
+#       route otherwise, which makes the typo very load-bearing.
+#
+#   * policy: local
+#       Per-worker in-memory counter. APISIX defaults to `local` when
+#       `policy` is unset, but we spell it out so future reviewers
+#       know we did not flip to Redis.
+#
+# Shared-dict sizing: the plugin allocates a counter per unique key.
+# With `key_type: const` we need exactly 1 slot, so the default size
+# (10 MiB) is vastly oversized — no tuning needed at p03 scale. p06
+# is where the zone gets interesting.
+
+routes:
+  - id: bench-p04-rl-static
+    uris:
+      - /
+      - /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    plugins:
+      limit-count:
+        count: 1000
+        time_window: 1
+        key_type: constant
+        key: bench-service
+        rejected_code: 429
+        # APISIX's default rejected_msg is a plain string; we shape it
+        # as JSON for parity with the other gateway columns. The probe
+        # asserts only on status, not body, so this is cosmetic.
+        rejected_msg: '{"error":"rate_limit_exceeded","limit":"1000r/s","scope":"service"}'
+        policy: local
+        # Do NOT emit the X-RateLimit-* headers (`show_limit_quota_header`
+        # defaults to true in APISIX 3.x). We disable them because the
+        # parity probe in fixtures/p04-rl-static.jsonl asserts only on
+        # the 429 count and keeping response headers minimal makes the
+        # parity diff to nginx / envoy / wallarm cleaner.
+        show_limit_quota_header: false
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

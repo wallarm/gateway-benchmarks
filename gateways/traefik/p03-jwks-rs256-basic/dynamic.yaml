@@ -1,0 +1,80 @@
+# gateways/traefik/p03-jwks-rs256-basic/dynamic.yaml
+#
+# RS256 + JWKS validation via traefik's `forwardAuth` middleware.
+# The auth decision is delegated to the `jwks-auth` OpenResty sidecar
+# (see ../docker-compose.yaml services.jwks-auth), which runs on
+# `bench-net` and listens on :9091. Traefik forwards the downstream
+# request's headers (including `Authorization`) to the sidecar's
+# `/verify` endpoint; the sidecar returns 200 to allow or 401 to
+# deny.
+#
+# Native primitive contract (verified against
+# https://doc.traefik.io/traefik/middlewares/http/forwardauth/ for
+# traefik 3.3):
+#
+#   * middlewares.<name>.forwardAuth.address
+#       URL the middleware calls for every incoming request. Host
+#       `jwks-auth` resolves to the sidecar's `bench-net` IP via the
+#       service alias in docker-compose.yaml. No host-side indirection.
+#
+#   * middlewares.<name>.forwardAuth.trustForwardHeader
+#       Default (false). We do NOT trust any pre-existing
+#       X-Forwarded-* from the downstream client — the sidecar is a
+#       trust domain of its own, not a downstream-terminated one.
+#
+#   * middlewares.<name>.forwardAuth.authResponseHeaders
+#       Deliberately UNSET. The sidecar returns status only (no
+#       body, no custom headers); we do not forward anything from
+#       the auth response back to the downstream client. Same shape
+#       every other JWKS-aware column emits.
+#
+#   * middlewares.<name>.forwardAuth.authRequestHeaders
+#       Deliberately UNSET — traefik forwards ALL downstream headers
+#       by default. The sidecar only reads `Authorization`; leaving
+#       the default behaviour keeps the config minimal and matches
+#       a real-world deployment where an auth service may inspect
+#       further headers in the future without a config change.
+#
+# Behaviour:
+#
+#   * No Authorization header → sidecar returns 401 → traefik
+#     terminates the downstream request with 401 (never reaches
+#     backend).
+#   * Valid RS256 token with canonical kid → sidecar verifies
+#     signature + exp → returns 200 → traefik proxies to backend
+#     → client sees 200.
+#   * RS256 token with unknown kid → sidecar's kid → EVP_PKEY*
+#     lookup fails → returns 401 → traefik terminates with 401.
+#
+# All three outcomes match fixtures/p03-jwks-rs256-basic.jsonl by status
+# code alone. The fixture makes no body assertion on 401 probes, so
+# traefik's default 401 body shape is acceptable.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-jwks-rs256
+      priority: 1
+
+  middlewares:
+    bench-jwks-rs256:
+      forwardAuth:
+        # jwks-auth:9091 is the `aliases` entry on bench-net for the
+        # OpenResty sidecar declared with `profiles: [p03-jwks-rs256-basic]`
+        # in ../docker-compose.yaml. Any path is fine (the sidecar
+        # accepts catch-all); we settle on `/verify` for
+        # documentation value.
+        address: "http://jwks-auth:9091/verify"
+        trustForwardHeader: false
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

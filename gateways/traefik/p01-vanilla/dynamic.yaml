@@ -1,0 +1,31 @@
+# gateways/traefik/p01-vanilla/dynamic.yaml
+#
+# Dynamic config for p01-vanilla. One router → one service; no
+# middleware, no plugin. Behaviour equivalent to envoy / nginx /
+# wallarm p01 cells: the gateway acts as a bare pass-through.
+
+http:
+  routers:
+    # Catch-all router — matches any request on the `web` entryPoint.
+    # `PathPrefix(/)` is the simplest rule that still expresses
+    # "every URL" unambiguously (compare to `HostRegexp(.*)` which
+    # fails on Host header quirks). No middleware list → the request
+    # goes straight from the router to the service.
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      priority: 1
+
+  services:
+    # Single upstream — same `backend:8080` address every other
+    # gateway targets. passHostHeader: false so the upstream sees
+    # its own hostname (go-httpbin doesn't care, but the envoy /
+    # nginx cells both pass through the gateway's normalized Host
+    # value, and we want the same wire shape).
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

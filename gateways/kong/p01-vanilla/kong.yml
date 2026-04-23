@@ -1,0 +1,33 @@
+# gateways/kong/p01-vanilla/kong.yml
+#
+# Profile: p01-vanilla (catch-all proxy, no policy).
+# Canonical spec: docs/POLICIES.md § p01
+# Canonical fixture: fixtures/p01-vanilla.jsonl
+#
+# Kong DB-less declarative config (`_format_version: "3.0"` is the
+# current canonical schema for 3.x — see
+# https://docs.konghq.com/gateway/latest/reference/db-less-and-declarative-config/).
+# One service + one catch-all route + zero plugins = pure proxy.
+#
+# `paths: ["/"]` in Kong matches any path beginning with "/". Unlike
+# APISIX, Kong does NOT need an explicit methods list — a route with
+# no `methods:` filter accepts any HTTP verb (GET through PATCH,
+# HEAD, OPTIONS, …). The fixture's GET-then-POST sequence therefore
+# falls through the same route.
+#
+# `strip_path: false` keeps the upstream request URI intact
+# (default in Kong 3.x is true, which would strip the matched prefix
+# and turn `/anything` into `/` before proxying — useless for a
+# go-httpbin backend that routes on the path).
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true

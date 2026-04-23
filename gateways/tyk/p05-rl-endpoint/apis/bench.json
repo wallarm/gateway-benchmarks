@@ -1,0 +1,69 @@
+{
+  "_comment": "gateways/tyk/p05-rl-endpoint/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p05-rl-endpoint. The canonical contract is:",
+  "_comment_3": "  /anything/limited -> 100 rps bucket, 429 above limit",
+  "_comment_4": "  /anything/free    -> unrestricted (must NEVER 429)",
+  "_comment_5": "Tyk implements per-endpoint rate limits via extended_paths.rate_limit (Classic API). Each entry binds a rate to a (path, method) pair. We only declare ONE entry on (GET, /anything/limited) so /anything/free is implicitly unrestricted — Tyk evaluates extended_paths only for paths that match.",
+  "_comment_6": "use_extended_paths must be true for Tyk to consult extended_paths at all (default false in OSS).",
+  "_comment_7": "No global_rate_limit here — that would 429 /free during the 1200-req burst and break the scoping invariant.",
+  "_comment_8": "use_keyless: true keeps auth out of the equation; this profile measures only the rate-limit primitive's scoping behavior.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": [],
+          "rate_limit": [
+            {
+              "disabled": false,
+              "path": "/anything/limited",
+              "method": "GET",
+              "rate": 100,
+              "per": 1
+            }
+          ]
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

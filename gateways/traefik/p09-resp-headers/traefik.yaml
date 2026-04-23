@@ -1,0 +1,70 @@
+# gateways/traefik/p09-resp-headers/traefik.yaml
+#
+# Profile: p09-resp-headers.
+# Canonical spec: docs/POLICIES.md § p08 — add X-Bench-Out: 1 to the
+# downstream response, drop the Server header.
+# Fixture: fixtures/p09-resp-headers.jsonl.
+#
+# Static config is identical to p01 — the transform itself is a
+# router-level middleware wired up in dynamic.yaml via traefik's
+# native `headers` middleware (no plugin needed).
+#
+# Unlike nginx (which needs the third-party ngx_headers_more module
+# to delete the Server header and therefore pulls in OpenResty), the
+# OSS traefik binary can drop arbitrary response headers out of the
+# box: the `headers` middleware' `customResponseHeaders` map takes
+# an empty string as the documented "drop" sentinel.
+#
+# Traefik splits config into a static half (this file — entryPoints,
+# providers, plugins, api, log) and a dynamic half (dynamic.yaml —
+# routers, services, middlewares). The static file is read once at
+# process start; the dynamic file is watched by the file provider
+# and hot-reloaded.
+#
+# We deliberately keep the static config minimal:
+#   * one HTTP entryPoint on :9080 (same port contract as every
+#     other gateway under gateways/<gw>/)
+#   * file provider pointing at /etc/traefik/dynamic/ (mounted from
+#     gateways/traefik/p09-resp-headers/dynamic.yaml)
+#   * logs at ERROR level so the hot path is quiet
+#   * api+dashboard DISABLED (no management surface published)
+#
+# `experimental.localPlugins` is declared even on profiles that don't
+# load a plugin, so the static config is uniform across profiles and
+# the only diff across p01..p12 lives in dynamic.yaml. p08 does not
+# reference the plugin, so Traefik loads the Yaegi source but never
+# instantiates it.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p08 only asserts on RESPONSE-side headers; leaving `insecure`
+      # at its default has no functional effect here. We set it
+      # explicitly so the static YAML shape is identical across every
+      # profile that ships a header-transform profile.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

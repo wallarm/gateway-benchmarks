@@ -29,14 +29,14 @@ docker image inspect nginx:1.27.3-alpine \
 
 * **`1.27.3`** — the most recent mainline release at the time of
   pinning. We use mainline (not `stable`) because newer RL /
-  body-streaming behaviour matters for `p03..p09` and stable trails
+  body-streaming behaviour matters for `p03..p10` and stable trails
   mainline by several months.
 * **`-alpine`** — smaller image, faster container churn during the
   parity sweep. Every Linux-side benchmark run (Phase 4) will verify
   that the same digest runs under `--platform linux/amd64` on EC2.
 * **Not `-perl`, not `-otel`** — we don't ship Perl modules or the
-  OpenTelemetry bolt-on. Lua-based profiles (`p02-jwt`, `p08-req-body`,
-  `p09-resp-body`, `p10-full-pipeline`) switch to
+  OpenTelemetry bolt-on. Lua-based profiles (`p02-jwt`, `p10-req-body`,
+  `p11-resp-body`, `p12-full-pipeline`) switch to
   `openresty/openresty:<pinned>` instead of bundling `ngx_http_lua`
   here, which is the
   [recommendation in docs/POLICIES.md](../../docs/POLICIES.md#feature-availability-matrix).
@@ -60,42 +60,46 @@ gateways/nginx/
 │   ├── nginx.conf             (access_by_lua_block → jwt_hs256.verify)
 │   ├── setup.sh               (smoke: missing-auth=401, fresh-token=200)
 │   └── NOTES.md               (why no lua-resty-jwt; user nobody;)
-├── p03-rl-static/             (mainline)
+├── p04-rl-static/             (mainline)
 │   ├── nginx.conf             (+limit_req_zone $server_name / burst=200)
 │   ├── setup.sh               (post-up smoke; burst handled by parity runner)
 │   └── NOTES.md               (mechanism, burst shape, deviations)
-├── p04-rl-dynamic-low/        (mainline)
+├── p05-rl-endpoint/          (mainline)
+│   ├── nginx.conf             (location-scoped limit_req on /anything/limited only)
+│   ├── setup.sh               (post-up smoke on both limited and free endpoints)
+│   └── NOTES.md               (location-scoping idiom; free-endpoint invariant)
+├── p06-rl-dynamic-low/        (mainline)
 │   ├── nginx.conf             (+limit_req_zone $http_x_real_ip / rate=10r/s)
 │   ├── setup.sh               (post-up smoke with X-Real-IP header)
 │   └── NOTES.md               (wallarm symmetry, burst tuning rationale)
-├── p05-rl-dynamic-high/       (mainline)
+├── p07-rl-dynamic-high/       (mainline)
 │   ├── nginx.conf             (+zone=10m for 50k-IP pool / rate=100r/s)
 │   ├── setup.sh               (post-up smoke with X-Real-IP header)
 │   └── NOTES.md               (zone-sizing derivation, burst shape, deviations)
-├── p06-req-headers/           (mainline)
+├── p08-req-headers/           (mainline)
 │   ├── nginx.conf             (mainline: proxy_set_header X-Bench-In / X-Forwarded-For "")
 │   ├── setup.sh               (post-up smoke: inject + drop side-effects)
 │   └── NOTES.md               (mainline idioms, cross-gateway symmetry)
-├── p07-resp-headers/          (openresty — ngx_headers_more)
+├── p09-resp-headers/          (openresty — ngx_headers_more)
 │   ├── .env                   (pin openresty:1.27.1.2-alpine)
 │   ├── nginx.conf             (openresty: add_header + more_clear_headers "Server")
 │   ├── setup.sh               (post-up smoke: HEAD /get verifies headers)
 │   └── NOTES.md               (why openresty, three-layer Server drop)
-├── p08-req-body/              (openresty — ngx.req.read_body + set_body_data)
+├── p10-req-body/              (openresty — ngx.req.read_body + set_body_data)
 │   ├── .env                   (pin openresty:1.27.1.2-alpine)
 │   ├── nginx.conf             (access_by_lua_block → body_rewrite.rewrite_request)
 │   ├── setup.sh               (post-up smoke: $.json.bench.injected, $.secret dropped)
 │   └── NOTES.md               (Content-Length auto-patch; wallarm symmetry)
-├── p09-resp-body/             (openresty — header_filter_by_lua + body_filter_by_lua)
+├── p11-resp-body/             (openresty — header_filter_by_lua + body_filter_by_lua)
 │   ├── .env                   (pin openresty:1.27.1.2-alpine)
 │   ├── nginx.conf             (clear Content-Length, buffer chunks, rewrite on EOF)
 │   ├── setup.sh               (post-up smoke: $.bench.injected, $.origin dropped)
 │   └── NOTES.md               (two-phase pattern; non-JSON pass-through)
-└── p10-full-pipeline/         (openresty — composes p02+p03+p06+p07+p08+p09)
+└── p12-full-pipeline/         (openresty — composes p02+p03+p07+p08+p09+p10)
     ├── .env                   (pin openresty:1.27.1.2-alpine)
     ├── nginx.conf             (chained: limit_req → jwt → req-body → proxy → resp-hdr/body)
     ├── setup.sh               (smoke: end-to-end transforms on a single POST)
-    └── NOTES.md               (phase ordering; why it's the first green p10 in the matrix)
+    └── NOTES.md               (phase ordering; why it's the first green p11 in the matrix)
 ```
 
 ### Per-profile image overrides
@@ -114,8 +118,8 @@ via `--env-file` so the override is strictly scoped to the compose
 invocation and never leaks into the parent shell (important for
 full sweeps that alternate between mainline and openresty profiles).
 Profiles that rely on the OpenResty pin today: `p02-jwt`,
-`p07-resp-headers`, `p08-req-body`, `p09-resp-body`,
-`p10-full-pipeline`.
+`p09-resp-headers`, `p10-req-body`, `p11-resp-body`,
+`p12-full-pipeline`.
 
 ### Shared Lua library
 
@@ -123,15 +127,15 @@ Profiles that rely on the OpenResty pin today: `p02-jwt`,
 `/usr/local/openresty/lualib/bench/` by
 [`docker-compose.yaml`](./docker-compose.yaml). OpenResty profiles
 pick it up via `lua_package_path "/usr/local/openresty/lualib/bench/?.lua;;";`.
-Mainline images (p01/p03/p04/p05/p06) ignore the mount — no
+Mainline images (p01/p03/p05/p06/p07) ignore the mount — no
 `lua_package_path`, no lua_module compiled in.
 
 Two modules live there:
 
 | Module             | Purpose                                                              | Consumers            |
 |--------------------|----------------------------------------------------------------------|----------------------|
-| `jwt_hs256.lua`    | ~60-line HS256 verifier — HMAC-SHA-256 via `resty.sha256`            | p02, p10             |
-| `body_rewrite.lua` | `cjson.safe` inject/drop helpers for request & response bodies       | p08, p09, p10        |
+| `jwt_hs256.lua`    | ~60-line HS256 verifier — HMAC-SHA-256 via `resty.sha256`            | p02, p11             |
+| `body_rewrite.lua` | `cjson.safe` inject/drop helpers for request & response bodies       | p09, p10, p11        |
 
 ## Feature matrix
 
@@ -139,18 +143,19 @@ Two modules live there:
 |-------------------------|----------------------------------------------------------|-------------------|
 | `p01-vanilla`           | Catch-all `proxy_pass http://backend_pool`               | PASS (4/4)        |
 | `p02-jwt`               | `access_by_lua_block` + inline HS256 on OpenResty        | PASS (6/6)        |
-| `p03-rl-static`         | `limit_req_zone $server_name` + `burst=200 nodelay`      | PASS (2/2)        |
-| `p04-rl-dynamic-low`    | `limit_req_zone $http_x_real_ip rate=10r/s` + `burst=10` | PASS (2/2)        |
-| `p05-rl-dynamic-high`   | same + `zone=10m rate=100r/s` + `burst=20` (50k-IP pool) | PASS (3/3)        |
-| `p06-req-headers`       | mainline `proxy_set_header` (inject) + empty-value drop  | PASS (3/3)        |
-| `p07-resp-headers`      | openresty `add_header` + `more_clear_headers "Server"`   | PASS (2/2)        |
-| `p08-req-body`          | openresty `ngx.req.set_body_data` + `cjson.safe`         | PASS (3/3)        |
-| `p09-resp-body`         | openresty `body_filter_by_lua_block` + `cjson.safe`      | PASS (3/3)        |
-| `p10-full-pipeline`     | openresty, composes p02+p03+p06+p07+p08+p09              | PASS (4/4)        |
+| `p04-rl-static`         | `limit_req_zone $server_name` + `burst=200 nodelay`      | PASS (2/2)        |
+| `p05-rl-endpoint`      | `limit_req` inside `location /anything/limited` only; catch-all `/` unrestricted | PASS (4/4) |
+| `p06-rl-dynamic-low`    | `limit_req_zone $http_x_real_ip rate=10r/s` + `burst=10` | PASS (2/2)        |
+| `p07-rl-dynamic-high`   | same + `zone=10m rate=100r/s` + `burst=20` (50k-IP pool) | PASS (3/3)        |
+| `p08-req-headers`       | mainline `proxy_set_header` (inject) + empty-value drop  | PASS (3/3)        |
+| `p09-resp-headers`      | openresty `add_header` + `more_clear_headers "Server"`   | PASS (2/2)        |
+| `p10-req-body`          | openresty `ngx.req.set_body_data` + `cjson.safe`         | PASS (3/3)        |
+| `p11-resp-body`         | openresty `body_filter_by_lua_block` + `cjson.safe`      | PASS (3/3)        |
+| `p12-full-pipeline`     | openresty, composes p02+p03+p07+p08+p09+p10              | PASS (4/4)        |
 
 `PASS` entries reflect the latest run of
-`make parity-gateway-all PARITY_GATEWAY=nginx` — **10/10 PASS,
-32/32 probes** against `nginx:1.27.3-alpine` (mainline) +
+`make parity-gateway-all PARITY_GATEWAY=nginx` — **12/12 PASS,
+39/39 probes** against `nginx:1.27.3-alpine` (mainline) +
 `openresty:1.27.1.2-alpine` (Lua profiles). See each profile's
 `NOTES.md` and [`docs/GATEWAYS.md § Deviations`](../../docs/GATEWAYS.md#deviations)
 for the per-cell rationale.
@@ -187,7 +192,7 @@ make parity-gateway \
     PARITY_GATEWAY=nginx \
     PARITY_PROFILE=p01-vanilla
 
-# All 10 profiles end-to-end (also runs the planned FEATURE-MISSING
+# All 12 profiles end-to-end (also runs the planned FEATURE-MISSING
 # cells once those are landed):
 make parity-gateway-all PARITY_GATEWAY=nginx
 ```

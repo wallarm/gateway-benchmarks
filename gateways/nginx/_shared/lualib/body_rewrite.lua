@@ -2,12 +2,13 @@
 --
 -- Shared JSON body-rewrite helpers for the nginx cell.
 -- Used by:
---   * gateways/nginx/p08-req-body   — request-side  inject + drop
---   * gateways/nginx/p09-resp-body  — response-side inject + drop
---   * gateways/nginx/p10-full-pipeline — composed of p08 + p09 paths
+--   * gateways/nginx/p10-req-body   — request-side  inject + drop
+--   * gateways/nginx/p11-resp-body  — response-side inject + drop
+--   * gateways/nginx/p12-full-pipeline — composed of p09 + p10 paths
 --
 -- The wallarm counterpart does the same transform via `lua_runner` +
--- `cjson.safe` (see gateways/wallarm/p0{8,9}/NOTES.md). On OpenResty
+-- `cjson.safe` (see gateways/wallarm/p10-req-body and
+-- gateways/wallarm/p11-resp-body NOTES.md). On OpenResty
 -- we call this module directly from `access_by_lua_block` /
 -- `body_filter_by_lua_block`.
 
@@ -54,7 +55,7 @@ function _M.rewrite_request(raw_body, add_path, add_value, drop_path)
     cursor[add_path[#add_path]] = add_value
 
     -- Drop path is currently always single-level ($.secret / $.origin)
-    -- per docs/POLICIES.md § p08/p09, but walk it as a list anyway
+    -- per docs/POLICIES.md § p09/p10, but walk it as a list anyway
     -- so the helper stays generic.
     if drop_path and #drop_path > 0 then
         cursor = data
@@ -72,7 +73,7 @@ end
 -- Response bodies can legitimately be non-JSON (HTML error pages,
 -- streamed files). In that case the upstream payload is returned
 -- verbatim; we only rewrite well-formed JSON objects. This matches
--- the wallarm cell behaviour (gateways/wallarm/p09-resp-body/NOTES.md).
+-- the wallarm cell behaviour (gateways/wallarm/p11-resp-body/NOTES.md).
 function _M.rewrite_response_if_json(raw_body, add_path, add_value, drop_path)
     local data = cjson_safe.decode(raw_body or "")
     if type(data) ~= "table" then return raw_body end

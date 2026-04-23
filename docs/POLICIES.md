@@ -29,13 +29,14 @@ HTTP/2 and HTTP/3 must be forcibly disabled on every gateway.
 | p01 | `vanilla`           | Vanilla                            | Pure proxy, no policies applied                                                      |
 | p02 | `jwt`               | JWT verification                   | HS256 against a shared secret (`BENCH_JWT_SECRET`)                                    |
 | p03 | `rl-static`         | Static service-wide rate limit     | 1000 req/s per service, rolling 1s window                                            |
-| p04 | `rl-dynamic-low`    | Dynamic rate limit, low cardinality | 10 req/s per client IP, pool of 100 distinct IPs                                      |
-| p05 | `rl-dynamic-high`   | Dynamic rate limit, high cardinality | 100 req/s per client IP, pool of 50 000 distinct IPs                                 |
-| p06 | `req-headers`       | Request headers rewrite            | Add `X-Bench-In: 1`, remove `X-Forwarded-For`                                         |
-| p07 | `resp-headers`      | Response headers rewrite           | Add `X-Bench-Out: 1`, remove `Server`                                                 |
-| p08 | `req-body`          | Request body rewrite (JSON)        | Add `.bench.injected = true`, remove `.secret`                                        |
-| p09 | `resp-body`         | Response body rewrite (JSON)       | Add `.bench.injected = true`, remove `.server`                                        |
-| p10 | `full-pipeline`     | Full pipeline                      | JWT ▶ rl-static ▶ req-headers ▶ req-body ▶ upstream ▶ resp-headers ▶ resp-body        |
+| p04| `rl-endpoint`       | Per-endpoint static rate limit     | 100 req/s scoped to `/anything/limited`; `/anything/free` stays unrestricted         |
+| p05 | `rl-dynamic-low`    | Dynamic rate limit, low cardinality | 10 req/s per client IP, pool of 100 distinct IPs                                      |
+| p06 | `rl-dynamic-high`   | Dynamic rate limit, high cardinality | 100 req/s per client IP, pool of 50 000 distinct IPs                                 |
+| p07 | `req-headers`       | Request headers rewrite            | Add `X-Bench-In: 1`, remove `X-Forwarded-For`                                         |
+| p08 | `resp-headers`      | Response headers rewrite           | Add `X-Bench-Out: 1`, remove `Server`                                                 |
+| p09 | `req-body`          | Request body rewrite (JSON)        | Add `.bench.injected = true`, remove `.secret`                                        |
+| p10 | `resp-body`         | Response body rewrite (JSON)       | Add `.bench.injected = true`, remove `.server`                                        |
+| p11 | `full-pipeline`     | Full pipeline                      | JWT ▶ rl-static ▶ req-headers ▶ req-body ▶ upstream ▶ resp-headers ▶ resp-body        |
 
 Two of these profiles are additionally exercised over **HTTP/1.1 + TLS**
 (per [TASK.md §6](../TASK.md)):
@@ -110,17 +111,26 @@ generator.
 
 ### p02 — JWT
 
-- Algorithm: **HS256** (HMAC-SHA-256).
+- Algorithm: **HS256** (HMAC-SHA-256). Core p02 is deliberately a
+  **symmetric-secret** probe so every gateway gets asked the exact
+  same question. The asymmetric RS256 + JWKS axis lives in a
+  separate policy profile (`p03-jwks-rs256-basic`, see
+  [§ p03-jwks-rs256-basic](#p03-jwks-rs256-basic) below) so this
+  profile never has to flex its binding shape to accommodate
+  gateways whose JWT primitive is asymmetric-only.
 - Shared secret: `bench-jwt-hs256-secret-2026` — public by design; this
   secret has never been used in any production system.
 - Canonical payload: `{ "sub": "bench", "role": "tester", "iss": "gateway-benchmarks" }`.
 - Expiry: every probe token is minted with `exp = now + 3600` seconds.
 - Header name carrying the token: `Authorization: Bearer <jwt>`.
 - JWKS fallback: if a gateway only supports JWKS-based validation
-  (not a shared secret), a static JWKS URL is served from
+  (not a shared secret), a static **HS256 (`kty: oct`) JWKS** is
+  served from
   [`gateways/_reference/jwks/jwks.json`](../gateways/_reference/jwks/jwks.json)
-  over the benchmark network. Gateways that fall back this way are
-  listed in [GATEWAYS.md § deviations](./GATEWAYS.md#deviations).
+  over the benchmark network. That JWKS is intentionally NOT the
+  same asset as the p03 RS256 JWKS — it just wraps the
+  same HS256 secret in JWK form. Gateways that fall back this way
+  are listed in [GATEWAYS.md § deviations](./GATEWAYS.md#deviations).
 
 Parity probes (p02):
 
@@ -143,7 +153,44 @@ Parity probes (p03): fire 1200 requests in 1 second. Expect at least
 150 responses with status 429 (tolerance ±50). Latency of the 2XX
 responses is measured in the load phase, not here.
 
-### p04 / p05 — Dynamic rate limit
+### p04 — Per-endpoint static rate limit
+
+- Limit: **100 req/s**, rolling window = 1 second.
+- Scope: a **single specific endpoint path** (the "limited" endpoint
+  at `/anything/limited`), not the whole service. Every other path on
+  the same gateway must stay unrestricted.
+- Key: the endpoint itself. All requests to the limited path share
+  one bucket; requests to any other path bypass the bucket.
+- Above-limit behaviour: HTTP **429** with `Retry-After: 1`.
+- Storage: every gateway's native store (no shared Redis).
+
+This profile is **orthogonal** to p03 / p05 / p06:
+
+- `p03` answers "can the gateway rate-limit the whole service?".
+- `p05` / `p06` answer "can the gateway rate-limit per client IP?".
+- **`p04` answers "can the gateway scope a rate-limit to one route
+  without leaking into its neighbours?"** — a distinct production
+  axis (per-endpoint policy attachment, route selector precision)
+  that's particularly relevant for gateways whose rate-limit
+  primitive is authored as an API-level policy (Tyk, Kong, APISIX)
+  rather than a network-level filter.
+
+Parity probes (p04): four deterministic probes exercise both sides
+of the scoping invariant.
+
+| # | Probe                                                         | Expected                       |
+|---|---------------------------------------------------------------|--------------------------------|
+| 1 | `GET /anything/free` (below any limit)                        | `200`                          |
+| 2 | `GET /anything/limited` (below the 100-rps limit)             | `200`                          |
+| 3 | 1200-request burst on `/anything/limited` in 1 s              | `>= 150 × 429` (tolerance ±50) |
+| 4 | 1200-request burst on `/anything/free`    in 1 s              | `0 × 429`, `>= 1100 × 2xx`     |
+
+Probe 4 is the scoping check: the same gateway process, the same
+TCP listener, the same client pool — a burst that would trivially
+trip the 100-rps limit fires against the unrestricted endpoint
+instead and **must not** see a single 429.
+
+### p05 / p06 — Dynamic rate limit
 
 Both profiles key the limit by the **source IP** as the gateway sees
 it. The load generator rotates through an IP pool using the `X-Real-IP`
@@ -159,10 +206,10 @@ topology makes that trust boundary safe.
 | `rl-dynamic-low`  | 10 req/s per IP   | 100           | `X-Real-IP` |
 | `rl-dynamic-high` | 100 req/s per IP  | 50 000        | `X-Real-IP` |
 
-Parity probes (p04): with 10 distinct IPs firing 15 req/s each for
+Parity probes (p05): with 10 distinct IPs firing 15 req/s each for
 3 seconds, each IP must see about 15 × 429 responses (tolerance ±5).
 
-### p06 — Request headers rewrite
+### p07 — Request headers rewrite
 
 Reshape applied by the gateway:
 
@@ -171,11 +218,11 @@ add:    X-Bench-In: 1
 remove: X-Forwarded-For
 ```
 
-Parity probes (p06): the backend (go-httpbin `/headers`) must echo
+Parity probes (p07): the backend (go-httpbin `/headers`) must echo
 `X-Bench-In: 1` and **must not** echo `X-Forwarded-For` regardless of
 what the client sent.
 
-### p07 — Response headers rewrite
+### p08 — Response headers rewrite
 
 Reshape applied by the gateway to the upstream's response:
 
@@ -184,10 +231,10 @@ add:    X-Bench-Out: 1
 remove: Server
 ```
 
-Parity probes (p07): the client must receive `X-Bench-Out: 1` and
+Parity probes (p08): the client must receive `X-Bench-Out: 1` and
 **must not** see a `Server:` header.
 
-### p08 — Request body rewrite (JSON)
+### p09 — Request body rewrite (JSON)
 
 - Incoming body (client ⇒ gateway):
 
@@ -212,10 +259,10 @@ Parity probes (p07): the client must receive `X-Bench-Out: 1` and
 - `Content-Length` and `Transfer-Encoding` must be recomputed by the
   gateway; the parity script inspects both.
 
-Parity probes (p08): the backend's `/anything` echoes the incoming
+Parity probes (p09): the backend's `/anything` echoes the incoming
 body. Assert `.json.bench.injected == true` and `.json.secret` absent.
 
-### p09 — Response body rewrite (JSON)
+### p10 — Response body rewrite (JSON)
 
 The upstream is `go-httpbin` and every `/anything` response has the
 shape:
@@ -245,12 +292,12 @@ Delivered body (gateway ⇒ client):
 }
 ```
 
-Parity probes (p09): the load generator asserts `$.bench.injected == true`
+Parity probes (p10): the load generator asserts `$.bench.injected == true`
 and `$.origin` is absent from the received body.
 
-### p10 — Full pipeline
+### p11 — Full pipeline
 
-Composition of **p02 + p03 + p06 + p08 + p07 + p09** in that order:
+Composition of **p02 + p03 + p07 + p09 + p08 + p10** in that order:
 
 ```
 client
@@ -260,20 +307,20 @@ client
 gateway
   │ validate JWT                               (p02)
   │ decrement rate-limit bucket                (p03)
-  │ add X-Bench-In, drop X-Forwarded-For       (p06)
-  │ body: drop .secret, add .bench.injected     (p08)
+  │ add X-Bench-In, drop X-Forwarded-For       (p07)
+  │ body: drop .secret, add .bench.injected     (p09)
   ▼
 backend
   │ echo
   ▼
 gateway
-  │ body: drop .server, add .bench.injected     (p09)
-  │ add X-Bench-Out, drop Server                (p07)
+  │ body: drop .server, add .bench.injected     (p10)
+  │ add X-Bench-Out, drop Server                (p08)
   ▼
 client
 ```
 
-Parity probes (p10): the test script runs every per-profile probe
+Parity probes (p11): the test script runs every per-profile probe
 **and** combined probes exercising the full chain at once. A single
 missed transformation fails the cell.
 
@@ -281,6 +328,93 @@ The `full-pipeline-tls` variant is identical in payload and
 transformations — the only added layer is TLS termination at the
 gateway edge using the shared cert from
 [`gateways/_reference/tls/`](../gateways/_reference/tls/).
+
+## p03-jwks-rs256-basic
+
+p03-jwks-rs256-basic exercise policy axes that sit **outside** the
+12-profile matrix. They ride the same parity-attestation harness
+(`scripts/parity-attestation.sh`, one fixture, same probe schema) and
+are driven through the same entry point:
+
+```bash
+make parity-gateway \
+    PARITY_GATEWAY=<gw> \
+    PARITY_PROFILE=<profile-slug>
+```
+
+— but they are **never** pulled into `make parity-gateway-all`, never
+contribute to the throughput ranking, and never reshape an existing
+profile to accommodate themselves. Running one is always a
+deliberate opt-in.
+
+The rationale: some capabilities (RS256+JWKS, mTLS client auth, OPA,
+gRPC-transcoding, …) are genuine axes worth measuring but are not
+things every gateway should be graded on. Locking them into the core
+matrix would force the canonical p01…p12 questions to bend, which
+breaks "identical values across gateways" (§ Principles). A separate
+p03 track keeps the matrix honest while still letting us
+publish a capability read-out per gateway.
+
+### `p03-jwks-rs256-basic` — RS256 signature validation against a static JWKS
+
+- Algorithm: **RS256** (RSA-2048 + PKCS#1 v1.5 over SHA-256).
+- Key distribution: a **static, inline JWKS** passed directly to the
+  gateway's policy binding. Not `jwks_uri` — the first iteration
+  deliberately has zero moving network parts.
+- JWKS content: **one JWK**, derived from
+  [`gateways/_reference/jwks-rs256/public.pem`](../gateways/_reference/jwks-rs256/public.pem)
+  and checked in at
+  [`gateways/_reference/jwks-rs256/jwks.json`](../gateways/_reference/jwks-rs256/jwks.json).
+  The JWK carries the canonical `kid: bench-rs256-2026`.
+- Private key:
+  [`gateways/_reference/jwks-rs256/private.pem`](../gateways/_reference/jwks-rs256/private.pem)
+  — public by design, like every other key material under
+  `_reference/`. It is used only by
+  [`scripts/gen-jwt-rs256.sh`](../scripts/gen-jwt-rs256.sh) to mint
+  probe tokens.
+- Payload: same template as p02 (`sub/role/iss`), expiry `now + 3600`,
+  header envelope `Authorization: Bearer <jwt>`.
+- Token variants (see
+  [`scripts/gen-jwt-rs256.sh`](../scripts/gen-jwt-rs256.sh)):
+  - `valid` — header `kid = bench-rs256-2026`, signed with the
+    canonical private key.
+  - `unknown-kid` — header `kid = unknown-kid-2026`, signed with the
+    **same** canonical private key (so the signature itself is valid
+    against the private key, but no JWK with that `kid` exists in
+    the inline JWKS — a correct JWKS verifier must reject).
+
+Parity probes (`p03-jwks-rs256-basic`):
+
+| # | Probe                                         | Expected | Axis                                         |
+|---|-----------------------------------------------|----------|----------------------------------------------|
+| 1 | No `Authorization` header                     | `401`    | Missing credential                           |
+| 2 | Valid RS256 token, `kid = bench-rs256-2026`    | `200`    | JWKS kid→JWK lookup + RS256 signature verify |
+| 3 | RS256 token, `kid = unknown-kid-2026` (sig valid) | `401`    | JWKS kid-lookup rejects unknown key id       |
+
+Probe 3 is the one that makes this scenario meaningful: a verifier
+that just tries every JWK against the signature would accept the
+token; a correct JWKS verifier keys the lookup by `kid` and must
+reject because no JWK with that id exists in the inline JWKS.
+
+Reference fixture:
+[`fixtures/p03-jwks-rs256-basic.jsonl`](../fixtures/p03-jwks-rs256-basic.jsonl).
+Token generator:
+[`scripts/gen-jwt-rs256.sh`](../scripts/gen-jwt-rs256.sh). Reference
+assets:
+[`gateways/_reference/jwks-rs256/README.md`](../gateways/_reference/jwks-rs256/README.md).
+
+### Future p03-jwks-rs256-basic scenarios (tracked, not yet implemented)
+
+- `jwks-rs256-uri` — RS256 + JWKS served over `jwks_uri`, measuring
+  the JWKS-rotation path (cache TTL, cold-fetch latency, unavailable
+  JWKS server). Built on the same key material as
+  `p03-jwks-rs256-basic`.
+- `mtls-basic` — mutual TLS with client certificate validation.
+
+Each new p03-jwks-rs256-basic scenario gets its own directory under
+`gateways/_reference/<slug>/` and its own fixture under
+`fixtures/<slug>.jsonl`. No p03-jwks-rs256-basic scenario may modify the
+canonical p01…p12 assets.
 
 ## Feature availability matrix
 
@@ -290,24 +424,108 @@ Known or expected limitations per gateway (refined continuously in
 | Profile          | wallarm | nginx | envoy | kong | apisix | traefik | tyk |
 |------------------|:-------:|:-----:|:-----:|:----:|:------:|:-------:|:---:|
 | p01 vanilla      | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
-| p02 jwt          | ✓       | Lua*  | ✓     | ✓    | ✓      | plugin* | ✓   |
-| p03 rl-static    | ✓       | ✓     | ✓     | ✓    | ✓      | plugin* | ✓   |
-| p04 rl-dyn-low   | ✓       | ✓     | ✓     | ✓    | ✓      | plugin* | ✓   |
-| p05 rl-dyn-high  | ✓       | ✓†    | ✓     | ✓    | ✓      | plugin* | ✓   |
-| p06 req-headers  | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
-| p07 resp-headers | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
-| p08 req-body     | ✓       | Lua*  | Lua*  | ✓    | ✓      | —       | —   |
-| p09 resp-body    | ✓       | Lua*  | Lua*  | ✓    | ✓      | —       | —   |
-| p10 full         | ✓       | Lua*  | Lua*  | ✓    | ✓      | —       | —   |
+| p02 jwt          | ✓       | Lua*  | Lua*  | ✓    | ✓      | —       | ✓   |
+| p03 rl-static    | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
+| p04 rl-endpoint | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
+| p05 rl-dyn-low   | ✓       | ✓     | ✓     | ✓    | ✓      | ✓‡      | ✓   |
+| p06 rl-dyn-high  | ✓       | ✓†    | ✓     | ✓    | ✓      | ✓‡      | ✓   |
+| p07 req-headers  | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
+| p08 resp-headers | ✓       | ✓     | ✓     | ✓    | ✓      | ✓       | ✓   |
+| p09 req-body     | ✓       | Lua*  | Lua*  | ✓    | ✓      | plugin* | —   |
+| p10 resp-body    | ✓       | Lua*  | Lua*  | ✓    | ✓      | plugin* | —   |
+| p11 full         | ✓       | Lua*  | Lua*  | ✓    | ✓      | —       | —   |
 
 Legend: ✓ native · `Lua*` via lua-nginx-module / Lua filter · `plugin*`
-community plugin required · `†` requires explicit `zone` sizing for
-the 50 k key pool · `—` no known way to implement without pulling in
-a full programmability layer the gateway does not ship.
+local Yaegi plugin shipped under `gateways/<gw>/_shared/plugins-local/`
+(not a third-party catalogue dependency) · `†` requires explicit `zone`
+sizing for the 50 k key pool · `‡` requires
+`entryPoints.web.forwardedHeaders.insecure: true` in the static config
+so traefik trusts `X-Real-IP` on the bench-net (safe because loadgen
+runs against localhost; see
+[GATEWAYS.md § Deviations `[gw=traefik, p=p05/p06]`](./GATEWAYS.md#deviations))
+· `—` no known way to implement without pulling in a full programmability
+layer the gateway does not ship.
 
 When a cell is `—`, the corresponding run is marked
 `FEATURE-MISSING` and contributes only to the "features" summary, not
 to the throughput ranking.
+
+### p03-jwks-rs256-basic capability matrix
+
+p03-jwks-rs256-basic get their own capability read-out. They do NOT
+contribute to the ranking; they document which gateways can
+natively cover the axis.
+
+| Scenario           | wallarm | nginx | envoy | kong | apisix | traefik | tyk |
+|--------------------|:-------:|:-----:|:-----:|:----:|:------:|:-------:|:---:|
+| `p03-jwks-rs256-basic` | ✓†      | ✓◊    | ✓‡    | ✓★   | ✓¶     | ✓♦      | ✓§  |
+
+Legend: ✓ native · `†` native `jwt_validation` policy on the
+from-source Wallarm API Gateway build (passed via `WALLARM_IMAGE`) —
+**PASS 3/3** · `‡` native
+`envoy.filters.http.jwt_authn` with `local_jwks.inline_string` on
+`envoyproxy/envoy:distroless-v1.32.6` — **PASS 3/3**
+(asymmetric-only — exactly the primitive this axis measures; notably
+this is also why canonical p02-jwt needs a Lua-filter fallback on
+envoy) · `§` native `jwt_signing_method: rsa` + JWKS-over-HTTP on
+`tykio/tyk-gateway:v5.11.1` — **PASS 1/3**: capability (JWKS fetch,
+`kid` lookup, RS256 verification, unknown-`kid` rejection) works
+correctly, but Tyk's rejection status codes are hard-coded in
+`mw_jwt.go` as `400 "Authorization field missing"` and `403 "Key not
+authorized"` instead of the canonical `401`, so probes 1 and 3 FAIL
+on the status-code axis while probe 2 PASSes cleanly. See
+[`gateways/tyk/p03-jwks-rs256-basic/NOTES.md`](../gateways/tyk/p03-jwks-rs256-basic/NOTES.md)
+for the full breakdown · `¶` native `openid-connect` plugin
+(`use_jwks: true` + OIDC discovery URL) on
+`apache/apisix:3.15.0-debian` — **PASS 3/3**: capability (JWKS
+fetch, `kid` lookup, RS256 verification, unknown-`kid` rejection,
+canonical `401` status code on every rejection path) all work
+natively via `lua-resty-openidc`'s `bearer_jwt_verify`. APISIX is
+deployed in standalone mode (no etcd, no Admin API); the plugin
+reads `jwks_uri` out of an OIDC discovery document served by a
+tiny `oidc-server` sidecar on the private bench-net, alongside
+the canonical JWKS. The simpler `jwt-auth` plugin was NOT used —
+it accepts a single inline `public_key` per Consumer and does NOT
+perform `kid` lookup, which would collapse probe 3 into a spurious
+PASS (same trap Tyk's PEM path falls into; see
+[apisix#12791](https://github.com/apache/apisix/issues/12791)).
+See
+[`gateways/apisix/p03-jwks-rs256-basic/NOTES.md`](../gateways/apisix/p03-jwks-rs256-basic/NOTES.md)
+for the full breakdown · `★` native `jwt` plugin with
+`key_claim_name: kid` + per-consumer `jwt_secret` carrying
+`algorithm: RS256` and `rsa_public_key: <PEM>` on
+`kong/kong:3.9.1` — **PASS 3/3**: Kong's plugin hashes credentials
+by `key` (wired to the JWT's `kid` claim via `key_claim_name`), so
+the kid→key dispatch and RS256 verify both happen inside the native
+plugin with zero custom Lua. Missing auth and unknown-kid both
+reject with the canonical `401`. See
+[`gateways/kong/p03-jwks-rs256-basic/NOTES.md`](../gateways/kong/p03-jwks-rs256-basic/NOTES.md)
+for the full breakdown · `◊` LuaJIT-FFI to `libcrypto.so`'s
+`EVP_DigestVerify*` (OpenSSL 3.x) on
+`openresty/openresty:1.27.1.2-alpine` — **PASS 3/3**: pure LuaJIT
+FFI calls against the `libcrypto.so.3` that OpenResty itself links
+against, no extra image layers and no third-party `lua-resty-*`
+dependency. JWKS + `kid` dispatch is pure Lua on top of an
+`{kid → EVP_PKEY*}` map initialised in `init_by_lua_block` from the
+canonical `gateways/_reference/jwks-rs256/` bind-mount.
+`nginx:1.27.3-alpine` (the mainline image most nginx profiles run on)
+lacks LuaJIT FFI, so the p03 profile pins OpenResty
+via an in-directory `.env`. See
+[`gateways/nginx/p03-jwks-rs256-basic/NOTES.md`](../gateways/nginx/p03-jwks-rs256-basic/NOTES.md)
+for the full breakdown · `♦` native `forwardAuth` middleware on
+`traefik:v3.3.4` delegating to an OpenResty sidecar that reuses
+the nginx-column Lua modules verbatim — **PASS 3/3**: Yaegi's
+stdlib allowlist excludes `crypto/rsa` and `crypto/x509`, so an
+in-process plugin for asymmetric verify is architecturally off the
+table (unlike HS256, which the in-repo `jwt_hs256` Yaegi plugin
+already closes). The sidecar lives under the Docker Compose
+profile `p03-jwks-rs256-basic`, so none of the 12 traefik profile
+runs see it boot — `scripts/parity-gateway.sh` exports
+`COMPOSE_PROFILES="${PROFILE}"` so the sidecar is opt-in per
+profile. See
+[`gateways/traefik/p03-jwks-rs256-basic/NOTES.md`](../gateways/traefik/p03-jwks-rs256-basic/NOTES.md)
+for the full breakdown · `?` pending capability pass (none
+outstanding).
 
 ## Status
 

@@ -1,0 +1,63 @@
+# gateways/kong/p02-jwt/kong.yml
+#
+# Profile: p02-jwt.
+# Canonical spec: docs/POLICIES.md § p02 — HS256 shared secret
+#   `bench-jwt-hs256-secret-2026`, reject 401 on:
+#     * missing Authorization header
+#     * non-Bearer scheme
+#     * malformed/garbage token
+#     * expired token (exp < now)
+#     * wrong-secret signature
+# Canonical fixture: fixtures/p02-jwt.jsonl
+#
+# Implementation: Kong's native `jwt` plugin. Unlike APISIX's
+# `jwt-auth` which needs a custom `key` claim, Kong's plugin is
+# `iss`-driven out of the box (default `key_claim_name: iss`),
+# which lines up exactly with our canonical payload
+# (gateways/_reference/jwt/payload-template.json carries
+# `"iss": "gateway-benchmarks"`). That lets us skip the pure-Lua
+# verifier that nginx / APISIX columns need and use an off-the-shelf
+# plugin instead.
+#
+# How it wires up:
+#   1. A single Consumer `bench` owns a single `jwt_secrets` entry
+#      keyed by `gateway-benchmarks` (= the `iss` value) with
+#      algorithm HS256 and the shared secret.
+#   2. The `jwt` plugin on the service matches the token's `iss`
+#      claim to the Consumer's credential, HMAC-SHA-256 verifies,
+#      and enforces `exp` via `claims_to_verify: [exp]` (Kong does
+#      NOT check exp by default — we MUST opt in).
+#   3. Missing Authorization / non-Bearer scheme / unparseable token
+#      all bail out before the signature step and 401 out of the
+#      box; the four failure probes map 1:1 onto Kong behaviour.
+#
+# `run_on_preflight: false` is the default in 3.x but we set it
+# explicitly so OPTIONS probes in other profiles are never silently
+# protected; p02's fixture doesn't exercise OPTIONS but we want the
+# same JWT contract across the board.
+
+_format_version: "3.0"
+
+consumers:
+  - username: bench
+    jwt_secrets:
+      - key: gateway-benchmarks
+        algorithm: HS256
+        secret: bench-jwt-hs256-secret-2026
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: jwt
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          run_on_preflight: false

@@ -65,8 +65,8 @@ orchestrator ──(1)──► parse every raw/*.json
 |------|------|----------|---------|
 | loadgen  | 22       | TCP      | SSH (orchestrator ↔ host) |
 | gateway  | 22       | TCP      | SSH |
-| gateway  | 8080     | HTTP/1.1 | primary proxy port (profiles p01-p03, p06-p09) |
-| gateway  | 8443     | HTTPS    | TLS (profiles p02, p04-p05, p08, p10) |
+| gateway  | 8080     | HTTP/1.1 | primary proxy port (profiles p01-p03, p06-p10) |
+| gateway  | 8443     | HTTPS    | TLS (profiles p02, p04-p06, p09, p11) |
 | gateway  | 9901     | HTTP     | admin/metrics of the gateway (where available) |
 | backend  | 22       | TCP      | SSH |
 | backend  | 8080     | HTTP/1.1 | forked go-httpbin |
@@ -124,7 +124,7 @@ The orchestrator takes the private IPs and wires them into the k6 target URL and
 | Backend | `mccutchen/go-httpbin` public image | **Fork** under `backend/`, pinned by digest |
 | Orchestrator | Taskfile + bash | **Go** binary |
 | Parity | — | `scripts/parity-attestation.sh` |
-| Policies | No matrix | **10 policy profiles** |
+| Policies | No matrix | **12 policy profiles** |
 | Reports | `benchmark-report.html` | + CSV/JSON wide + manifest.json |
 | Reproducibility | — | digests + git SHA + RNG seed + host info |
 

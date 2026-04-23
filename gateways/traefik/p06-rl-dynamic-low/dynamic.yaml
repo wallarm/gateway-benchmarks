@@ -1,0 +1,48 @@
+# gateways/traefik/p06-rl-dynamic-low/dynamic.yaml
+#
+# Per-IP rate limit — 10 rps per unique X-Real-IP value. Mirrors
+# `gateways/nginx/p06-rl-dynamic-low` (`limit_req_zone
+# $http_x_real_ip rate=10r/s` + `burst=10 nodelay`) and
+# `gateways/envoy/p06-rl-dynamic-low` (per-descriptor token bucket
+# keyed on X-Real-IP, `max_tokens: 10, tokens_per_fill: 10,
+# fill_interval: 1s`).
+#
+# Traefik's native primitive for this is
+# `rateLimit.sourceCriterion.requestHeaderName` — when set, the
+# middleware groups requests by the value of that header, one
+# token-bucket per distinct value, and falls back to the remote
+# address if the header is absent. The fixture always sets
+# X-Real-IP, so the fallback never fires in steady-state.
+#
+# `average: 10, period: 1s, burst: 10` = 10 rps steady refill with
+# a 10-request burst allowance per IP. The fixture's burst probe
+# hits 10 IPs × 45 reqs = 450 reqs in 3 s ASAP; expected math is
+# 10 IPs × 10 rps × 3 s = 300 × 2xx, rest × 429 = 150 × 429 (± a
+# handful for bucket drift across the 3-second window).
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p06
+      priority: 1
+
+  middlewares:
+    bench-p06:
+      rateLimit:
+        average: 10
+        period: 1s
+        burst: 10
+        sourceCriterion:
+          requestHeaderName: X-Real-IP
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

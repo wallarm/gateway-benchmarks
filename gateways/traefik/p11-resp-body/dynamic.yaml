@@ -1,0 +1,51 @@
+# gateways/traefik/p11-resp-body/dynamic.yaml
+#
+# Response-side JSON body rewrite via the Yaegi local plugin
+# `body_rewrite`. Same plugin module as p09 — the only semantic diff
+# is `target: response`, which makes the plugin wrap the downstream
+# writer, buffer every chunk, run inject/drop on the aggregated body,
+# and recompute Content-Length on the way out.
+#
+# Contract mirrors:
+#   * gateways/nginx/p11-resp-body (body_filter_by_lua with cjson.safe)
+#   * gateways/envoy/p11-resp-body (encoder-path lua body_rewrite)
+#
+# Semantics:
+#   * inject `$.bench.injected: true` on the response body.
+#   * drop   `$.origin` (go-httpbin always echoes it; the fixture
+#     asserts its absence).
+#   * Content-Length is recomputed from the rewritten buffer before
+#     the response headers go out.
+#
+# We deliberately do NOT strip the backend's Content-Type — the
+# plugin writes `application/json` only when it successfully decoded
+# the body as JSON, which is safe because every p10 fixture probe
+# targets go-httpbin endpoints that emit JSON.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p11
+      priority: 1
+
+  middlewares:
+    bench-p11:
+      plugin:
+        body_rewrite:
+          target: response
+          injectPath: bench.injected
+          injectValue: true
+          dropPaths:
+            - origin
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

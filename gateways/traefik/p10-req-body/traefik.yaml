@@ -1,0 +1,58 @@
+# gateways/traefik/p10-req-body/traefik.yaml
+#
+# Profile: p10-req-body.
+# Canonical spec: docs/POLICIES.md § p09 — add `$.bench.injected: true`
+# to the request body, drop `$.secret` before proxying.
+# Fixture: fixtures/p10-req-body.jsonl.
+#
+# Static config declares the Yaegi local plugin that the dynamic
+# middleware instantiates. Traefik's OSS router has no built-in
+# JSON body-rewrite primitive (v3 `headers` only works on headers),
+# so we lean on the plugin shipped under
+# gateways/traefik/_shared/plugins-local/src/github.com/wallarm/body_rewrite.
+#
+# That plugin is deliberately narrow — inject one dotted path, drop
+# N dotted paths, rewrite Content-Length — so a reviewer can read
+# the Go source end-to-end in ~5 minutes and trust the semantic
+# parity claim against `gateways/nginx/p10-req-body` (lua_kit
+# cjson.safe) and `gateways/envoy/p10-req-body` (lua body_rewrite
+# filter).
+#
+# Traefik splits config into a static half (this file) and a dynamic
+# half (dynamic.yaml). The plugin's module coordinates live here —
+# `modulename` MUST match `.traefik.yml`'s import path, and the path
+# is the directory under /plugins-local/src/ that traefik mounts
+# from the host via docker-compose.yaml.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p09 does not assert on forwarded headers; leaving `insecure:
+      # false` keeps the entryPoint contract uniform with the other
+      # non-RL profiles.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

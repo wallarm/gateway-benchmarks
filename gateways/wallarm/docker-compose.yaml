@@ -13,14 +13,20 @@
 #   setup.sh       - Admin API bootstrap (services, policies, routes)
 #   NOTES.md       - profile-specific notes / deviations
 #
-# Image is pinned by digest for reproducibility, but can be overridden
-# for local validation of unreleased Wallarm builds:
-#   WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
-#     make parity-gateway-all PARITY_GATEWAY=wallarm
+# Image MUST be provided by the runner via the WALLARM_IMAGE env var.
+# There is no default — the Wallarm API Gateway is built from sources
+# (the public 0.2.0 pin was removed in Iteration 23 because the public
+# image lacked jwt_validation + request-body rewrite primitives and
+# forced two of the 12 profiles into FEATURE-MISSING). Typical
+# usage on a developer box:
 #
-# Refresh the public pin with:
-#   docker pull wallarm/api-gateway:0.2.0 && docker image inspect \
-#     wallarm/api-gateway:0.2.0 --format '{{index .RepoDigests 0}}'
+#     WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
+#         make parity-gateway PARITY_GATEWAY=wallarm PARITY_PROFILE=p02-jwt
+#
+# The image tag/digest form is orthogonal to the benchmark harness —
+# any tag that points to a binary exposing the full policy registry
+# (jwt_validation, request_flow.rate_limit, request_flow.request_body_
+# rewrite, request_flow.response_body_rewrite) will pass 12/12.
 
 name: gateway-benchmarks-wallarm
 
@@ -38,7 +44,7 @@ services:
         aliases: [backend]
 
   gateway:
-    image: ${WALLARM_IMAGE:-wallarm/api-gateway:0.2.0@sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825}
+    image: ${WALLARM_IMAGE:?WALLARM_IMAGE must be set — build the Wallarm API Gateway from sources and pass the resulting tag/digest, e.g. WALLARM_IMAGE=wallarm/api-gateway:main-<sha>}
     container_name: gwb-wallarm
     restart: "no"
     depends_on:

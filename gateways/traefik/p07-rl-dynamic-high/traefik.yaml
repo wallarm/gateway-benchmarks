@@ -1,0 +1,64 @@
+# gateways/traefik/p07-rl-dynamic-high/traefik.yaml
+#
+# Profile: p07-rl-dynamic-high (per-IP RL at 100 rps, high fan-out).
+# Canonical spec: docs/POLICIES.md § p06 — 100 rps per X-Real-IP,
+# rolling 1-second window.
+# Fixture: fixtures/p07-rl-dynamic-high.jsonl.
+#
+# Same mechanism as p05 with the rate bumped up 10×.
+#
+# Traefik splits config into a static half (this file — entryPoints,
+# providers, plugins, api, log) and a dynamic half (dynamic.yaml —
+# routers, services, middlewares). The static file is read once at
+# process start; the dynamic file is watched by the file provider
+# and hot-reloaded.
+#
+# We deliberately keep the static config minimal:
+#   * one HTTP entryPoint on :9080 (same port contract as every
+#     other gateway under gateways/<gw>/)
+#   * file provider pointing at /etc/traefik/dynamic/ (mounted from
+#     gateways/traefik/p01-vanilla/dynamic.yaml)
+#   * logs at ERROR level so the hot path is quiet
+#   * api+dashboard DISABLED (no management surface published)
+#
+# `experimental.localPlugins` is declared even on profiles that don't
+# load a plugin, so the static config is uniform across profiles and
+# the only diff across p01..p12 lives in dynamic.yaml. p01 does not
+# reference the plugin, so Traefik loads the Yaegi source but never
+# instantiates it.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # Same "trust X-Real-IP verbatim" wiring as p05 — the
+      # rateLimit middleware below keys its bucket by that
+      # header, and traefik would otherwise strip it as an
+      # untrusted forwarded header and collapse every request
+      # into a single empty-string bucket. See p05/traefik.yaml
+      # for the long-form rationale.
+      insecure: true
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

@@ -12,13 +12,13 @@ reject 401 on: missing Authorization, non-Bearer scheme, malformed JWT,
 
 ## Image
 
-**OpenResty** — [`openresty/openresty:1.27.1.2-alpine`](../p07-resp-headers/NOTES.md)
-(same pin as p07). Pinned by digest via
+**OpenResty** — [`openresty/openresty:1.27.1.2-alpine`](../p09-resp-headers/NOTES.md)
+(same pin as p08). Pinned by digest via
 [`./.env`](./.env) and plugged into the shared
 [`docker-compose.yaml`](../docker-compose.yaml) through the
 `${GATEWAY_IMAGE:-<mainline>}` override.
 
-Mainline `nginx` would also satisfy p01/p03/p04/p05/p06 on its own,
+Mainline `nginx` would also satisfy p01/p03/p05/p06/p07 on its own,
 but has no Lua and no JWT directive. OpenResty is the bench-wide
 choice for any profile that needs Lua, so we reuse the same pin.
 
@@ -71,18 +71,19 @@ We chose not to use it because:
 
 The same tradeoff is documented in
 [`gateways/wallarm/p02-jwt/NOTES.md`](../../wallarm/p02-jwt/NOTES.md) —
-wallarm 0.2.0 can't implement p02 at all (`jwt_validation` is
-missing from its policy registry), so that cell is tagged
-`FEATURE-MISSING`. nginx turns p02 into its first-class PASS.
+wallarm implements p02 natively through its `jwt_validation`
+policy, but the benchmark requires a from-source `WALLARM_IMAGE`
+for that to be present. nginx makes p02 a first-class PASS on an
+off-the-shelf public OpenResty image without any admin-API binding.
 
 ## Deviation — `user nobody;`
 
 OpenResty's alpine image does not provision a `nginx` user; only
 `nobody` is available. So the directive is `user nobody;` rather
-than `user nginx;` from the mainline-pin profiles (p01/p03/p04/
-p05/p06). This is a cosmetic deviation (same privilege class in
+than `user nginx;` from the mainline-pin profiles (p01/p03/p05/
+p06/p07). This is a cosmetic deviation (same privilege class in
 practice) and is called out for parity with
-[`gateways/nginx/p07-resp-headers/NOTES.md`](../p07-resp-headers/NOTES.md).
+[`gateways/nginx/p09-resp-headers/NOTES.md`](../p09-resp-headers/NOTES.md).
 
 ## Parity result
 

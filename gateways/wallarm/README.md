@@ -5,36 +5,32 @@ that this benchmark primarily measures). Each profile lives in its own
 sub-directory with a static config plus a setup script that bootstraps
 the Admin API.
 
-## Pinned version
+## Image
 
-| Field          | Value |
-|----------------|-------|
-| Version        | `0.2.0` |
-| Docker image   | `wallarm/api-gateway:0.2.0` |
-| Digest         | `sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825` |
-| Architecture   | `linux/amd64` |
-| Language       | Rust |
-| Source         | [`wallarm/wallarm-api-gateway`](https://hub.docker.com/r/wallarm/api-gateway) (public Docker Hub) |
-| Documentation  | [`wallarm/wallarm-api-gateway` product docs](https://docs.wallarm.com/api-gateway/) |
-
-Refresh the digest with:
+The Wallarm API Gateway is **built from sources** by the runner — this
+repository does not ship a default Docker Hub pin. Pass the tag or
+digest of your built image via the `WALLARM_IMAGE` environment
+variable:
 
 ```bash
-docker pull wallarm/api-gateway:0.2.0
-docker image inspect wallarm/api-gateway:0.2.0 \
-    --format '{{index .RepoDigests 0}}'
-```
-
-For unreleased local validation, override the image at runtime:
-
-```bash
-WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
+WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
     make parity-gateway-all PARITY_GATEWAY=wallarm
 ```
 
-The pinned public image still reports `8 PASS / 2 FEATURE-MISSING`
-(`p02`, `p10`), while the local override above is validated at
-`10 PASS / 0 FAIL / 0 other`.
+If `WALLARM_IMAGE` is unset when the compose stack starts, Docker
+fails loudly with "`WALLARM_IMAGE must be set`" — this is intentional;
+an earlier iteration pinned the public `0.2.0` image as a default, but
+that release lacks `jwt_validation` (p02, p11,
+`p03-jwks-rs256-basic`) and the full body-rewrite policy surface (p09,
+p10) the benchmark exercises, so we dropped the pin in
+[`.notes/PROGRESS.md § Iteration 23`](../../.notes/PROGRESS.md).
+
+| Field        | Value                                                       |
+|--------------|-------------------------------------------------------------|
+| Language     | Rust                                                        |
+| Admin plane  | `:9081` (declarative `POST /services`, `POST /policies`, …) |
+| Data plane   | `:9080` (HTTP/1.1 only by the benchmark's uniform-settings) |
+| Source       | internal; provided via `WALLARM_IMAGE` at runtime           |
 
 ## Layout
 
@@ -48,69 +44,82 @@ gateways/wallarm/
 │   └── NOTES.md               (parity compliance, deviations)
 ├── p02-jwt/
 │   ├── gateway.yaml           (same listener + pool as p01)
-│   ├── setup.sh               (runtime-detect jwt_validation; PASS on local main)
-│   └── NOTES.md               (public 0.2.0 vs local main override)
-├── p03-rl-static/
+│   ├── setup.sh               (Admin API: jwt_validation on request_flow)
+│   └── NOTES.md               (HS256 shared-secret policy binding)
+├── p04-rl-static/
 │   ├── gateway.yaml           (listener + pool; copied from p01)
 │   ├── setup.sh               (Admin API: ratelimit policy on flow)
 │   └── NOTES.md               (deviation: sliding window, not fixed)
-├── p04-rl-dynamic-low/
+├── p05-rl-endpoint/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (Admin API: two routes, ratelimit on `limited` route only)
+│   └── NOTES.md               (route-level `POST /flow`; sliding-window deviation inherited from p03)
+├── p06-rl-dynamic-low/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: ratelimit keyed on X-Real-IP, 10 rps)
 │   └── NOTES.md               (sliding window, scope=service, math check)
-├── p05-rl-dynamic-high/
+├── p07-rl-dynamic-high/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: ratelimit keyed on X-Real-IP, 100 rps)
-│   └── NOTES.md               (same shape as p04, rate=100)
-├── p06-req-headers/
+│   └── NOTES.md               (same shape as p05, rate=100)
+├── p08-req-headers/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner on request_flow)
 │   └── NOTES.md               (base-path strip workaround; qemu gotcha)
-├── p07-resp-headers/
+├── p09-resp-headers/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner on response_flow)
 │   └── NOTES.md               (`Server`-drop is tautological on go-httpbin)
-├── p08-req-body/
+├── p10-req-body/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner + cjson on request_flow)
 │   └── NOTES.md               (JSON rewrite + Content-Length recompute)
-├── p09-resp-body/
+├── p11-resp-body/
 │   ├── gateway.yaml           (same listener + pool as p01)
 │   ├── setup.sh               (Admin API: lua_runner + cjson on response_flow)
 │   └── NOTES.md               (JSON rewrite + Content-Length recompute)
-└── p10-full-pipeline/
-    ├── gateway.yaml           (same listener + pool as p01)
-    ├── setup.sh               (runtime-detect jwt_validation; compose full flow)
-    └── NOTES.md               (public 0.2.0 vs local main override)
+├── p12-full-pipeline/
+│   ├── gateway.yaml           (same listener + pool as p01)
+│   ├── setup.sh               (compose jwt_validation + ratelimit + lua chain)
+│   └── NOTES.md               (full-chain composition)
+└── p03-jwks-rs256-basic/          
+    ├── gateway.yaml           (same listener + pool as p01/p02)
+    ├── setup.sh               (jwt_validation bound to RS256 + inline JWKS)
+    └── NOTES.md               (p03 axis: asymmetric + JWKS kid lookup)
 ```
 
 ## Feature matrix
 
-| Profile                 | Primitive                                          | Parity            |
-|-------------------------|----------------------------------------------------|-------------------|
-| `p01-vanilla`           | Catch-all service `/ → backend`                    | PASS (4/4)        |
-| `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret)  | PASS on `main-5f1ab30`; FEATURE-MISSING on public `0.2.0` |
-| `p03-rl-static`         | `ratelimit` policy, key = service, 1000 rps        | PASS (2/2)        |
-| `p04-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps           | PASS (2/2)        |
-| `p05-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps          | PASS (3/3)        |
-| `p06-req-headers`       | `lua_runner` on request_flow                       | PASS (3/3)        |
-| `p07-resp-headers`      | `lua_runner` on response_flow                      | PASS (2/2)        |
-| `p08-req-body`          | `lua_runner` on request_flow (JSON body rewrite)   | PASS (3/3)        |
-| `p09-resp-body`         | `lua_runner` on response_flow (JSON body rewrite)  | PASS (3/3)        |
-| `p10-full-pipeline`     | Composition of p02…p09 in that exact order         | PASS on `main-5f1ab30`; FEATURE-MISSING on public `0.2.0`† |
+Every cell is expected **PASS** against the from-source build. A
+sanity-check step in each JWT / body-rewrite profile's `setup.sh`
+inspects the running image's policy registry (`GET /policies`) and
+exits with `FEATURE-MISSING` (exit code 42) if the image the runner
+passed via `WALLARM_IMAGE` does not expose the required primitive.
+This is purely a guardrail against accidentally wiring the harness to
+an older image; there is no longer a "dual-verdict" track.
 
-† The `setup.sh` for `p02` / `p10` now performs runtime detection against
-`GET /policies`: on the pinned public `0.2.0` image it emits
-`FEATURE-MISSING`, while the local `main-5f1ab30` override binds the
-native JWT policy and the full pipeline passes end to end.
+| Profile                 | Primitive                                                                      | Parity     |
+|-------------------------|--------------------------------------------------------------------------------|------------|
+| `p01-vanilla`           | Catch-all service `/ → backend`                                                | PASS (4/4) |
+| `p02-jwt`               | `jwt_validation` policy (HS256 via shared secret) on `request_flow`            | PASS (6/6) |
+| `p04-rl-static`         | `ratelimit` policy, key = service, 1000 rps                                    | PASS (2/2) |
+| `p05-rl-endpoint`       | `ratelimit` bound on ONE route only via `POST /services/<svc>/routes/<rt>/flow`, 100 rps | PASS (4/4) |
+| `p06-rl-dynamic-low`    | `ratelimit` keyed on `X-Real-IP`, 10 rps                                       | PASS (2/2) |
+| `p07-rl-dynamic-high`   | `ratelimit` keyed on `X-Real-IP`, 100 rps                                      | PASS (3/3) |
+| `p08-req-headers`       | `lua_runner` on `request_flow`                                                 | PASS (3/3) |
+| `p09-resp-headers`      | `lua_runner` on `response_flow`                                                | PASS (2/2) |
+| `p10-req-body`          | `lua_runner` on `request_flow` (JSON body rewrite)                             | PASS (3/3) |
+| `p11-resp-body`         | `lua_runner` on `response_flow` (JSON body rewrite)                            | PASS (3/3) |
+| `p12-full-pipeline`     | Composition of p02…p10 in that exact order                                     | PASS (4/4) |
+| `p03-jwks-rs256-basic`‡     | `jwt_validation` with `{algorithm:"RS256", jwks:{keys:[...]}}` (inline)        | PASS (3/3) |
 
-These statuses reflect two tracked runs:
-- pinned public image `wallarm/api-gateway:0.2.0` → `8 PASS / 2 FEATURE-MISSING`
-- local override `wallarm/api-gateway:main-5f1ab30` → `10 PASS / 0 FAIL / 0 other`
-
-See each profile's `NOTES.md` and
-[`docs/GATEWAYS.md § Deviations`](../../docs/GATEWAYS.md#deviations)
-for the per-cell rationale.
+‡ **p03-jwks-rs256-basic** — RS256 JWT via JWKS (12-profile matrix)
+and therefore NOT included in `parity-gateway-all`. Runs opt-in:
+`make parity-gateway PARITY_GATEWAY=wallarm PARITY_PROFILE=p03-jwks-rs256-basic`.
+Measures the RS256+JWKS axis (asymmetric signature + kid→JWK lookup)
+orthogonal to the HS256 question asked by canonical `p02-jwt`. See
+[`p03-jwks-rs256-basic/NOTES.md`](./p03-jwks-rs256-basic/NOTES.md) and
+[`../../docs/POLICIES.md § p03-jwks-rs256-basic`](../../docs/POLICIES.md#p03-jwks-rs256-basic).
 
 The full list of canonical values (rate limit, JWT secret, header
 names, JSON body paths) lives in
@@ -144,16 +153,17 @@ and into `docs/GATEWAYS.md § Deviations`.
 
 ```bash
 # One profile end-to-end (bring up, setup, parity, tear down):
+WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
 make parity-gateway \
     PARITY_GATEWAY=wallarm \
     PARITY_PROFILE=p01-vanilla
 
-# Same sweep against a locally built unreleased Wallarm image:
-WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
+# All 12 profiles end-to-end:
+WALLARM_IMAGE=wallarm/api-gateway:main-<sha> \
 make parity-gateway-all \
     PARITY_GATEWAY=wallarm
 
-# All 10 profiles against an already-running wallarm:
+# All 12 profiles against an already-running wallarm:
 make parity-check-all \
     PARITY_GATEWAY=wallarm \
     PARITY_TARGET=http://localhost:9080

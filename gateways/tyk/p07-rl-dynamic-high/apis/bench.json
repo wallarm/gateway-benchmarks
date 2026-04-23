@@ -1,0 +1,72 @@
+{
+  "_comment": "gateways/tyk/p07-rl-dynamic-high/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p07-rl-dynamic-high. Same shape as p05 but rate=100 (per IP / per second).",
+  "_comment_3": "The shared JSVM pre middleware ../_shared/middleware/per_ip_session.js reads BENCH_RL_RATE / BENCH_RL_PER from config_data, so this file is identical to p05 except for the rate value. See p06-rl-dynamic-low/NOTES.md for the full mechanism.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": false,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "config_data": {
+    "BENCH_RL_RATE": "100",
+    "BENCH_RL_PER":  "1"
+  },
+
+  "custom_middleware": {
+    "pre": [
+      {
+        "name": "per_ip_session",
+        "path": "/opt/tyk-gateway/middleware/bench/per_ip_session.js",
+        "require_session": false,
+        "raw_body_only": false
+      }
+    ],
+    "driver": "otto"
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

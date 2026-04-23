@@ -1,0 +1,74 @@
+# gateways/apisix/p11-resp-body/apisix.yaml
+#
+# Profile: p11-resp-body.
+# Canonical spec: docs/POLICIES.md § p10 — rewrite the response body
+#   * add    $.bench.injected = true
+#   * remove $.origin
+# Canonical fixture: fixtures/p11-resp-body.jsonl
+#
+# Implementation: a single `serverless-post-function` plugin binding
+# the `body_filter` phase. Inside that hook:
+#
+#   1. Accumulate upstream chunks into `ngx.ctx.bench_buf`.
+#   2. At EOF (`ngx.arg[2] == true`), join the chunks, rewrite JSON
+#      via `body_rewrite.rewrite_response_if_json`, and emit the new
+#      body via `ngx.arg[1]`.
+#   3. Non-JSON responses short-circuit back out verbatim (see
+#      `rewrite_response_if_json` in `_shared/lualib/body_rewrite.lua`).
+#   4. Intermediate chunks are suppressed with `ngx.arg[1] = nil` so
+#      the client receives exactly one coherent payload.
+#
+# This is the OpenResty-canonical `body_filter_by_lua_block` pattern
+# documented in `lua-nginx-module`; the nginx column uses the exact
+# same shape. We do NOT need a separate `header_filter` hook to clear
+# Content-Length — nginx detects the length change at body_filter
+# time, strips the stale Content-Length, and switches the downstream
+# response to `Transfer-Encoding: chunked` automatically. The
+# canonical fixture is length-tolerant (it asserts JSON contents, not
+# bytes), so chunked-vs-fixed-length on the wire is not observable.
+# The p10 fixture's `Content-Length` probe on the response is
+# intentionally loose; cross-column parity is preserved either way.
+
+routes:
+  - id: bench-p11-resp-body
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      serverless-post-function:
+        phase: body_filter
+        functions:
+          - |
+            return function(conf, ctx)
+              local body_rewrite = require("body_rewrite")
+
+              local chunk = ngx.arg[1]
+              local eof   = ngx.arg[2]
+
+              local buf = ngx.ctx.bench_buf
+              if not buf then
+                buf = {}
+                ngx.ctx.bench_buf = buf
+              end
+              if chunk and chunk ~= "" then
+                buf[#buf + 1] = chunk
+              end
+
+              if eof then
+                local raw = table.concat(buf)
+                local new = body_rewrite.rewrite_response_if_json(
+                  raw,
+                  { "bench", "injected" }, true,
+                  { "origin" }
+                )
+                ngx.arg[1] = new
+                ngx.arg[2] = true
+              else
+                ngx.arg[1] = nil
+              end
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

@@ -1,0 +1,75 @@
+{
+  "_comment": "gateways/tyk/p06-rl-dynamic-low/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p06-rl-dynamic-low. The canonical contract is 10 rps per X-Real-IP value, 1 s rolling window, 429 above limit.",
+  "_comment_3": "Tyk has no native primitive that buckets on an arbitrary request header. The documented pattern for this axis is per-key sessions (Tyk session-level rate limit IS per-key) plus a JSVM pre-middleware that synthesises one key per IP on demand. See ../_shared/middleware/per_ip_session.js for the full mechanism.",
+  "_comment_4": "use_keyless: false makes Tyk's AuthToken middleware run after our pre. The pre re-stamps the Authorization header to the synthesised per-IP key, so AuthToken validates the synthetic session, not whatever the client sent (or didn't send).",
+  "_comment_5": "config_data carries BENCH_RL_RATE / BENCH_RL_PER for the JSVM pre-middleware. Keeping the rate value here (not in the JS file) keeps the cell-level value visible in the API definition itself — every other gateway has its rate value in apis/* or routes/*.",
+  "_comment_6": "custom_middleware.driver=otto selects the JS VM (otto). The path is the absolute in-container path of the bind-mounted shared middleware (see docker-compose.yaml: ./_shared/middleware -> /opt/tyk-gateway/middleware/bench).",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": false,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "config_data": {
+    "BENCH_RL_RATE": "10",
+    "BENCH_RL_PER":  "1"
+  },
+
+  "custom_middleware": {
+    "pre": [
+      {
+        "name": "per_ip_session",
+        "path": "/opt/tyk-gateway/middleware/bench/per_ip_session.js",
+        "require_session": false,
+        "raw_body_only": false
+      }
+    ],
+    "driver": "otto"
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

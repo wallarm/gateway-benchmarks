@@ -1,0 +1,42 @@
+# gateways/traefik/p07-rl-dynamic-high/dynamic.yaml
+#
+# Same shape as p05 with the rate bumped up 10×: 100 rps per
+# X-Real-IP. Mirrors `gateways/nginx/p07-rl-dynamic-high`
+# (`limit_req_zone ... rate=100r/s` + `burst=20 nodelay`) and
+# `gateways/envoy/p07-rl-dynamic-high` (per-descriptor token bucket,
+# `max_tokens: 100, tokens_per_fill: 100, fill_interval: 1s`).
+#
+# Fixture has two burst probes:
+#   * burst #1 = 10 IPs × 200 rps distributed, each under 100 rps —
+#     expect `status_2xx_min: 200` (no rejection).
+#   * burst #2 = single IP × 500 rps for 1 s — expect at least
+#     300 × 429 (token bucket drains at request #101 and refills at
+#     1 rps/s if we treat `average: 100, period: 1s` as 100 rps
+#     steady).
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p07
+      priority: 1
+
+  middlewares:
+    bench-p07:
+      rateLimit:
+        average: 100
+        period: 1s
+        burst: 20
+        sourceCriterion:
+          requestHeaderName: X-Real-IP
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

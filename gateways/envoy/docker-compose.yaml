@@ -60,7 +60,7 @@ services:
     # only relevant to throughput, NOT to rate-limit semantics:
     # envoy's local_ratelimit filter uses a SHARED token bucket
     # across every worker in the process (see v1.32 proto docs and
-    # the inline comment in each p03/p04/p05 envoy.yaml for the
+    # the inline comment in each p03/p05/p06 envoy.yaml for the
     # empirical verification we ran), so the effective service-wide
     # or per-IP rate is independent of worker count. One worker is
     # the simplest deterministic posture for parity attestation; a

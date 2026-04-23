@@ -1,0 +1,4 @@
+{"name":"single request on free endpoint below any limit -> 200","request":{"method":"GET","path":"/anything/free"},"expect":{"status":200}}
+{"name":"single request on limited endpoint below 100rps -> 200","request":{"method":"GET","path":"/anything/limited"},"expect":{"status":200}}
+{"kind":"burst","name":"1200 rps on limited endpoint -> at least 150 x 429 (bucket engages)","burst":{"total_requests":1200,"duration_s":1,"keys":1,"request":{"method":"GET","path":"/anything/limited"}},"expect":{"status_429_min":150,"status_429_tolerance":50}}
+{"kind":"burst","name":"1200 rps on free endpoint -> 0 x 429 (limit is scoped to /limited)","burst":{"total_requests":1200,"duration_s":1,"keys":1,"request":{"method":"GET","path":"/anything/free"}},"expect":{"status_2xx_min":1100,"status_429_max":0}}

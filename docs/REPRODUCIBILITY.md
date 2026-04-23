@@ -31,7 +31,7 @@ File `reports/<run>/manifest.json`:
   },
   "backend": { "image": "ghcr.io/wallarm/gb-backend:abc12345",   "digest": "sha256:..." },
   "matrix": {
-    "policy_profiles": ["p01", "p02", "...", "p10"],
+    "policy_profiles": ["p01", "p02", "...", "p12"],
     "load_profiles":   ["p1-baseline", "p2-sustained", "p3-ramp", "p4-stress"],
     "scenarios":       ["s01-bypass-http", "s02-bypass-https", "..."],
     "repetitions": 1

@@ -70,6 +70,27 @@ feature_missing="${profile_dir}/FEATURE-MISSING"
 
 [[ -d "${profile_dir}" ]] || { printf 'profile directory not found: %s\n' "${profile_dir}" >&2; exit 2; }
 
+# -----------------------------------------------------------------------------
+# Per-profile opt-in compose services
+#
+# `COMPOSE_PROFILES` is read by `docker compose` to gate services that
+# carry a matching `profiles: [<name>]` directive. Unprofiled services
+# always start. Profiled services only start when their profile name
+# appears in COMPOSE_PROFILES.
+#
+# We export the current parity PROFILE (e.g. `p03-jwks-rs256-basic`) so
+# that any gateway column can opt-in per-profile sidecars WITHOUT
+# branching logic in this script. Example: the traefik column
+# declares a `jwks-auth` OpenResty sidecar under
+# `profiles: [p03-jwks-rs256-basic]`; it only boots when PARITY_PROFILE
+# is `p03-jwks-rs256-basic`, not during the 12 profile runs.
+#
+# Existing columns that don't use compose profiles are unaffected —
+# setting COMPOSE_PROFILES has no effect on services without a
+# matching `profiles:` directive.
+# -----------------------------------------------------------------------------
+export COMPOSE_PROFILES="${PROFILE}"
+
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 if [[ -z "${OUTPUT}" ]]; then
     OUTPUT="reports/${RUN_ID}/parity/${GATEWAY}-${PROFILE}.json"

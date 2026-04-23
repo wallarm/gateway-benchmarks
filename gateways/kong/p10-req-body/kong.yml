@@ -1,0 +1,61 @@
+# gateways/kong/p10-req-body/kong.yml
+#
+# Profile: p10-req-body — rewrite the request body
+#   * add    $.bench.injected = true
+#   * remove $.secret
+# Canonical spec: docs/POLICIES.md § p09
+# Canonical fixture: fixtures/p10-req-body.jsonl
+#
+# Implementation: `pre-function` plugin's `access` chunk delegates
+# the inject/drop surgery to `body_rewrite.rewrite_request` from the
+# shared module at `/usr/local/kong/custom/body_rewrite.lua` (mounted
+# from `gateways/kong/_shared/lualib/`, picked up via
+# `KONG_LUA_PACKAGE_PATH`). Same primitive the nginx and APISIX
+# columns use — one audited module powers p09 / p10 / p11.
+#
+# Why `pre-function` over Kong's stock `request-transformer`:
+#   * `request-transformer` does flat key/value substitution, not
+#     JSON-shape-aware editing. There's a community
+#     `request-transformer-advanced` that supports JSON pointers
+#     but it's a Kong-Enterprise plugin (not in our OSS image), so
+#     using it would silently violate the "no third-party plugins"
+#     principle from docs/POLICIES.md.
+#   * `pre-function` is bundled with the OSS image, has a
+#     well-defined Lua sandbox, and gives us OpenResty's full
+#     `ngx.req.*` API for buffered body manipulation.
+#
+# Mechanics:
+#   1. `ngx.req.read_body()` — forces body buffering (default in
+#      Kong but explicit for non-default content types).
+#   2. `body_rewrite.rewrite_request(raw, {"bench","injected"},
+#      true, {"secret"})` does the JSON edit.
+#   3. `ngx.req.set_body_data(new_body)` re-stamps the body and
+#      auto-recomputes Content-Length on the upstream-bound request
+#      (the upstream sees the corrected length, never a stale one).
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: pre-function
+        config:
+          access:
+            - |
+              local body_rewrite = require("body_rewrite")
+              ngx.req.read_body()
+              local raw = ngx.req.get_body_data() or ""
+              local new_body = body_rewrite.rewrite_request(
+                raw,
+                { "bench", "injected" }, true,
+                { "secret" }
+              )
+              ngx.req.set_body_data(new_body)
+              ngx.req.set_header("Content-Type", "application/json")

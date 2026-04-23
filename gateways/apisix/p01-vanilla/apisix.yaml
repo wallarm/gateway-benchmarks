@@ -1,0 +1,43 @@
+# gateways/apisix/p01-vanilla/apisix.yaml
+#
+# Profile: p01-vanilla (catch-all proxy, no policy).
+# Canonical spec: docs/POLICIES.md § p01
+# Canonical fixture: fixtures/p01-vanilla.jsonl
+#
+# APISIX realises a pure proxy as a single route with no plugins and
+# a STRICT_DNS upstream pointing at `backend:8080` on the private
+# `bench-net`. Every profile in this column preserves this upstream
+# shape so the cells stay apples-to-apples on every non-policy axis.
+#
+# Why `uri: /*` and an explicit method list?
+#   * `/*` is APISIX's catch-all path matcher (vs. nginx's bare `/`
+#     prefix). It matches any path beyond `/`, while `/*` alone
+#     does NOT match `/` itself. We add `/` to `uris` so the parity
+#     runner's health-probe hit on `/` answers with a proper 4xx
+#     (upstream-generated 404) instead of APISIX's plugin-less 404.
+#   * An explicit method list is APISIX idiom — leaving it unset
+#     defaults to GET only in standalone mode, and probe 3 in
+#     fixtures/p01-vanilla.jsonl is a POST.
+
+routes:
+  - id: bench-p01-vanilla
+    uris:
+      - /
+      - /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+      # APISIX defaults to `pass_host: pass` (Host header forwarded
+      # verbatim). Leaving it default so the go-httpbin backend sees
+      # the same Host every other column sends.
+
+#END

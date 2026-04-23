@@ -1,0 +1,66 @@
+# gateways/apisix/p08-req-headers/apisix.yaml
+#
+# Profile: p08-req-headers.
+# Canonical spec: docs/POLICIES.md § p07 — add X-Bench-In: 1 to the
+# upstream request, drop X-Forwarded-For.
+# Canonical fixture: fixtures/p08-req-headers.jsonl
+#
+# Implementation is a two-plugin combo:
+#
+#   * proxy-rewrite.headers.set.X-Bench-In: "1"   — native header inject
+#   * serverless-pre-function (access phase)      — `ngx.var.bench_xff = ""`
+#
+# Why a serverless-pre-function for a plain header drop?
+#
+# APISIX's nginx template (apisix/cli/ngx_tpl.lua L848) hardcodes
+# `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` at the
+# upstream-proxy step. That directive runs AFTER every plugin hook, so
+# `proxy-rewrite.headers.remove: [X-Forwarded-For]` only strips the
+# *client*-supplied value — nginx's `$proxy_add_x_forwarded_for`
+# variable re-composes a non-empty header (at minimum `$remote_addr`)
+# and ships it to the backend anyway. The fixture's
+# `backend_missed_header: ["X-Forwarded-For"]` assertion therefore
+# fails against a vanilla APISIX stack.
+#
+# Our `_shared/bench-start.sh` entrypoint re-routes the hardcoded
+# directive through a writable `$bench_xff` variable (defaulting to
+# `$proxy_add_x_forwarded_for`, so out-of-the-box semantics match
+# upstream APISIX byte-for-byte). A `serverless-pre-function` at the
+# access phase overwrites that variable with an empty string, and
+# nginx's own `proxy_set_header NAME ""` idiom drops the header from
+# the upstream request. This is the same behavioural contract as
+# nginx's `proxy_set_header X-Forwarded-For ""`, just via one extra
+# layer of indirection because APISIX does not expose the directive
+# directly.
+#
+# Other client headers pass through unchanged — we do not touch them
+# in any plugin, and APISIX's default is verbatim forwarding.
+
+routes:
+  - id: bench-p08-req-headers
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      proxy-rewrite:
+        headers:
+          set:
+            X-Bench-In: "1"
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            return function(conf, ctx)
+              -- See `_shared/bench-start.sh`: the entrypoint patches
+              -- nginx.conf so that the hardcoded
+              -- `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`
+              -- becomes `... $bench_xff`. Setting the variable to an
+              -- empty string triggers nginx's "do not forward this
+              -- header" semantics for proxy_set_header.
+              ngx.var.bench_xff = ""
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

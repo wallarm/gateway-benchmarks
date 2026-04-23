@@ -1,0 +1,64 @@
+{
+  "_comment": "gateways/tyk/p09-resp-headers/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p09-resp-headers. The canonical contract is: gateway adds X-Bench-Out: 1 to the downstream response and drops the Server header from the downstream response, on every endpoint.",
+  "_comment_3": "transform_response_headers in extended_paths runs in Tyk's response chain after the upstream returns and before the gateway writes the response to the client. add_headers and delete_headers operate on the canonical-MIME header form.",
+  "_comment_4": "Wildcard path `{rest:.*}` makes transform_response_headers apply to every request the API serves — necessary because the fixture probes /response-headers and /get (not /anything).",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": [],
+          "transform_response_headers": [
+            {
+              "delete_headers": ["Server"],
+              "add_headers": { "X-Bench-Out": "1" },
+              "path": "{rest:.*}",
+              "method": "GET"
+            }
+          ]
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

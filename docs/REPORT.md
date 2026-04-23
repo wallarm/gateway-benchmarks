@@ -20,7 +20,7 @@ Collapsed section with a "Show manifest" toggle. Inside: a link to manifest.json
 
 ### 4. Matrix (the heart of the report)
 
-A scrollable table with **7 rows × ≈96 columns** (10 policies × 4 load profiles × 2 protocols where applicable):
+A scrollable table with **7 rows × ≈52 columns** (11 policies × 4 load profiles × 2 protocols where applicable):
 
 ```
           │ p1-baseline ─┬─────────────┬─────────────┐ │ p2-sustained ─┬─ ...

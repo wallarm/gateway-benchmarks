@@ -22,7 +22,7 @@
 #   docker pull nginx:1.27.3-alpine && docker image inspect \
 #     nginx:1.27.3-alpine --format '{{index .RepoDigests 0}}'
 #
-# Profiles that need extra modules (e.g. p07 needs `ngx_headers_more`
+# Profiles that need extra modules (e.g. p08 needs `ngx_headers_more`
 # to drop the Server header) override GATEWAY_IMAGE via a per-profile
 # `.env` file; scripts/parity-gateway.sh sources it automatically.
 # The override image must expose the nginx binary in PATH so the
@@ -59,10 +59,21 @@ services:
       # Shared Lua library mounted at a path that only OpenResty reads.
       # Mainline nginx does not load it (no `lua_package_path`, no
       # lua_module compiled in) so the mount is effectively a no-op
-      # for mainline profiles (p01/p03/p04/p05/p06). OpenResty
-      # profiles (p02/p07/p08/p09/p10) pick it up via
+      # for mainline profiles (p01/p04/p05/p06/p07/p08). OpenResty
+      # profiles (p02/p03/p09/p10/p11/p12) pick it up via
       # `lua_package_path` in their nginx.conf.
       - ./_shared/lualib:/usr/local/openresty/lualib/bench:ro
+      # Reference JWKS/RSA material — identical across every nginx
+      # profile so the mount lives here, not in a per-profile
+      # override. Only the `p03-jwks-rs256-basic` profile
+      # actually reads from /etc/nginx/jwks-rs256/ (its
+      # init_by_lua_block slurps jwks.json + public.pem + kid.txt at
+      # worker start). Every other profile's nginx.conf simply
+      # ignores the path, so the mount is inert for the other
+      # eleven profiles — no side effects, no drift across columns.
+      # See gateways/nginx/p03-jwks-rs256-basic/NOTES.md and
+      # gateways/_reference/jwks-rs256/README.md.
+      - ../_reference/jwks-rs256:/etc/nginx/jwks-rs256:ro
     ports:
       - "9080:9080"  # data plane (parity-gateway target)
     # nginx handles SIGTERM gracefully; the stop-grace-period is kept

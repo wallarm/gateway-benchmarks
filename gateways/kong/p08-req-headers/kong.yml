@@ -1,0 +1,52 @@
+# gateways/kong/p08-req-headers/kong.yml
+#
+# Profile: p08-req-headers — gateway adds `X-Bench-In: 1` and drops
+#   `X-Forwarded-For`. Canonical spec: docs/POLICIES.md § p07.
+# Canonical fixture: fixtures/p08-req-headers.jsonl
+#
+# Implementation: two cooperating plugins.
+#
+#   1. `request-transformer` — adds `X-Bench-In: 1` to every proxied
+#      request. `add.headers` is "set if absent"; the variant `append`
+#      would concatenate to any client-supplied value, which breaks
+#      the "inject constant marker" invariant.
+#
+#   2. `pre-function` (access phase) — clears Kong's writable
+#      `$bench_xff` to the empty string. Kong's nginx template
+#      hard-codes
+#         proxy_set_header X-Forwarded-For $upstream_x_forwarded_for;
+#      and Kong's runloop fills `$upstream_x_forwarded_for` AFTER the
+#      plugins' access phase runs, so a `request-transformer.remove`
+#      OR `kong.service.request.clear_header()` call in any plugin
+#      ALWAYS loses to Kong's later write. The bench-start.sh shim
+#      (gateways/kong/_shared/bench-start.sh) re-routes the
+#      `proxy_set_header` to `$bench_xff` (default = mirror of the
+#      kong-computed XFF) so a profile can suppress the header by
+#      setting `ngx.var.bench_xff = ""`. An empty `proxy_set_header`
+#      value tells nginx not to send the header at all.
+#
+# Other client headers (X-Client-Trace etc.) flow through unchanged —
+# request-transformer only mutates the names listed in `add` / `remove`.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Bench-In:1"
+      - name: pre-function
+        config:
+          access:
+            - |
+              ngx.var.bench_xff = ""

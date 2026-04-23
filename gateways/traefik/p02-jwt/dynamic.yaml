@@ -1,0 +1,67 @@
+# gateways/traefik/p02-jwt/dynamic.yaml
+#
+# HS256 JWT validation via the Yaegi local plugin `jwt_hs256`. The
+# plugin lives under gateways/traefik/_shared/plugins-local/src/
+# github.com/wallarm/jwt_hs256/ and is declared in traefik.yaml's
+# `experimental.localPlugins` map.
+#
+# Contract mirrors:
+#   * gateways/nginx/p02-jwt    (lua-resty-jwt + shared HS256 secret)
+#   * gateways/envoy/p02-jwt    (lua jwt_hs256.lua filter)
+#   * gateways/kong/p02-jwt     (kong jwt-auth plugin, HS256 consumer)
+#   * gateways/apisix/p02-jwt   (apisix jwt-auth plugin)
+#   * gateways/tyk/p02-jwt      (native tyk HMAC jwt validation)
+#
+# Semantics the plugin implements:
+#   * Required `Authorization: Bearer <jwt>` (configurable scheme).
+#     Missing header / wrong scheme / empty token -> 401.
+#   * `alg=HS256` only. Any other alg (none, RS256, ES256, ...) ->
+#     reject. Refusing `alg=none` closes the well-known JWT bypass
+#     path that has been the root of every JWT CVE since 2015.
+#   * HMAC-SHA-256 signature compared in constant time. Wrong-secret
+#     tokens -> 401.
+#   * `exp` claim required-when-present; `now > exp` -> 401. The
+#     fixture's `expired` token is signed with the right secret but
+#     `exp = now - 3600`, so it must fail here, not at the signature
+#     step.
+#   * 401 with empty body and `WWW-Authenticate: Bearer`. The fixture
+#     asserts on status code only.
+#
+# Traefik references a plugin under `plugin.<moduleShortName>`, which
+# is derived from the key in `experimental.localPlugins` (NOT the
+# module path). The static config declares the key as `jwt_hs256`,
+# so the middleware references it as `plugin.jwt_hs256`.
+#
+# The shared secret is inlined verbatim from gateways/_reference/jwt/
+# secret.txt (matches what kong/apisix/nginx/envoy do — no gateway
+# in the matrix loads the secret from disk at runtime). If you rotate
+# the secret in `_reference/jwt/secret.txt`, every p02 profile
+# (including this one) needs the new value pasted in.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p02
+      priority: 1
+
+  middlewares:
+    bench-p02:
+      plugin:
+        jwt_hs256:
+          secret: "bench-jwt-hs256-secret-2026"
+          headerName: Authorization
+          scheme: Bearer
+          leewaySeconds: 0
+          rejectStatusCode: 401
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

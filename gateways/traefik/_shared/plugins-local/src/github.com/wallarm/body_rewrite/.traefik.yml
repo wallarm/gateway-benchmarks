@@ -1,0 +1,18 @@
+displayName: Body Rewrite (bench)
+type: middleware
+
+import: github.com/wallarm/body_rewrite
+
+summary: |
+  Inject and drop dotted JSON paths on the request or response body.
+  Used by the gateway-benchmarks repo (gateways/traefik/p09/p10/p11)
+  to cover the canonical POLICIES.md §p09 / §p10 contract without
+  depending on community plugins that carry extra features we don't
+  benchmark.
+
+testData:
+  Target: request
+  InjectPath: bench.injected
+  InjectValue: true
+  DropPaths:
+    - secret

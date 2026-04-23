@@ -1,0 +1,36 @@
+# gateways/kong/p07-rl-dynamic-high/kong.yml
+#
+# Profile: p07-rl-dynamic-high — 100 req/s per client IP.
+# Canonical spec: docs/POLICIES.md § p05/p06.
+# Canonical fixture: fixtures/p07-rl-dynamic-high.jsonl
+#
+# Same mechanism as p05 (see p06-rl-dynamic-low/kong.yml) —
+# `rate-limiting` plugin, `limit_by: header`, `header_name:
+# X-Real-IP`, `policy: local`. Only the budget changes: 100/s
+# instead of 10/s.
+#
+# Probe 2 (10 IPs × 200 rps total) exercises the isolation
+# invariant: 200 requests total, so 20 rps per IP — well below the
+# 100-rps budget — must see zero 429. Probe 3 (single IP × 500)
+# blasts well above the per-IP budget and expects ≥300 × 429.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: rate-limiting
+        config:
+          second: 100
+          limit_by: header
+          header_name: X-Real-IP
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false

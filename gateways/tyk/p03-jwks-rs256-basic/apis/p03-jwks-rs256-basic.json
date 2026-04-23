@@ -1,0 +1,77 @@
+{
+  "name": "p03-jwks-rs256-basic",
+  "api_id": "p03-jwks-rs256-basic",
+  "org_id": "gateway-benchmarks",
+  "slug": "p03-jwks-rs256-basic",
+  "use_keyless": false,
+  "active": true,
+
+  "enable_jwt": true,
+  "jwt_signing_method": "rsa",
+  "jwt_source": "aHR0cDovL2p3a3Mtc2VydmVyLy53ZWxsLWtub3duL2p3a3MuanNvbg==",
+  "jwt_identity_base_field": "sub",
+  "jwt_skip_kid": false,
+  "jwt_default_policies": ["bench-default-policy"],
+  "jwt_issued_at_validation_skew": 1,
+  "jwt_expires_at_validation_skew": 1,
+  "jwt_not_before_validation_skew": 1,
+  "jwt_client_base_field": "",
+  "jwt_policy_field_name": "",
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "session_lifetime_respects_key_expiration": false,
+  "expire_analytics_after": 0,
+
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  },
+
+  "config_data": {
+    "_comment": "gateways/tyk/p03-jwks-rs256-basic/apis/p03-jwks-rs256-basic.json",
+    "_comment_2": "Canonical shape for the p03-jwks-rs256-basic scenario. The axis measured is:",
+    "_comment_3": "  (1) Tyk enforces Authorization: Bearer <jwt> on every /anything request (no Authorization -> 4xx: Tyk returns 400 'Authorization field missing', not 401 — hard-coded in mw_jwt.go and not overridable in Classic OSS)",
+    "_comment_4": "  (2) Tyk fetches the JWKS from `jwt_source` on the private bench-net and verifies RS256 signature using the JWK whose `kid` matches the incoming token header (valid kid -> 200)",
+    "_comment_5": "  (3) Tyk rejects a token whose `kid` header is not present in the JWKS (unknown kid -> 4xx: Tyk returns 403 'Key not authorized', again hard-coded)",
+    "_comment_6": "`jwt_default_policies` binds each decoded token to the permissive bench-default-policy in _policies/policies.json — without a default policy Tyk would 4xx every token with 'no session found for token user identity', even for correctly signed ones.",
+    "_comment_7": "`jwt_source` is base64-encoded (aHR0c...) per Tyk 5.11.1 convention: mw_jwt.go's getSecretFromURL caches the source as base64 and decodes it on every subsequent request — plain-text URLs work for the first hit then blow up with 'illegal base64 data at input byte 4' on the second. The base64-encoded URL path IS the canonical Tyk shape (see https://tyk.io/docs/basic-config-and-security/security/authentication-authorization/jwt/)."
+  }
+}

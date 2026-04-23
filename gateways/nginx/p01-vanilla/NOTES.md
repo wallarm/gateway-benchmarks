@@ -46,8 +46,8 @@ All ten rows verbatim — no deviations for p01.
 
 * `worker_connections 16384;` — the alpine image defaults to 1024 which
   is too tight for the 1200-rps burst probe that later profiles
-  (`p03`, `p05`) fire; keep the same value across all nginx profiles
-  to avoid "fixed in p01, broken in p05" surprises.
+  (`p03`, `p06`) fire; keep the same value across all nginx profiles
+  to avoid "fixed in p01, broken in p06" surprises.
 * `tcp_nodelay on; tcp_nopush off; sendfile on;` — nginx's own
   defaults for modern production use; called out explicitly so the
   `docs/GATEWAYS.md` audit is a simple grep.

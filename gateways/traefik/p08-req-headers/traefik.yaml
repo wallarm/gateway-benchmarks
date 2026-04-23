@@ -1,0 +1,67 @@
+# gateways/traefik/p08-req-headers/traefik.yaml
+#
+# Profile: p08-req-headers.
+# Canonical spec: docs/POLICIES.md § p07 — add X-Bench-In: 1 to the
+# upstream request, drop X-Forwarded-For.
+# Fixture: fixtures/p08-req-headers.jsonl.
+#
+# Static config is identical to p01 — the transform itself is a
+# router-level middleware wired up in dynamic.yaml via traefik's
+# native `headers` middleware (no plugin needed).
+#
+# Traefik splits config into a static half (this file — entryPoints,
+# providers, plugins, api, log) and a dynamic half (dynamic.yaml —
+# routers, services, middlewares). The static file is read once at
+# process start; the dynamic file is watched by the file provider
+# and hot-reloaded.
+#
+# We deliberately keep the static config minimal:
+#   * one HTTP entryPoint on :9080 (same port contract as every
+#     other gateway under gateways/<gw>/)
+#   * file provider pointing at /etc/traefik/dynamic/ (mounted from
+#     gateways/traefik/p08-req-headers/dynamic.yaml)
+#   * logs at ERROR level so the hot path is quiet
+#   * api+dashboard DISABLED (no management surface published)
+#
+# `experimental.localPlugins` is declared even on profiles that don't
+# load a plugin, so the static config is uniform across profiles and
+# the only diff across p01..p12 lives in dynamic.yaml. p07 does not
+# reference the plugin, so Traefik loads the Yaegi source but never
+# instantiates it.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p07 asserts `backend_missed_header: [X-Forwarded-For]`. Leaving
+      # `insecure: false` (the default) would mean traefik strips
+      # X-Forwarded-For from the untrusted client at the entryPoint
+      # AND the `headers` middleware below also drops it — so the
+      # drop would pass for the wrong reason. Flipping `insecure: true`
+      # makes the trust-chain wiring a no-op and lets the middleware
+      # be the single source of truth for the drop.
+      insecure: true
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

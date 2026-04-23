@@ -1,0 +1,61 @@
+# gateways/apisix/p10-req-body/apisix.yaml
+#
+# Profile: p10-req-body.
+# Canonical spec: docs/POLICIES.md § p09 — rewrite the request body
+#   * add    $.bench.injected = true
+#   * remove $.secret
+# Canonical fixture: fixtures/p10-req-body.jsonl
+#
+# Implementation: single `serverless-pre-function` bound to the
+# `access` phase. The function:
+#
+#   1. Forces body buffering (`ngx.req.read_body()`).
+#   2. Delegates the inject/drop surgery to `body_rewrite.rewrite_request`
+#      from `_shared/lualib/body_rewrite.lua`.
+#   3. Publishes the transformed body with `ngx.req.set_body_data()`,
+#      which also patches Content-Length on the upstream-bound request
+#      so the backend never sees a stale length. Same invariant as the
+#      nginx column — see `gateways/nginx/p10-req-body/nginx.conf`.
+#
+# We prefer `serverless-pre-function` (native Lua under `extra_lua_path`)
+# over APISIX's `body-transformer` plugin because the canonical
+# transform is JSON-shape-aware, not regex-substitution — the same
+# `body_rewrite.lua` primitive powers p10 (response side) and p11
+# (both sides), so every body-touching profile on APISIX shares one
+# audited module.
+#
+# `require("body_rewrite")` works because `apisix.extra_lua_path` is
+# set in `apisix.standalone.yaml` to
+# `/usr/local/apisix/conf/bench/?.lua` — which is where the compose
+# file bind-mounts `_shared/lualib/`.
+
+routes:
+  - id: bench-p10-req-body
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            return function(conf, ctx)
+              local body_rewrite = require("body_rewrite")
+
+              ngx.req.read_body()
+              local raw = ngx.req.get_body_data() or ""
+
+              local new_body = body_rewrite.rewrite_request(
+                raw,
+                { "bench", "injected" }, true,
+                { "secret" }
+              )
+
+              ngx.req.set_body_data(new_body)
+              ngx.req.set_header("Content-Type", "application/json")
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

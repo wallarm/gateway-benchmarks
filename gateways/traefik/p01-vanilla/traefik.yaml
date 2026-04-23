@@ -1,0 +1,64 @@
+# gateways/traefik/p01-vanilla/traefik.yaml
+#
+# Profile: p01-vanilla (catch-all proxy, no policy).
+# Expected fixture behaviour (fixtures/p01-vanilla.jsonl):
+#   GET  /status/200  → 200                            (status passthrough)
+#   GET  /anything    → 200 + body echoes .method      (json echo)
+#   POST /anything    → 200 + body echoes .json        (json echo)
+#   GET  /bytes/1024  → 200 + Content-Length present   (binary passthrough)
+#
+# Traefik splits config into a static half (this file — entryPoints,
+# providers, plugins, api, log) and a dynamic half (dynamic.yaml —
+# routers, services, middlewares). The static file is read once at
+# process start; the dynamic file is watched by the file provider
+# and hot-reloaded.
+#
+# We deliberately keep the static config minimal:
+#   * one HTTP entryPoint on :9080 (same port contract as every
+#     other gateway under gateways/<gw>/)
+#   * file provider pointing at /etc/traefik/dynamic/ (mounted from
+#     gateways/traefik/p01-vanilla/dynamic.yaml)
+#   * logs at ERROR level so the hot path is quiet
+#   * api+dashboard DISABLED (no management surface published)
+#
+# `experimental.localPlugins` is declared even on profiles that don't
+# load a plugin, so the static config is uniform across profiles and
+# the only diff across p01..p12 lives in dynamic.yaml. p01 does not
+# reference the plugin, so Traefik loads the Yaegi source but never
+# instantiates it.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # Reviewers running against localhost send the client with no
+      # trusted-proxy chain, so traefik's default behaviour is to
+      # strip incoming X-Forwarded-* and stamp its own computed
+      # values. That is fine for p01 (no fixture asserts on the
+      # header surface); p07 flips the X-Forwarded-For drop to an
+      # explicit middleware contract.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

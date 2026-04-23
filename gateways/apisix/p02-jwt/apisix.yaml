@@ -1,0 +1,68 @@
+# gateways/apisix/p02-jwt/apisix.yaml
+#
+# Profile: p02-jwt.
+# Canonical spec: docs/POLICIES.md § p02 — HS256 JWT validation with
+# shared secret `bench-jwt-hs256-secret-2026`. Reject with 401 on:
+#   * missing Authorization header
+#   * non-Bearer scheme
+#   * malformed / garbage token
+#   * expired token (exp < now)
+#   * wrong-secret signature
+# Canonical fixture: fixtures/p02-jwt.jsonl
+#
+# Implementation: a `serverless-pre-function` bound to the `access`
+# phase that delegates the actual cryptographic work to our
+# `_shared/lualib/jwt_hs256.lua` helper. Same pattern the nginx
+# column uses (`gateways/nginx/p02-jwt/nginx.conf`) — pure-Lua HS256
+# verifier, no third-party plugin, ~60 LoC of audited code.
+#
+# Why we do NOT use APISIX's native `jwt-auth` plugin:
+#
+#   * `jwt-auth` looks up a Consumer by a `key` claim in the JWT
+#     payload. The canonical bench JWT (see scripts/gen-jwt.sh)
+#     carries only {sub, role, iss, exp} — no `key` — so a vanilla
+#     `jwt-auth` route would reject every fixture token with "missing
+#     key claim", turning every PASS probe into a false-negative.
+#   * Re-shaping the canonical payload just for APISIX would diverge
+#     the cross-gateway contract. The nginx column took the same
+#     decision (mainline nginx has no JWT directive at all; OpenResty
+#     + pure-Lua HS256 is the natural answer), which keeps this
+#     column bit-for-bit behaviourally identical across APISIX /
+#     nginx / OpenResty cells for p02.
+#
+# On reject we emit a JSON body + `WWW-Authenticate: Bearer` header
+# so the downstream probe sees the same shape the nginx column
+# emits. The 401 is NOT asserted body-wise by the fixture — any
+# 401 is a pass — but we keep the response shape uniform so a human
+# sanity-check shows the same payload on every gateway.
+
+routes:
+  - id: bench-p02-jwt
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            return function(conf, ctx)
+              local jwt = require("jwt_hs256")
+              local secret = "bench-jwt-hs256-secret-2026"
+              local authz = ngx.var.http_authorization
+              local ok, err = jwt.verify(authz, secret)
+              if not ok then
+                ngx.log(ngx.INFO, "jwt reject: ", err or "unknown")
+                ngx.header["WWW-Authenticate"] =
+                  'Bearer realm="bench", charset="UTF-8"'
+                ngx.header["Content-Type"] = "application/json"
+                ngx.status = 401
+                ngx.say('{"error":"unauthorized","reason":"jwt_validation_failed"}')
+                return ngx.exit(401)
+              end
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

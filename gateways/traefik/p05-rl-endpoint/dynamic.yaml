@@ -1,0 +1,54 @@
+# gateways/traefik/p05-rl-endpoint/dynamic.yaml
+#
+# Per-endpoint rate limit — /anything/limited gets 100 rps with a 5
+# burst; every other route goes through unrestricted.
+#
+# Traefik route matching picks the router with the most specific
+# rule by default, with an optional `priority` tiebreaker. We use
+# explicit priorities to make the intent obvious to reviewers:
+#
+#   * limited-router: PathPrefix(`/anything/limited`) + rateLimit
+#     → priority 100
+#   * catchall-router: PathPrefix(`/`), no middleware
+#     → priority 1
+#
+# The 100 rps + 5 burst shape mirrors `gateways/nginx/p05-rl-endpoint`
+# (`limit_req_zone $server_name ... rate=100r/s` + `burst=5 nodelay`
+# scoped to the limited location) and `gateways/envoy/p05-rl-endpoint`
+# (per-route `typed_per_filter_config` with
+# `max_tokens: 100, tokens_per_fill: 5, fill_interval: 0.05s` =
+# 100 rps steady with a 5 burst).
+
+http:
+  routers:
+    limited:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/anything/limited`)"
+      service: backend
+      middlewares:
+        - bench-p05-limited
+      priority: 100
+
+    catchall:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      priority: 1
+
+  middlewares:
+    bench-p05-limited:
+      rateLimit:
+        average: 100
+        period: 1s
+        burst: 5
+        sourceCriterion:
+          requestHeaderName: X-Bench-Service-Wide
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

@@ -1,0 +1,52 @@
+# gateways/traefik/p10-req-body/dynamic.yaml
+#
+# Request-side JSON body rewrite via the Yaegi local plugin
+# `body_rewrite`. The plugin lives under
+# gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
+# body_rewrite/ and is declared in traefik.yaml's
+# `experimental.localPlugins` map.
+#
+# Contract mirrors:
+#   * gateways/nginx/p10-req-body (lua_kit cjson.safe)
+#   * gateways/envoy/p10-req-body (lua body_rewrite filter)
+#
+# Semantics the plugin implements:
+#   * inject `{"bench":{"injected": true}}` at `$.bench.injected`
+#   * drop   `$.secret`
+#   * empty or `null` body is coerced to `{}` before the rewrite so
+#     the inject always lands in a valid object (fixture probe #2).
+#   * Content-Length is recomputed from the rewritten buffer so
+#     downstream backends don't truncate.
+#
+# Traefik references a plugin under `plugin.<moduleShortName>`, which
+# is derived from the key in `experimental.localPlugins` (NOT the
+# module path). Our static config declares the key as `body_rewrite`,
+# so the middleware references it as `plugin.body_rewrite`.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p10
+      priority: 1
+
+  middlewares:
+    bench-p10:
+      plugin:
+        body_rewrite:
+          target: request
+          injectPath: bench.injected
+          injectValue: true
+          dropPaths:
+            - secret
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

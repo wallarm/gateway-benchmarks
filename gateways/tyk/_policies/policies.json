@@ -1,0 +1,34 @@
+{
+  "bench-default-policy": {
+    "id": "bench-default-policy",
+    "name": "bench-default-policy",
+    "org_id": "gateway-benchmarks",
+    "rate": 0,
+    "per": 0,
+    "throttle_interval": 0,
+    "throttle_retry_limit": 0,
+    "quota_max": -1,
+    "quota_renewal_rate": 0,
+    "access_rights": {
+      "bench": {
+        "api_name": "bench",
+        "api_id": "bench",
+        "versions": ["Default"]
+      },
+      "p03-jwks-rs256-basic": {
+        "api_name": "p03-jwks-rs256-basic",
+        "api_id": "p03-jwks-rs256-basic",
+        "versions": ["Default"]
+      }
+    },
+    "active": true,
+    "is_inactive": false,
+    "tags": [],
+    "partitions": {
+      "quota": false,
+      "rate_limit": false,
+      "acl": true
+    },
+    "hmac_enabled": false
+  }
+}

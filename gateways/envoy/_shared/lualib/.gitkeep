@@ -1,6 +1,6 @@
 # Reserved for shared Lua helpers used by envoy's `envoy.filters.http.lua`
-# in p02-jwt (jwt_hs256.lua), p08-req-body / p09-resp-body
-# (body_rewrite.lua), and p10-full-pipeline. Envoy's Lua runtime differs
+# in p02-jwt (jwt_hs256.lua), p10-req-body / p11-resp-body
+# (body_rewrite.lua), and p12-full-pipeline. Envoy's Lua runtime differs
 # from OpenResty's, so these helpers are *not* the same files the nginx
 # column uses — they live in their own directory.
 #

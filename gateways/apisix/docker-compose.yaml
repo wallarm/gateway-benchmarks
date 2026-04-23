@@ -1,0 +1,181 @@
+# gateways/apisix/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for parity attestation.
+# Same port contract as every other gateway under `gateways/<gw>/`:
+#
+#     loadgen (host)  →  apisix :9080  →  backend :8080
+#
+# APISIX is deployed in **standalone** mode
+# (deployment.role = data_plane, config_provider = yaml). That removes
+# the etcd dependency and keeps the profile behaviour expressible as a
+# single YAML file per profile — in the same declarative posture as
+# nginx's `nginx.conf` or envoy's `envoy.yaml`. The bench will never
+# need the admin API; changing policies between profiles is done by
+# swapping the mounted `apisix.yaml` and restarting the container.
+#
+# Two pieces of config are mounted into the gateway:
+#
+#   /usr/local/apisix/conf/config.yaml   ← bootstrap config
+#                                          (gateway mode, listen ports,
+#                                          plugin allow-list). Shared
+#                                          across every profile — lives
+#                                          at `gateways/apisix/
+#                                          apisix.standalone.yaml`.
+#
+#   /usr/local/apisix/conf/apisix.yaml   ← declarative config
+#                                          (routes, upstreams, consumers,
+#                                          plugins, global_rules). Per-
+#                                          profile — lives at
+#                                          `gateways/apisix/${GATEWAY_PROFILE}/
+#                                          apisix.yaml`.
+#
+# Why a second sidecar (`oidc-server`)?
+#
+# The `p03-jwks-rs256-basic` profile is what drove the design
+# of this shared compose. APISIX has two built-in plugins that touch
+# JWT validation:
+#
+#   * `jwt-auth` — native, but accepts ONLY a single inline
+#     `public_key` per Consumer. It does not understand JWKS and does
+#     not key-lookup by `kid`. An unknown-`kid` token correctly signed
+#     by the canonical private key would be accepted (probe 3 of
+#     `p03-jwks-rs256-basic` would spuriously PASS — the same trap Tyk's
+#     PEM path falls into). See apache/apisix#12791 (open feature
+#     request).
+#
+#   * `openid-connect` — supports `use_jwks: true` + `discovery: <url>`
+#     via `lua-resty-openidc`. That is the native JWKS+`kid` lookup
+#     path. The trade-off is that the `discovery` URL must point at an
+#     OpenID Connect discovery document (NOT at a bare `jwks.json`):
+#     the plugin parses `jwks_uri` out of the discovery doc before
+#     it can fetch the keys. We therefore stand up a tiny nginx
+#     sidecar (`oidc-server`) that serves a minimal, hand-crafted
+#     discovery document alongside the canonical JWKS. Same idea as
+#     `gateways/tyk/_jwks-server/` — just with a second endpoint in
+#     front of the same `_reference/jwks-rs256/jwks.json`.
+#
+# The sidecar is shared across every profile (3 services, always up)
+# because conditional `docker compose --profile` plumbing would be a
+# bespoke codepath in `scripts/parity-gateway.sh` that other columns do
+# not use. It runs ~5 MiB and is firewalled to `bench-net`, so the
+# cost of "always on" is negligible and profiles that ignore it
+# (future p01…p12) simply never send traffic there.
+#
+# The policy profile is picked by the GATEWAY_PROFILE env var (default
+# `p03-jwks-rs256-basic` for now — the 12-profile matrix for apisix
+# is a separate track). Each profile directory must contain:
+#
+#   apisix.yaml  - APISIX declarative config
+#                  (routes + upstreams + consumers + plugins)
+#   setup.sh     - post-up readiness + smoke for the profile
+#   NOTES.md     - profile-specific notes / deviations
+#
+# Shared across profiles (mounted read-only into every boot):
+#
+#   apisix.standalone.yaml         → /usr/local/apisix/conf/config.yaml
+#   _oidc-server/nginx.conf        → oidc-server /etc/nginx/conf.d/default.conf
+#   _oidc-server/openid-configuration.json
+#                                  → oidc-server-hosted static OIDC discovery doc
+#   _reference/jwks-rs256/jwks.json (from repo root)
+#                                  → oidc-server /usr/share/nginx/html/.well-known/jwks.json
+#
+# Image pins refreshed with:
+#   docker pull apache/apisix:3.15.0-debian && docker image inspect \
+#     apache/apisix:3.15.0-debian --format '{{index .RepoDigests 0}}'
+#   docker pull nginx:1.27.3-alpine        && ...
+
+name: gateway-benchmarks-apisix
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-apisix-backend
+    restart: "no"
+    # Backend listens on :8080 inside the container. We do NOT publish
+    # it on the host — only the gateway needs to talk to it, over the
+    # private `bench-net` bridge.
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  oidc-server:
+    # Same alpine image as the nginx column so we do not introduce a
+    # new pull surface; the digest is identical to
+    # `gateways/nginx/docker-compose.yaml` and
+    # `gateways/tyk/_jwks-server/`.
+    image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
+    container_name: gwb-apisix-oidc-server
+    restart: "no"
+    # Read-only bind mounts:
+    #  - the tiny server block that whitelists the two well-known paths
+    #  - a static OIDC discovery document pointing at the JWKS URL
+    #  - the canonical JWKS file from _reference (single source of truth)
+    volumes:
+      - ./_oidc-server/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./_oidc-server/openid-configuration.json:/usr/share/nginx/html/.well-known/openid-configuration:ro
+      - ../_reference/jwks-rs256/jwks.json:/usr/share/nginx/html/.well-known/jwks.json:ro
+    # No port publish on the host — only APISIX needs to reach this
+    # sidecar, and it reaches it via the `oidc-server` DNS alias on
+    # `bench-net`. This keeps the JWKS / discovery endpoints off the
+    # host surface (parity probes never touch them directly).
+    networks:
+      bench-net:
+        aliases: [oidc-server]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-apache/apisix:3.15.0-debian@sha256:4c201af4f6887def17c22be19e38f64cedf507db8bcc43991089778ad1188b9c}
+    container_name: gwb-apisix
+    restart: "no"
+    depends_on:
+      - backend
+      - oidc-server
+    environment:
+      # Standalone mode flag the apache/apisix-docker image looks for
+      # at container start. With this set, the entrypoint skips the
+      # etcd health-check step and hands over to APISIX with
+      # `deployment.role: data_plane`. Upstream example:
+      # https://github.com/apache/apisix-docker/blob/master/example/docker-compose-standalone.yml
+      APISIX_STAND_ALONE: "true"
+    # Mount the shared bootstrap config + the per-profile declarative
+    # config. Both paths are the canonical ones APISIX reads from in
+    # standalone mode (see the docs "Stand-alone mode" page).
+    # Custom entrypoint: thin wrapper around APISIX's stock
+    # docker-start that splices a single post-init sed into the
+    # generated nginx.conf, rewriting the hardcoded
+    # `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` as
+    # `set $bench_xff $proxy_add_x_forwarded_for;` + `proxy_set_header
+    # X-Forwarded-For $bench_xff;`. That tiny indirection is what lets
+    # `p08-req-headers` and `p12-full-pipeline` actually drop
+    # X-Forwarded-For from the upstream request via a serverless-pre-
+    # function — APISIX has no plugin-level hook for that directive.
+    # See `_shared/bench-start.sh` for the full rationale.
+    entrypoint: ["/bench/bench-start.sh"]
+    command: ["docker-start"]
+    volumes:
+      - ./apisix.standalone.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./${GATEWAY_PROFILE:-p03-jwks-rs256-basic}/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      # Shared Lua library — jwt_hs256.lua + body_rewrite.lua, ported
+      # from `gateways/nginx/_shared/lualib/`. Available to every
+      # profile via `apisix.extra_lua_path` in the standalone config
+      # (see apisix.standalone.yaml). Consumed by the `serverless-
+      # pre-function` / `serverless-post-function` snippets in p02,
+      # p09, p10, p11.
+      - ./_shared/lualib:/usr/local/apisix/conf/bench:ro
+      # Entry wrapper that post-patches the generated nginx.conf so
+      # that the X-Forwarded-For header flows through a writable
+      # `$bench_xff` variable instead of the hardcoded
+      # `$proxy_add_x_forwarded_for`. Mounted into a path outside of
+      # `/usr/local/apisix/` to avoid colliding with image files.
+      - ./_shared/bench-start.sh:/bench/bench-start.sh:ro
+    ports:
+      - "9080:9080"  # data plane (parity-gateway target)
+    # APISIX exits cleanly on SIGTERM (see `apisix quit`); 5 s is
+    # enough for `docker compose down` between parity runs.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+networks:
+  bench-net:
+    driver: bridge

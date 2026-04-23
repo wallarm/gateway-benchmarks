@@ -1,0 +1,72 @@
+# gateways/traefik/p12-full-pipeline/traefik.yaml
+#
+# Profile: p12-full-pipeline.
+# Canonical spec: docs/POLICIES.md § p11 — composition of p02 + p03 +
+# p07 + p09 + p08 + p10 in canonical pipeline order.
+# Fixture: fixtures/p12-full-pipeline.jsonl.
+#
+# Static config declares BOTH local plugins so the dynamic middleware
+# chain can reference `plugin.jwt_hs256` (p02 step) and
+# `plugin.body_rewrite` (p09 + p10 steps) by their short names. This
+# is the only profile that actually instantiates both plugins; every
+# other profile loads them at start-up but only references zero or
+# one in its dynamic chain.
+#
+# Why we ship two locally-vendored plugins instead of one composed
+# super-plugin:
+#
+#   * Each plugin maps 1:1 onto a single canonical fixture (jwt_hs256
+#     -> p02-jwt, body_rewrite -> p09/p10), so a reviewer can read
+#     either Go file in isolation and trust the per-axis verdict.
+#
+#   * Splitting also matches every other gateway in the matrix
+#     (kong/apisix/tyk wire JWT and body-rewrite as separate plugins
+#     too) — a single fused Yaegi plugin would be a one-off
+#     architectural delta.
+#
+# Traefik splits config into a static half (this file) and a dynamic
+# half (dynamic.yaml). The static file is read once at process start;
+# the dynamic file is watched by the file provider and hot-reloaded.
+#
+# entryPoint forwardedHeaders.insecure rationale:
+# -----------------------------------------------
+# The p11 fixture probe 1 carries `X-Forwarded-For: 198.51.100.7` and
+# asserts `backend_missed_header: [X-Forwarded-For]` — the gateway
+# MUST be the one stripping it. Leaving `insecure: false` would let
+# the entryPoint drop XFF from the untrusted client BEFORE the
+# `headers` middleware in dynamic.yaml even sees it, which would
+# pass the assertion for the wrong reason. Flipping `insecure: true`
+# (same idiom as p05 + p07) makes the trust-chain wiring a no-op and
+# lets the middleware be the single source of truth for the drop.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      insecure: true
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite
+    jwt_hs256:
+      modulename: github.com/wallarm/jwt_hs256

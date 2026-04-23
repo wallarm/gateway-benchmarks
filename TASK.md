@@ -40,11 +40,12 @@ A synthetic backend service is included as a **direct-connect baseline** (no gat
 
 ## 4. Policy Profiles
 
-Ten policy profiles must be tested. Each is a specific configuration of the gateway under test.
+Eleven policy profiles must be tested. Each is a specific configuration of the gateway under test.
 
 - **Vanilla** — no policies applied; pure proxy.
 - **JWT verification** — tokens validated against a shared secret (or a shared static JWKS if the gateway does not support a static secret).
 - **Static rate limit** — service-wide rate limit.
+- **Per-endpoint rate limit** — rate limit scoped to exactly one path prefix; other endpoints on the same listener remain unrestricted. An independent axis next to the static and dynamic rate-limit profiles.
 - **Dynamic rate limit, low cardinality** — per-key limit based on a dynamic request attribute (IP, header, or query parameter); the key pool has ~100 unique values.
 - **Dynamic rate limit, high cardinality** — same mechanism, but with tens of thousands of unique keys.
 - **Request headers rewrite** — add one header, remove one header.
@@ -85,8 +86,8 @@ Two protocol modes are tested:
 
 ## 7. Test Matrix
 
-Cells per gateway: (10 policy profiles × 4 load profiles) + (2 HTTPS profiles × 4 load profiles) = **48 cells per gateway**.
-Cells per cycle: 48 × 7 gateways = **336 cells**.
+Cells per gateway: (12 policy profiles × 4 load profiles) + (2 HTTPS profiles × 4 load profiles) = **52 cells per gateway**.
+Cells per cycle: 52 × 7 gateways = **364 cells**.
 Plus: one direct-connect backend baseline per (load profile × protocol) combination to power the "overhead" column in every detail table.
 Each cell is executed several times per cycle. The report shows the median across repetitions; variance is shown in the detail table. Any cell whose variance exceeds the framework author's threshold is flagged as unstable.
 
@@ -133,7 +134,7 @@ The output of a cycle is a **single self-contained HTML file** whose layout foll
 - **Executive summary** — ranking table: rank · gateway (coloured badge) · stack (language · version) · average RPS across all cells · max error % · pass ratio (e.g. 46/48) · steady-state memory.
 - **Memory footprint grid** — one chart/chip per gateway.
 - **Overall profile radar** — relative RPS as a percentage of the best gateway in each scenario.
-- **Scenario tabs** — one tab per (policy profile × protocol) combination — 12 tabs in total (10 HTTP + 2 HTTPS).
+- **Scenario tabs** — one tab per (policy profile × protocol) combination — 12 tabs in total (11 HTTP + 2 HTTPS).
 
 ### Per-tab content
 

@@ -1,0 +1,55 @@
+{
+  "_comment": "gateways/tyk/p01-vanilla/apis/bench.json",
+  "_comment_2": "Minimum-viable Tyk Classic API definition. No auth, no rate limit, no transforms — pure proxy. The catch-all listen_path: '/' lets every fixture probe (/status/200, /anything, /bytes/1024) reach the upstream go-httpbin without per-path routing. strip_listen_path: false means '/' is added back, which keeps the path semantics identical (i.e. '/anything' on the gateway hits '/anything' on the upstream).",
+  "_comment_3": "use_keyless: true disables Tyk's session/auth pipeline entirely. This is the documented way to ship a vanilla pass-through API per https://tyk.io/docs/tyk-apis/tyk-gateway-api/api-definition-objects/general/.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

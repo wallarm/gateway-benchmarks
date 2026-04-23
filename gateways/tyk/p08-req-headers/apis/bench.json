@@ -1,0 +1,65 @@
+{
+  "_comment": "gateways/tyk/p08-req-headers/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p08-req-headers. The canonical contract is: gateway adds X-Bench-In: 1 to upstream request and drops X-Forwarded-For from upstream request. Other client-supplied headers must pass through unchanged.",
+  "_comment_3": "transform_headers in extended_paths runs in Tyk's middleware chain BEFORE the reverse-proxy hop. Adding X-Bench-In works (the upstream sees it). Deleting X-Forwarded-For at this layer is, however, immediately undone by Tyk's reverse proxy (gateway/reverse_proxy.go ~ WrappedServeHTTP), which unconditionally re-stamps X-Forwarded-For with the request's RemoteAddr right before the upstream call — there is no native config knob in Classic OSS to opt out.",
+  "_comment_4": "We declare the delete anyway so the matrix shows the intent; the architectural deviation is documented in NOTES.md and lands as a probe FAIL on the canonical fixture.",
+  "_comment_5": "Wildcard path `.*` makes transform_headers apply to every request the API serves — necessary because the fixture probes /headers (not /anything).",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": [],
+          "transform_headers": [
+            {
+              "delete_headers": ["X-Forwarded-For"],
+              "add_headers": { "X-Bench-In": "1" },
+              "path": "{rest:.*}",
+              "method": "GET"
+            }
+          ]
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

@@ -1,0 +1,125 @@
+# gateways/traefik/p12-full-pipeline/dynamic.yaml
+#
+# Composed pipeline = p02 + p03 + p07 + p09 + p08 + p10 in canonical
+# order (docs/POLICIES.md § p11 → values.yaml § full_pipeline.order).
+#
+# Mirrors:
+#   * gateways/kong/p12-full-pipeline    (jwt + rate-limiting +
+#                                          request-transformer +
+#                                          response-transformer +
+#                                          pre-/post-function)
+#   * gateways/apisix/p12-full-pipeline  (jwt-auth + limit-count +
+#                                          proxy-rewrite + ext-plugin)
+#   * gateways/nginx/p12-full-pipeline   (auth_request + limit_req +
+#                                          headers_more + body_filter)
+#   * gateways/envoy/p12-full-pipeline   (jwt_hs256 lua + local
+#                                          ratelimit + headers + body)
+#   * gateways/tyk/p12-full-pipeline     (enable_jwt + global_rate_limit
+#                                          + transform_headers +
+#                                          transform + transform_response_*)
+#
+# Traefik composes middleware in the order they appear in the
+# router's `middlewares:` list — the first one in the list runs
+# first, the last one runs last on the response path. We chain:
+#
+#   bench-p02 (jwt)         -> 401 if signature/exp invalid
+#   bench-p04 (rl-static)   -> 429 if 1000 rps service-wide bucket empty
+#   bench-p08 (req-headers) -> add X-Bench-In, drop X-Forwarded-For
+#   bench-p10 (req-body)    -> inject $.bench.injected, drop $.secret
+#   bench-p09 (resp-headers)-> add X-Bench-Out, drop Server
+#   bench-p11 (resp-body)   -> inject $.bench.injected, drop $.origin
+#
+# A 401 from bench-p02 short-circuits all downstream middleware:
+# bench-p04's bucket is NOT decremented, no transforms run, the
+# response goes straight back. Same for a 429 from bench-p04 once
+# we've passed JWT validation. Both the request-body and response-
+# body rewrites only run on requests that survived the first two
+# gates — that's important for the burst probe (probe 4): with 1200
+# valid-JWT requests in 1 s, the JWT step pays for all 1200 but the
+# body rewrites only pay for the ~1000 that the rate limit lets
+# through, keeping the per-request budget within Yaegi's reach.
+#
+# Plugin reference shortname (`plugin.jwt_hs256`, `plugin.body_rewrite`)
+# is derived from the key in `experimental.localPlugins` declared in
+# this profile's traefik.yaml — NOT from the Go module path.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p02
+        - bench-p04
+        - bench-p08
+        - bench-p10
+        - bench-p09
+        - bench-p11
+      priority: 1
+
+  middlewares:
+    bench-p02:
+      plugin:
+        jwt_hs256:
+          secret: "bench-jwt-hs256-secret-2026"
+          headerName: Authorization
+          scheme: Bearer
+          leewaySeconds: 0
+          rejectStatusCode: 401
+
+    bench-p04:
+      rateLimit:
+        # 1000 rps service-wide token bucket with 200-request burst
+        # capacity. Mirrors `gateways/traefik/p04-rl-static`'s
+        # rateLimit shape verbatim — see that profile's NOTES for
+        # why we use a constant-value sourceCriterion to collapse
+        # traefik's default per-source bucketing into a single
+        # service-wide bucket.
+        average: 1000
+        period: 1s
+        burst: 200
+        sourceCriterion:
+          requestHeaderName: X-Bench-Service-Wide
+
+    bench-p08:
+      headers:
+        # Mirrors `gateways/traefik/p08-req-headers`. Empty value is
+        # the documented "drop" sentinel in traefik's headers
+        # middleware (same idiom nginx uses for
+        # `proxy_set_header X-Forwarded-For "";`).
+        customRequestHeaders:
+          X-Bench-In: "1"
+          X-Forwarded-For: ""
+
+    bench-p10:
+      plugin:
+        body_rewrite:
+          target: request
+          injectPath: bench.injected
+          injectValue: true
+          dropPaths:
+            - secret
+
+    bench-p09:
+      headers:
+        customResponseHeaders:
+          X-Bench-Out: "1"
+          Server: ""
+
+    bench-p11:
+      plugin:
+        body_rewrite:
+          target: response
+          injectPath: bench.injected
+          injectValue: true
+          dropPaths:
+            - origin
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

@@ -1,0 +1,83 @@
+# gateways/apisix/p05-rl-endpoint/apisix.yaml
+#
+# Profile: p05-rl-endpoint (per-endpoint static rate limit).
+# Canonical spec: docs/POLICIES.md § p04
+# Canonical fixture: fixtures/p05-rl-endpoint.jsonl
+#
+# Limit:      100 req/s on `/anything/limited`, rolling 1 s window.
+# Free path:  `/anything/free` — NO rate limit policy attached.
+# Over-limit: HTTP 429.
+#
+# APISIX realises per-endpoint scoping by binding the `limit-count`
+# plugin to a specific route. Every `plugins:` block is lexically
+# scoped to the route it lives on, so the free route never
+# decrements the limited route's bucket and a 1200-rps burst on
+# `/anything/free` sees zero 429s.
+#
+# Route matching: APISIX matches the most specific route first. The
+# order here is:
+#   1. bench-p05-limited   uris: [/anything/limited, /anything/limited/*]
+#   2. bench-p05-free      uris: [/]
+#                          priority: 0 (lower than specific routes)
+#
+# The `/anything/limited` prefix is explicit so a request to
+# `/anything/limited/deeper` still hits the limited bucket
+# (byte-for-byte parity with the nginx `location /anything/limited`
+# prefix match in gateways/nginx/p05-rl-endpoint).
+
+routes:
+  # ---------------------------------------------------------------------
+  # Limited endpoint — 100 rps bucket.
+  # ---------------------------------------------------------------------
+  - id: bench-p05-limited
+    uris:
+      - /anything/limited
+      - /anything/limited/*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    plugins:
+      limit-count:
+        count: 100
+        time_window: 1
+        key_type: constant
+        key: bench-p05-limited
+        rejected_code: 429
+        rejected_msg: '{"error":"rate_limit_exceeded","limit":"100r/s","scope":"endpoint:/anything/limited"}'
+        policy: local
+        show_limit_quota_header: false
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+  # ---------------------------------------------------------------------
+  # Catch-all — no rate-limit policy. `/anything/free` lands here.
+  # Lower priority than the specific limited route so it only matches
+  # paths that are not captured above. An absent `plugins:` block is
+  # load-bearing — the scoping invariant from POLICIES.md § p04 fails
+  # on a single misplaced `limit-count` here.
+  # ---------------------------------------------------------------------
+  - id: bench-p05-free
+    uris:
+      - /
+      - /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

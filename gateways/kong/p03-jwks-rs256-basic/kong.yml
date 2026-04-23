@@ -1,0 +1,117 @@
+# gateways/kong/p03-jwks-rs256-basic/kong.yml
+#
+# Policy profile p03-jwks-rs256-basic (12-profile matrix): RS256 JWT validation
+# matrix; lives parallel to p02-jwt). Canonical description:
+# docs/POLICIES.md § p03-jwks-rs256-basic.
+# Canonical fixture: fixtures/p03-jwks-rs256-basic.jsonl.
+#
+# Kong realises "RS256 + JWKS, validate `kid` before verifying
+# signature" with its NATIVE `jwt` plugin. Kong's plugin is built for
+# per-consumer credentials keyed by an arbitrary claim; the trick here
+# is that `config.key_claim_name` falls back to reading the JWT
+# **header** if the claim is not present in the payload (see Kong
+# `plugins/jwt/handler.lua` — `do_authentication` → `jwt.load`).
+# That behaviour turns a single-key consumer-credential registration
+# into a minimal but real JWKS-shaped `kid` lookup:
+#
+#   * header.kid == "bench-rs256-2026"
+#         → matches the sole registered credential with
+#           `key = bench-rs256-2026`
+#         → Kong runs RS256 signature verification against
+#           `rsa_public_key` and checks `exp` — PASS
+#   * header.kid == "unknown-kid-2026"
+#         → no credential with `key = unknown-kid-2026`
+#         → Kong 401 "No credentials found for given 'iss'"
+#           (the message still says `iss` in 3.9.1 regardless of
+#           `key_claim_name`; cosmetic, does not affect verdict)
+#   * no Authorization
+#         → Kong 401 "Unauthorized" before any credential lookup
+#
+# Unlike APISIX (which uses `openid-connect` + a discovery sidecar)
+# and envoy (which inlines the JWKS JSON into the bootstrap), Kong's
+# `jwt` plugin does NOT ingest a JWKS document directly. We instead
+# feed it the single RSA public key that backs the canonical JWKS —
+# semantically equivalent for a one-key JWKS, which is what the
+# p03-jwks-rs256-basic fixture exercises. A drift guard in `setup.sh` diffs
+# the PEM embedded below against the reference `public.pem` on every
+# run so a rotation of `gateways/_reference/jwks-rs256/` cannot
+# silently leave this profile stuck on a stale key.
+#
+# Native primitive contract (verified against
+# https://docs.konghq.com/hub/kong-inc/jwt/ for Kong 3.9.x):
+#
+#   * consumers[].jwt_secrets[].key            — matched against
+#         `key_claim_name` value from the JWT. Setting this to the
+#         canonical `kid` ("bench-rs256-2026") makes unknown-kid
+#         tokens 401 at credential-lookup time.
+#   * consumers[].jwt_secrets[].algorithm      — RS256. The plugin
+#         only accepts a token whose `alg` header matches; attempts
+#         at alg-confusion (RS->HS) are rejected at alg-check time.
+#   * consumers[].jwt_secrets[].rsa_public_key — PEM of the canonical
+#         RSA public key. Byte-for-byte copy of
+#         gateways/_reference/jwks-rs256/public.pem.
+#   * plugins.jwt.config.key_claim_name        — `kid`. Tells the
+#         plugin to extract `kid` from payload.kid (not present in
+#         our tokens) and fall back to header.kid (always present).
+#         Default is `iss`, which would lock us to a per-issuer
+#         lookup — not what the p03-jwks-rs256-basic fixture is
+#         testing.
+#   * plugins.jwt.config.claims_to_verify      — [exp]. Kong does
+#         NOT check `exp` by default; we MUST opt in. Matches the
+#         exp-opt-in we have for the core p02-jwt kong profile.
+#   * plugins.jwt.config.run_on_preflight      — false (default in
+#         3.x). No OPTIONS probes in the p03-jwks-rs256-basic fixture, but
+#         we set it explicitly so a future OPTIONS-aware fixture
+#         does not silently inherit preflight protection.
+#
+# Everything else (upstream URL, route, DB-less mode) is
+# byte-for-byte identical to the columns so the only axis the
+# parity fixture can measure is the JWT/JWKS primitive itself.
+
+_format_version: "3.0"
+
+consumers:
+  - username: bench
+    jwt_secrets:
+      # Single credential keyed by the canonical `kid`. The YAML
+      # loader keeps the trailing newline on the PEM, which matters:
+      # Kong's jwt plugin validates the key shape at load time via
+      # openssl and rejects a malformed PEM with a loud startup error.
+      #
+      # DRIFT GUARD: this PEM MUST match
+      # gateways/_reference/jwks-rs256/public.pem byte-for-byte.
+      # setup.sh re-checks every boot.
+      - key: bench-rs256-2026
+        algorithm: RS256
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6OGfbNN190m8F/xa8sZ4
+          UjEk7ONG6OvTJm376pCmO0FOgCleynymCIfbI4EH3ObxewnlLOVcVwZ8uvcTIc3O
+          SAZVD2SjbOY0dc1s+eQpjrjMQOK2UHSs0fcFjHvlof6c/mfiB0XBk1OYWWWYV5Aq
+          feoK16AzCGKj7DEw6BGOmIf13pWKFwkuikgXEZpyAsoeP+Dz67ga1gYwcbtB84Kz
+          mDSE88AduzDtHPOJ9xVA273FoLBU0MItp60IA9WpzyQyr7AIYOeigF8rFocAH00Y
+          ChyG2+XWNom+ddcSD/0la9IjbJQWehCFVETI6Lb69+jN+N1iGv+AkPUpjv8Xv3y1
+          +QIDAQAB
+          -----END PUBLIC KEY-----
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: jwt
+        config:
+          # Match the credential by `kid` from the JWT header. Kong
+          # first looks in the payload (our canonical payload has no
+          # `kid` claim — see gateways/_reference/jwt/payload-template.json)
+          # then falls back to the header (which carries kid on every
+          # gen-jwt-rs256.sh output). That's the lookup axis we want.
+          key_claim_name: kid
+          claims_to_verify:
+            - exp
+          run_on_preflight: false

@@ -1,0 +1,69 @@
+{
+  "_comment": "gateways/tyk/p10-req-body/apis/bench.json",
+  "_comment_2": "Canonical p09 contract: gateway injects $.bench.injected=true and drops $.secret on the JSON request body before forwarding to upstream.",
+  "_comment_3": "Implemented via Tyk's NATIVE `transform` middleware (mw_transform.go) — Go text/template + the bundled Sprig v3 FuncMap. Sprig provides `unset` / `set` / `dict` / `mustToJson` / `hasKey` / `index`, which between them give us JSON-aware dotted-path mutation without leaving the Go runtime: no otto JSVM, no MiniRequestObject (un)marshal, no per-request VM context switch. Sprig is wired in apidef/api_definitions.go via APIDefinitionLoader.filterSprigFuncs (the only stripped funcs are the env-leak pair env/expandenv).",
+  "_comment_4": "Earlier iterations of this profile used a JSVM `pre` middleware (body_rewrite_request.js) reading config_data. That worked but added enough per-request overhead that p11's 1200 rps burst probe could not saturate global_rate_limit (otto caps Tyk at ~830 rps on this hardware, well below the 1000 rps RL threshold). The migration to native `transform` removes that overhead end-to-end and lets the same template back both p09 and p11. The shared template lives at _shared/templates/p10_request_rewrite.tmpl.",
+  "_comment_5": "Method=POST only: mw_transform.go reads/parses the body unconditionally on a path/method match. The fixture only sends POSTs; registering on GET/HEAD/OPTIONS/DELETE would force a body-parse round-trip on bodyless methods for no semantic gain. Same defensive method-guard pattern p11 uses.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": [],
+          "transform": [
+            {
+              "path":   "{rest:.*}",
+              "method": "POST",
+              "template_data": {
+                "template_mode":   "file",
+                "template_source": "/opt/tyk-gateway/middleware/bench-templates/p10_request_rewrite.tmpl",
+                "input_type":      "json",
+                "enable_session":  false
+              }
+            }
+          ]
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

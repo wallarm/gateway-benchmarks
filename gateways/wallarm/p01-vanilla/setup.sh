@@ -4,7 +4,7 @@
 # Bootstrap the p01-vanilla policy profile via the Wallarm Admin API.
 # Idempotent: safe to re-run — duplicate-create errors (409) are tolerated.
 #
-# NOTE: wallarm 0.2.0 (the pinned public image) rejects `base_path: "/"`
+# NOTE: the Wallarm gateway (the pinned image) rejects `base_path: "/"`
 # with error INVALID_BASE_PATH. Catch-all support was added after that
 # public release. As a workaround we register one service per path
 # prefix used by the fixtures. See NOTES.md § Deviations for details.
@@ -42,13 +42,13 @@ curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
 # 2. Register one service per path prefix
 #
 # For a true catch-all we would register `base_path: "/"` once, but
-# wallarm 0.2.0 forbids that. On top of that, wallarm STRIPS base_path
+# the Wallarm gateway forbids that. On top of that, wallarm STRIPS base_path
 # before forwarding upstream, so we point each service's target URL at
 # the matching backend prefix. Net effect for the client:
 #
 #   GET /anything/foo  →  (strip /anything) →  upstream /anything/foo
 #
-# The set below covers every prefix the fixtures touch for p01..p10.
+# The set below covers every prefix the fixtures touch for p01..p12.
 # -----------------------------------------------------------------------------
 create_service() {
     local name="$1" prefix="$2"
@@ -89,7 +89,7 @@ create_service "bench-anything"         "/anything"
 create_service "bench-bytes"            "/bytes"
 create_service "bench-status"           "/status"
 # The two below are not required by p01 but are registered anyway so
-# the same setup.sh can be re-used by p06/p07 once those profiles land.
+# the same setup.sh can be re-used by p07/p08 once those profiles land.
 create_service "bench-headers"          "/headers"
 create_service "bench-response-headers" "/response-headers"
 

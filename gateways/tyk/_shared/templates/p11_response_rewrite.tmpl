@@ -1,0 +1,35 @@
+{{- /*
+  gateways/tyk/_shared/templates/p11_response_rewrite.tmpl
+
+  Tyk Classic body-transform template shared by tyk/p11-resp-body and
+  tyk/p12-full-pipeline. Tyk's `transform_response` middleware uses the
+  Go text/template engine plus the bundled Sprig v3 FuncMap. The
+  canonical resp-body contract is:
+
+      * inject  $.bench.injected = true
+      * drop    $.origin
+
+  Sprig provides exactly two helpers we need to do this without any
+  ad-hoc string surgery on the upstream JSON:
+
+      * `unset DICT KEY`     - delete KEY from DICT, return the dict
+      * `set DICT KEY VALUE` - set KEY in DICT to VALUE, return the dict
+      * `dict K1 V1 K2 V2 …` - construct a literal map[string]any
+      * `mustToJson VALUE`   - JSON-marshal VALUE, error out on failure
+
+  Both `unset` and `set` mutate their first argument in place AND return
+  the (now-mutated) dict; we pin the return to `$_` so it is not
+  rendered into the output stream. After the two mutations, we
+  serialise the entire (still-the-same) `.` map back to JSON and emit
+  it as the new response body. Tyk takes the rendered bytes, replaces
+  the upstream body, and recomputes Content-Length on the way out.
+
+  The template is `input_type: "json"` so `.` is `map[string]interface{}`
+  decoded by `encoding/json` from the upstream body. Non-object
+  upstream responses (HTML, binary) would fail this template — the
+  fixture probes only hit go-httpbin's `/anything` which always
+  returns a JSON object, so this is the right shape for the bench.
+*/ -}}
+{{- $_ := unset . "origin" -}}
+{{- $_ := set   . "bench" (dict "injected" true) -}}
+{{- mustToJson . -}}

@@ -1,0 +1,58 @@
+# gateways/apisix/p06-rl-dynamic-low/apisix.yaml
+#
+# Profile: p06-rl-dynamic-low (per-client-IP rate limit, low cardinality).
+# Canonical spec: docs/POLICIES.md § p05
+# Canonical fixture: fixtures/p06-rl-dynamic-low.jsonl
+#
+# Limit:      10 req/s per client IP, rolling 1 s window.
+# Key source: X-Real-IP header (nginx variable `$http_x_real_ip`).
+# IP pool:    100 distinct IPs per POLICIES.md (fixture exercises 10).
+# Over-limit: HTTP 429.
+#
+# APISIX realises per-IP rate limiting with the native `limit-count`
+# plugin, `key_type: var` + `key: "http_x_real_ip"`. Each distinct
+# value of X-Real-IP gets its own bucket in the plugin's shared-dict;
+# absent X-Real-IP would collapse into a single "" bucket (the fixture
+# always sets X-Real-IP on rate-limit probes, so the degenerate path
+# is unreachable in practice).
+#
+# Zone sizing: APISIX's `limit-count` default shared-dict is 10 MiB,
+# roughly ~75k counter slots. The 100-IP pool from POLICIES.md and
+# the 10-IP burst from the fixture both fit trivially. p06 keeps the
+# same default since its 50k-IP pool still fits inside the default zone.
+
+routes:
+  - id: bench-p06-rl-dynamic-low
+    uris:
+      - /
+      - /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    plugins:
+      limit-count:
+        count: 10
+        time_window: 1
+        # Per-IP bucket. `http_x_real_ip` is the nginx variable for
+        # the X-Real-IP request header (`ngx.var.http_x_real_ip` in
+        # Lua). APISIX's limit-count plugin reads this verbatim — no
+        # CIDR normalisation, no multi-value handling. The benchmark
+        # always sends a single, raw IPv4 address so this is
+        # deterministic.
+        key_type: var
+        key: http_x_real_ip
+        rejected_code: 429
+        rejected_msg: '{"error":"rate_limit_exceeded","limit":"10r/s","scope":"per-ip"}'
+        policy: local
+        show_limit_quota_header: false
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

@@ -1,0 +1,164 @@
+# gateways/apisix/p12-full-pipeline/apisix.yaml
+#
+# Profile: p12-full-pipeline — chained composition of
+#   p02-jwt    → HS256 verification (serverless-pre, access phase)
+#   p04-rl-static → 1000 rps service-wide rate limit (limit-count)
+#   p08-req-headers → inject X-Bench-In, drop X-Forwarded-For
+#   p10-req-body → inject $.bench.injected, drop $.secret
+#   p09-resp-headers → inject X-Bench-Out, drop Server
+#   p11-resp-body → inject $.bench.injected, drop $.origin
+#
+# Canonical spec: docs/POLICIES.md § p11
+# Canonical fixture: fixtures/p12-full-pipeline.jsonl
+#
+# -----------------------------------------------------------------------------
+# APISIX plugin-instance budget — important constraint:
+#
+# APISIX allows at most one instance of each plugin per route, and
+# `serverless-pre-function` / `serverless-post-function` each
+# resolves ONE phase per instance (see
+# /usr/local/apisix/apisix/plugins/serverless/init.lua, `call_funcs`).
+# That means we cannot simply stack two pre-functions or two post-
+# functions. The pipeline below folds all custom Lua into two
+# serverless hooks plus three native plugins:
+#
+#   1. proxy-rewrite              → X-Bench-In set        [p07 inject]
+#   2. limit-count                → 1000 rps, const key   [p03]
+#   3. serverless-pre-function    → access phase          [p02 + p09 + p07-drop]
+#       * JWT HS256 verify (`_shared/lualib/jwt_hs256`)
+#       * request-body rewrite (`_shared/lualib/body_rewrite.rewrite_request`)
+#       * `ngx.var.bench_xff = ""`  (drop X-Forwarded-For via
+#                                    `_shared/bench-start.sh` post-init
+#                                    sed, same escape hatch as
+#                                    gateways/apisix/p08-req-headers)
+#   4. response-rewrite           → X-Bench-Out set, Server drop,
+#                                    Content-Length drop [p08 + p10 prep]
+#   5. serverless-post-function   → body_filter phase     [p10 rewrite]
+#       * accumulate upstream chunks, rewrite JSON at EOF
+#         (`_shared/lualib/body_rewrite.rewrite_response_if_json`)
+#
+# Phase ordering matches the nginx column:
+#   limit-count (rewrite)
+#       → serverless-pre-function (access) — JWT, body rewrite, XFF drop
+#           → proxy-rewrite (access)       — X-Bench-In set
+#               → proxy_pass
+#                   → response-rewrite (header_filter) — headers
+#                       → serverless-post-function (body_filter) — body
+#
+# A below-limit valid JWT therefore lands every transform at once; a
+# missing/expired JWT short-circuits with 401 before proxy; a
+# 1200-rps burst hits the 429 limit_count responses BEFORE the JWT
+# lua runs — because limit-count has a higher priority (1002) than
+# serverless-pre-function (10000). That matches the fixture's burst
+# probe, which ships a valid JWT but still expects 429s from RL
+# saturation.
+
+routes:
+  - id: bench-p12-full-pipeline
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      limit-count:
+        count: 1000
+        time_window: 1
+        key_type: constant
+        key: bench_p12
+        rejected_code: 429
+        rejected_msg: '{"error":"rate_limited","retry_after_seconds":1}'
+        policy: local
+        show_limit_quota_header: false
+      proxy-rewrite:
+        headers:
+          set:
+            X-Bench-In: "1"
+      serverless-pre-function:
+        phase: access
+        functions:
+          - |
+            return function(conf, ctx)
+              local jwt = require("jwt_hs256")
+              local body_rewrite = require("body_rewrite")
+              local secret = "bench-jwt-hs256-secret-2026"
+
+              -- p02 — JWT verify.
+              local ok, err = jwt.verify(ngx.var.http_authorization, secret)
+              if not ok then
+                ngx.log(ngx.INFO, "jwt reject: ", err or "unknown")
+                ngx.header["WWW-Authenticate"] =
+                  'Bearer realm="bench", charset="UTF-8"'
+                ngx.header["Content-Type"] = "application/json"
+                ngx.status = 401
+                ngx.say('{"error":"unauthorized","reason":"jwt_validation_failed"}')
+                return ngx.exit(401)
+              end
+
+              -- p07 — drop X-Forwarded-For. Relies on bench-start.sh
+              -- having patched the generated nginx.conf so this
+              -- writable variable backs the proxy_set_header
+              -- directive; empty string then triggers nginx's
+              -- "do not forward this header" semantics.
+              ngx.var.bench_xff = ""
+
+              -- p09 — request-body rewrite (only on methods that
+              -- carry a body). A GET must stay a GET; set_body_data
+              -- on a no-body method would fabricate framing that
+              -- upstream keepalive pools don't expect.
+              local method = ngx.req.get_method()
+              if method == "POST" or method == "PUT" or method == "PATCH" then
+                ngx.req.read_body()
+                local raw = ngx.req.get_body_data()
+                if raw and raw ~= "" then
+                  local new = body_rewrite.rewrite_request(
+                    raw,
+                    { "bench", "injected" }, true,
+                    { "secret" }
+                  )
+                  ngx.req.set_body_data(new)
+                  ngx.req.set_header("Content-Type", "application/json")
+                end
+              end
+            end
+      response-rewrite:
+        headers:
+          set:
+            X-Bench-Out: "1"
+          remove:
+            - Server
+            - Content-Length
+      serverless-post-function:
+        phase: body_filter
+        functions:
+          - |
+            return function(conf, ctx)
+              local body_rewrite = require("body_rewrite")
+              local chunk = ngx.arg[1]
+              local eof   = ngx.arg[2]
+
+              local buf = ngx.ctx.bench_buf
+              if not buf then
+                buf = {}
+                ngx.ctx.bench_buf = buf
+              end
+              if chunk and chunk ~= "" then
+                buf[#buf + 1] = chunk
+              end
+
+              if eof then
+                local raw = table.concat(buf)
+                local new = body_rewrite.rewrite_response_if_json(
+                  raw,
+                  { "bench", "injected" }, true,
+                  { "origin" }
+                )
+                ngx.arg[1] = new
+                ngx.arg[2] = true
+              else
+                ngx.arg[1] = nil
+              end
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

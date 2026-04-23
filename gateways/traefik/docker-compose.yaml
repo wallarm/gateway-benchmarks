@@ -1,0 +1,149 @@
+# gateways/traefik/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for traefik parity
+# attestation. Same port contract as every other gateway under
+# `gateways/<gw>/`:
+#
+#     loadgen (host)  →  traefik :9080  →  backend :8080
+#
+# Traefik has two config surfaces:
+#
+#   * static config  (entryPoints, providers, plugins, api, log)
+#     — read once at process start
+#   * dynamic config (routers, middlewares, services, tls, tcp)
+#     — watched by the file provider and hot-reloaded
+#
+# We split per profile the same way envoy / wallarm do:
+#
+#   gateways/traefik/<profile>/traefik.yaml   — static config
+#   gateways/traefik/<profile>/dynamic.yaml   — dynamic config
+#   gateways/traefik/<profile>/setup.sh       — smoke / sanity check
+#   gateways/traefik/<profile>/NOTES.md       — profile-specific notes
+#
+# Each profile's static traefik.yaml points the file provider at a
+# directory that contains a single dynamic.yaml, so there is no
+# cross-profile config leakage. The GATEWAY_PROFILE env var (default
+# `p01-vanilla`) selects which profile is wired in.
+#
+# Yaegi plugins (body_rewrite, used by p09 / p10 / p11) live under
+# gateways/traefik/_shared/plugins-local/ and are mounted on every
+# profile; they only instantiate when a profile's dynamic config
+# references them via `plugin.body_rewrite.*`.
+#
+# Default image is pinned by digest for reproducibility. Refresh with:
+#   docker pull traefik:v3.3.4 && \
+#     docker image inspect traefik:v3.3.4 \
+#       --format '{{index .RepoDigests 0}}'
+#
+# The GATEWAY_IMAGE override hook is wired in (per the envoy / nginx
+# pattern) so a future profile that needs a different traefik tag can
+# swap it via `gateways/traefik/<profile>/.env` without touching this
+# file.
+
+name: gateway-benchmarks-traefik
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-traefik-backend
+    restart: "no"
+    # Backend listens on :8080 inside the container. We do NOT publish
+    # it on the host — only traefik needs to talk to it, over the
+    # private `bench-net` bridge. Add `- "8088:8080"` temporarily if
+    # you want to probe it from the host.
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-traefik:v3.3.4@sha256:cc11989f418e2cfe5e60fc40c92c1813be847f58eda15eced7d5ac890255ad9e}
+    container_name: gwb-traefik
+    restart: "no"
+    depends_on:
+      - backend
+    # Traefik's three static-config surfaces — YAML file, env vars,
+    # CLI flags — are mutually exclusive per the v3 docs: when one is
+    # selected, the other two are silently ignored. We pick the YAML
+    # file (one per profile under gateways/traefik/<profile>/) because
+    # it's the only surface that lets us express middleware lists and
+    # plugin manifests cleanly. Per-profile knobs like
+    # `entryPoints.web.forwardedHeaders.insecure` therefore live in
+    # each profile's traefik.yaml, not here.
+    command:
+      - "--configFile=/etc/traefik/traefik.yaml"
+    # Per-profile static + dynamic configs. The static config points
+    # the file provider at /etc/traefik/dynamic/ so the dynamic.yaml
+    # is watched and hot-reloaded; the directory contains exactly one
+    # file per profile. The _shared/plugins-local mount is always
+    # present but only exercised by profiles that reference the Yaegi
+    # plugin in their dynamic config (p09 / p10 / p11).
+    volumes:
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/traefik.yaml:/etc/traefik/traefik.yaml:ro
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/dynamic.yaml:/etc/traefik/dynamic/dynamic.yaml:ro
+      - ./_shared/plugins-local:/plugins-local:ro
+    ports:
+      - "9080:9080"  # data plane (parity-gateway target)
+    # Traefik shuts down cleanly on SIGTERM. A 5 s stop-grace-period
+    # keeps `docker compose down` snappy during the parity sweeps.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+  # -----------------------------------------------------------------
+  # Opt-in JWT / JWKS auth sidecar for the p03
+  # `p03-jwks-rs256-basic` profile. Gated by docker-compose `profiles:`
+  # so it only boots when COMPOSE_PROFILES=p03-jwks-rs256-basic (set by
+  # scripts/parity-gateway.sh when PARITY_PROFILE=p03-jwks-rs256-basic).
+  # It is a no-op for the 12 traefik profiles.
+  #
+  # Why a sidecar and not an in-process plugin:
+  #
+  #   * Traefik plugins run in Yaegi, whose stdlib whitelist
+  #     deliberately excludes `crypto/rsa` and `crypto/x509` — the
+  #     two packages needed for RSA public-key parse + RS256
+  #     verify. HS256 was the edge case Yaegi's allowlist admits
+  #     (`crypto/hmac` + `crypto/sha256`, see the in-repo
+  #     gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
+  #     jwt_hs256); asymmetric crypto is categorically off-limits
+  #     without a Traefik fork.
+  #   * Traefik's `forwardAuth` middleware is the textbook
+  #     escape hatch: the gateway delegates the
+  #     Authorization-header decision to an external HTTP service,
+  #     and the external service can use any language / crypto
+  #     library it wants.
+  #
+  # The sidecar is an OpenResty container reusing the exact same
+  # request hot path the nginx-column `p03-jwks-rs256-basic` profile
+  # uses (FFI to libcrypto + shared-memory kid → EVP_PKEY* map).
+  # Its Lua modules live under
+  # `gateways/traefik/p03-jwks-rs256-basic/jwks-auth/lualib/` as column-
+  # local copies of the nginx versions (same pattern as apisix's
+  # ported `jwt_hs256.lua` / `body_rewrite.lua`). A drift guard in
+  # setup.sh diffs the two copies on every boot.
+  jwks-auth:
+    image: openresty/openresty:1.27.1.2-alpine@sha256:761047d688bb91fe4eb42c42a05c794c54f274ee769ad54802b2c06247e8c38c
+    container_name: gwb-traefik-jwks-auth
+    restart: "no"
+    profiles: [p03-jwks-rs256-basic]
+    # The sidecar only needs the shared data plane at :9091 —
+    # traefik on :9080 talks to it over bench-net via the `jwks-auth`
+    # alias. No host port is published; it is internal to the stack.
+    command: ["nginx", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - ./p03-jwks-rs256-basic/jwks-auth/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./p03-jwks-rs256-basic/jwks-auth/lualib:/usr/local/openresty/lualib/bench:ro
+      # Reference material bind-mount — identical file layout to the
+      # nginx column's mount. Everything under
+      # gateways/_reference/jwks-rs256/ (jwks.json, public.pem,
+      # kid.txt) appears at /etc/nginx/jwks-rs256/ inside the
+      # sidecar; the Lua init_by_lua_block reads it once per worker.
+      - ../_reference/jwks-rs256:/etc/nginx/jwks-rs256:ro
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [jwks-auth]
+
+networks:
+  bench-net:
+    driver: bridge

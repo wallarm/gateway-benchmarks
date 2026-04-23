@@ -1,0 +1,53 @@
+# gateways/traefik/p11-resp-body/traefik.yaml
+#
+# Profile: p11-resp-body.
+# Canonical spec: docs/POLICIES.md § p10 — add `$.bench.injected: true`
+# to the downstream response body, drop `$.origin`.
+# Fixture: fixtures/p11-resp-body.jsonl.
+#
+# Same static config as p09 — plugin declaration lives here so the
+# dynamic middleware can reference it as `plugin.body_rewrite`. The
+# only diff between p09 and p10 lives in the plugin's `target` field
+# in dynamic.yaml: `request` for p09, `response` for p10. The
+# plugin's response path wraps the downstream writer, buffers every
+# chunk, rewrites on the way out, and recomputes Content-Length so
+# the client-side JSON parser doesn't truncate mid-object.
+#
+# Traefik splits config into a static half (this file) and a dynamic
+# half (dynamic.yaml). Keeping the static half identical across
+# p09/p10/p11 means the only axis a reviewer has to diff is the
+# plugin stanza in dynamic.yaml — the body-rewrite behavioural
+# contract is entirely there.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p10 does not assert on forwarded headers; same `insecure:
+      # false` default as p09/p07 so the entryPoint contract is
+      # identical across the non-RL profiles.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite

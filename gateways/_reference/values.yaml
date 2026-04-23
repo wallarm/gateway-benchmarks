@@ -68,21 +68,40 @@ rl_static:
   window_s: 1
   key: service
 
-# p04 — Dynamic rate limit (low cardinality)
+# p04 — Per-endpoint static rate limit
+#
+# Same shape as p03 (rolling 1 s window, 429 with Retry-After: 1), but
+# the bucket is attached to ONE specific endpoint path — every other
+# path on the same gateway must stay unrestricted. This is the
+# "scope-a-policy-to-one-route" axis (particularly relevant for
+# Tyk / Kong / APISIX, whose RL primitives are authored as API-level
+# policies with a route selector, rather than a network-level filter).
+rl_endpoint:
+  limit_rps: 100
+  window_s: 1
+  # Client-visible path that receives the rate-limit policy. Gateways
+  # must bind the RL primitive specifically to this path prefix.
+  limited_path: /anything/limited
+  # Client-visible path that MUST remain unrestricted — the scoping
+  # invariant is checked by firing an identical-shape burst here and
+  # asserting zero 429 responses.
+  free_path: /anything/free
+
+# p05 — Dynamic rate limit (low cardinality)
 rl_dynamic_low:
   limit_rps: 10
   window_s: 1
   key_header: X-Real-IP
   pool_size: 100
 
-# p05 — Dynamic rate limit (high cardinality)
+# p06 — Dynamic rate limit (high cardinality)
 rl_dynamic_high:
   limit_rps: 100
   window_s: 1
   key_header: X-Real-IP
   pool_size: 50000
 
-# p06 — Request headers rewrite
+# p07 — Request headers rewrite
 req_headers:
   add:
     - name: X-Bench-In
@@ -90,7 +109,7 @@ req_headers:
   drop:
     - X-Forwarded-For
 
-# p07 — Response headers rewrite
+# p08 — Response headers rewrite
 resp_headers:
   add:
     - name: X-Bench-Out
@@ -98,7 +117,7 @@ resp_headers:
   drop:
     - Server
 
-# p08 — Request body rewrite (JSON)
+# p09 — Request body rewrite (JSON)
 req_body:
   add:
     path: $.bench.injected
@@ -106,7 +125,7 @@ req_body:
   drop:
     path: $.secret
 
-# p09 — Response body rewrite (JSON)
+# p10 — Response body rewrite (JSON)
 # `$.origin` is chosen because go-httpbin's /anything always puts the
 # client IP there, so the drop-rule is always exercised.
 resp_body:
@@ -116,7 +135,7 @@ resp_body:
   drop:
     path: $.origin
 
-# p10 — Full pipeline is the composition of the six above, in this
+# p11 — Full pipeline is the composition of the six above, in this
 # exact order:
 full_pipeline:
   order:
@@ -128,15 +147,67 @@ full_pipeline:
     - resp_body
 
 # -----------------------------------------------------------------------------
+# p03-jwks-rs256-basic (NOT part of the 12-profile matrix)
+# -----------------------------------------------------------------------------
+# These scenarios exercise axes that are orthogonal to the canonical
+# ten profiles. They are driven by the same parity-attestation harness
+# and the same `make parity-gateway PARITY_GATEWAY=<gw>
+# PARITY_PROFILE=<slug>` entry point, but they do NOT appear in the
+# `parity-gateway-all` sweep or in the ranking matrix — running them
+# is always a deliberate opt-in.
+#
+# The rationale is "don't reshape the matrix to measure an extra
+# capability" — e.g. RS256+JWKS is a genuinely different axis from
+# HS256, but core p02-jwt intentionally locks HS256 so it reads the
+# same question on every gateway.
+
+# p03-jwks-rs256-basic — RS256 signature validation against a static,
+# inline JWKS. Separate from p02-jwt so that neither this scenario
+# nor p02 has to flex its binding shape to accommodate the other.
+#
+# Canonical shape:
+#   - Algorithm: RS256 (asymmetric)
+#   - JWKS: inline (`{keys: [...]}`), NOT jwks_uri (iteration 2 material)
+#   - Key id: a single canonical `kid` stamped into every token
+#     header and into the JWKS's only JWK
+#   - Payload: reuses `jwt.payload` below so the claim shape stays
+#     identical to the HS256 probes (sub/role/iss)
+#   - Token header: `Authorization: Bearer <jwt>` (same envelope as p02)
+jwks_rs256_basic:
+  algorithm: RS256
+  kid_source: gateways/_reference/jwks-rs256/kid.txt
+  private_key_path: gateways/_reference/jwks-rs256/private.pem
+  public_key_path:  gateways/_reference/jwks-rs256/public.pem
+  jwks_path:        gateways/_reference/jwks-rs256/jwks.json
+  header:
+    name: Authorization
+    scheme: Bearer
+  # The payload template is shared with p02-jwt on purpose (one less
+  # moving part across scenarios). Expiry matches p02-jwt too.
+  payload_path: gateways/_reference/jwt/payload-template.json
+  expiry_s: 3600
+  unknown_kid_value: unknown-kid-2026
+
+# -----------------------------------------------------------------------------
 # Parity attestation tolerances (see docs/POLICIES.md)
 # -----------------------------------------------------------------------------
 parity:
   # p03: fire 1200 requests in 1 s — we expect at least 150 × 429 and
   # tolerate ±50 around the exact expected count.
-  p03_expected_429_min: 150
-  p03_expected_429_tolerance: 50
+  p04_expected_429_min: 150
+  p04_expected_429_tolerance: 50
 
-  # p04: 10 distinct IPs × 15 req/s × 3 s = 450 requests, ~50% above
+  # p04: same 1200-req ASAP burst, two probes.
+  #   - on /anything/limited (100-rps bucket): expect >=150 × 429 ±50
+  #     (100 initial tokens + tiny refill during the ~100 ms burst)
+  #   - on /anything/free    (unrestricted):  expect 0 × 429 and
+  #     >=1100 × 2xx (scoping invariant — not a single miss allowed)
+  p05_limited_expected_429_min: 150
+  p05_limited_expected_429_tolerance: 50
+  p05_free_expected_2xx_min: 1100
+  p05_free_expected_429_max: 0
+
+  # p05: 10 distinct IPs × 15 req/s × 3 s = 450 requests, ~50% above
   # limit. We expect ~150 × 429 (tolerance ±30).
-  p04_expected_429_min: 120
-  p04_expected_429_tolerance: 30
+  p05_expected_429_min: 120
+  p05_expected_429_tolerance: 30

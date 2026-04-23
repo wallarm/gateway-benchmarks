@@ -17,10 +17,10 @@ Do not change these files while a run is in flight.
 | `jwt/payload-template.json`           | Base JWT payload minted by `scripts/gen-jwt.sh`               |
 | `jwks/jwks.json`                      | JWKS derived from `jwt/secret.txt` (used as JWT fallback)     |
 | `tls/bench.crt` / `tls/bench.key`     | Self-signed cert for `bench.local` / `localhost` / `gateway`  |
-| `bodies/p08-request-in.json`          | Client → gateway body for `p08 req-body`                      |
-| `bodies/p08-request-out.json`         | Gateway → backend body for `p08 req-body`                     |
-| `bodies/p09-response-in.json`         | Backend → gateway body for `p09 resp-body`                    |
-| `bodies/p09-response-out.json`        | Gateway → client body for `p09 resp-body`                     |
+| `bodies/p09-request-in.json`          | Client → gateway body for `p09 req-body`                      |
+| `bodies/p09-request-out.json`         | Gateway → backend body for `p09 req-body`                     |
+| `bodies/p10-response-in.json`         | Backend → gateway body for `p10 resp-body`                    |
+| `bodies/p10-response-out.json`        | Gateway → client body for `p10 resp-body`                     |
 
 ## Not secret
 

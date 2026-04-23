@@ -7,12 +7,10 @@
 #   - HS256 validation against the shared benchmark secret
 #   - token source: Authorization: Bearer <jwt>
 #
-# This script is intentionally dual-mode:
-#   - On public wallarm/api-gateway:0.2.0 it reports FEATURE-MISSING at
-#     runtime because /policies does not expose jwt_validation.
-#   - On a newer local image override (for example
-#     WALLARM_IMAGE=wallarm/api-gateway:main-<sha>) it binds the policy
-#     and turns the cell into a real parity run.
+# The image must expose `jwt_validation` in its policy registry —
+# the script sanity-checks this against GET /policies at startup and
+# exits FEATURE-MISSING (code 42) if the primitive is absent, which
+# usually means the `WALLARM_IMAGE` override points at an old build.
 
 set -euo pipefail
 

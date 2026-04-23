@@ -1,0 +1,62 @@
+# gateways/traefik/p03-jwks-rs256-basic/traefik.yaml
+#
+# Policy profile p03-jwks-rs256-basic (12-profile matrix): RS256 JWT validation
+# matrix; lives parallel to p02-jwt). Canonical description:
+# docs/POLICIES.md § p03-jwks-rs256-basic.
+# Canonical fixture: fixtures/p03-jwks-rs256-basic.jsonl.
+#
+# Traefik realises "RS256 + JWKS, validate `kid` before verifying
+# signature" via the NATIVE `forwardAuth` middleware (HTTP-level
+# delegation), NOT a Yaegi plugin. Yaegi's stdlib whitelist does
+# NOT admit `crypto/rsa` or `crypto/x509` — the two packages needed
+# for RSA public-key parse + RS256 verify in Go. HS256 was the edge
+# case Yaegi's allowlist admits (`crypto/hmac` + `crypto/sha256`,
+# see gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
+# jwt_hs256/); asymmetric crypto is categorically off-limits without
+# a Traefik fork.
+#
+# Architecture:
+#
+#   client ──:9080──▶ traefik ──forwardAuth──▶ jwks-auth:9091 (OpenResty sidecar)
+#                         │                      │
+#                         │                      ▼
+#                         │             FFI → libcrypto RSA verify
+#                         │                      │
+#                         │ ◀──── 200 (OK)/401 ──┘
+#                         ▼
+#                    service(backend:8080)
+#
+# This static config is deliberately minimal — unlike the core
+# traefik profiles it carries NO `experimental.localPlugins` entries
+# (the Yaegi runtime still loads for consistency across the column
+# but no plugin is wired for this profile). The sidecar is declared
+# in ../docker-compose.yaml gated by `profiles: [p03-jwks-rs256-basic]`
+# so it only boots for this profile.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p03-jwks-rs256-basic fixture does not exercise XFF parsing;
+      # `insecure: false` keeps the entryPoint contract uniform
+      # with the other non-RL profiles.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

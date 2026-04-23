@@ -36,7 +36,7 @@
 --   * JWKS fetching — the secret is a static shared string (see
 --     docs/POLICIES.md § p02).
 --
--- The same module is reused by gateways/nginx/p10-full-pipeline.
+-- The same module is reused by gateways/nginx/p12-full-pipeline.
 
 local _M = {}
 

@@ -1,0 +1,48 @@
+# gateways/traefik/p08-req-headers/dynamic.yaml
+#
+# Native traefik `headers` middleware — same primitive that backs the
+# "add-this, drop-that" recipes in the traefik docs:
+#   https://doc.traefik.io/traefik/v3.3/reference/routing-configuration/http/middlewares/headers/
+#
+# Mirrors `gateways/nginx/p08-req-headers` (proxy_set_header inject +
+# `proxy_set_header X-Forwarded-For "";` drop) and
+# `gateways/envoy/p08-req-headers` (virtual_host
+# request_headers_to_add + request_headers_to_remove).
+#
+# Semantics:
+#   * customRequestHeaders.X-Bench-In: "1" — injects the header on
+#     the upstream-bound request. If a client ships their own
+#     X-Bench-In, it is overwritten (matches envoy's
+#     `append_action: OVERWRITE_IF_EXISTS_OR_ADD`).
+#   * customRequestHeaders.X-Forwarded-For: "" — empty value is the
+#     documented "drop" sentinel in traefik's headers middleware,
+#     same idiom nginx uses for `proxy_set_header X-Forwarded-For "";`.
+#
+# Other client headers (e.g. X-Client-Trace) are NOT mentioned in the
+# middleware and therefore pass through verbatim — that's exactly
+# what the third fixture line asserts.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p08
+      priority: 1
+
+  middlewares:
+    bench-p08:
+      headers:
+        customRequestHeaders:
+          X-Bench-In: "1"
+          X-Forwarded-For: ""
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

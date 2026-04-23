@@ -1,0 +1,57 @@
+# gateways/apisix/p09-resp-headers/apisix.yaml
+#
+# Profile: p09-resp-headers.
+# Canonical spec: docs/POLICIES.md § p08 — add X-Bench-Out: 1 to the
+# downstream response, drop the Server header.
+# Canonical fixture: fixtures/p09-resp-headers.jsonl
+#
+# Implementation:
+#
+#   * response-rewrite.headers.set.X-Bench-Out: "1"
+#       Adds the outbound header on every response.
+#
+#   * serverless-post-function (header_filter phase) clearing
+#     `ngx.header["Server"]`.
+#
+# Why not `response-rewrite.headers.remove: [Server]`?
+#
+# `response-rewrite` IS capable of removing outbound headers, but
+# APISIX builds on OpenResty which stamps `Server: openresty` very late
+# in the header filter chain (after normal Lua plugins have run). In
+# practice the plugin's `remove` flag does NOT reliably suppress
+# `Server` on APISIX 3.15 — the header comes back through
+# `ngx_http_header_filter_module`. The canonical OpenResty escape
+# hatch is to clear the outbound header via `ngx.header.Server = nil`
+# from a `header_filter_by_lua_*` directive, which is what
+# `serverless-post-function phase: header_filter` exposes. This is
+# the same pattern that `gateways/nginx/p09-resp-headers/nginx.conf`
+# uses via `more_clear_headers "Server"` — both resolve at the
+# nginx-output-headers stage rather than at the plugin-output stage.
+#
+# The fixture's second probe hits `/get` (not `/response-headers`),
+# which go-httpbin answers with its own `Server: go-httpbin/...`
+# header — the same `ngx.header.Server = nil` sweep catches both the
+# upstream-sourced and the openresty-stamped variants.
+
+routes:
+  - id: bench-p09-resp-headers
+    uris: [/, /*]
+    methods: [GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS]
+    plugins:
+      response-rewrite:
+        headers:
+          set:
+            X-Bench-Out: "1"
+      serverless-post-function:
+        phase: header_filter
+        functions:
+          - |
+            return function(conf, ctx)
+              ngx.header["Server"] = nil
+            end
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

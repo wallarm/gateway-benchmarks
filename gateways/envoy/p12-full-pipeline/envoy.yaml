@@ -1,0 +1,296 @@
+# gateways/envoy/p12-full-pipeline/envoy.yaml
+#
+# Profile: p12-full-pipeline — chained composition of:
+#     p02-jwt          → HS256 verification (Lua + shared verifier)
+#     p04-rl-static    → 1000 rps service-wide local_ratelimit
+#     p08-req-headers  → inject X-Bench-In, drop X-Forwarded-For
+#     p09-resp-headers → inject X-Bench-Out, drop Server
+#     p10-req-body     → inject $.bench.injected, drop $.secret
+#     p11-resp-body    → inject $.bench.injected, drop $.origin
+#
+# Canonical spec: docs/POLICIES.md § p11
+# Canonical fixture: fixtures/p12-full-pipeline.jsonl
+#
+# Filter chain order and phase semantics
+# --------------------------------------
+# Envoy evaluates HTTP filters sequentially on the request phase
+# (top-down) and reverse-sequentially on the response phase
+# (bottom-up). For p11 we want:
+#
+#   REQUEST  PHASE        (top-down)
+#     local_ratelimit     429 BEFORE JWT — a DDoS-style flood of
+#                         valid tokens must be stopped by RL, not by
+#                         JWT verification. Matches nginx phase order
+#                         (preaccess → access).
+#     buffer              Buffers full request body so the Lua filter
+#                         below can read it in envoy_on_request.
+#     lua                 envoy_on_request:
+#                           1. verify JWT HS256 (401 on fail via
+#                              respond())
+#                           2. rewrite request body if method is
+#                              POST/PUT/PATCH
+#     router              Forwards to upstream.
+#
+#   RESPONSE PHASE        (bottom-up, so router runs first, then
+#                          lua, then buffer, then local_ratelimit)
+#     router              Receives upstream response.
+#     lua                 envoy_on_response: rewrite JSON body.
+#     (buffer is a no-op on the response side)
+#     (local_ratelimit is a no-op on the response side)
+#
+# Header transforms live on the virtual_host outside the filter
+# chain, running in envoy's dedicated header-mutation stage:
+#
+#   * request_headers_to_add: X-Bench-In
+#   * request_headers_to_remove: X-Forwarded-For
+#   * response_headers_to_add: X-Bench-Out
+#   * response_headers_to_remove: Server
+#
+# These run BEFORE `router` (so the backend sees them) and AFTER
+# the upstream response (so the client sees them, with
+# `server_header_transformation: PASS_THROUGH` preventing envoy
+# from re-stamping its own Server).
+#
+# Why this order matters
+# ----------------------
+# A 1200-req/s burst with a valid JWT must saturate RL (≥150 × 429)
+# before the JWT filter is reached. If the Lua filter came first,
+# every request would spend HMAC-SHA-256 cycles on a token we're
+# about to reject anyway. Placing local_ratelimit at position 1
+# keeps envoy's hot path the same under burst as under steady
+# load: drop early, never do work you're going to throw away.
+#
+# Matching nginx's shape
+# ----------------------
+# * rate=1000r/s + burst=200 nodelay ↔ token_bucket: max_tokens=200,
+#   tokens_per_fill=50, fill_interval=0.05s (1000 rps steady refill
+#   with a 200-request burst cap). Same shape as p04-rl-static.
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+    - name: listener_0
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9080
+      reuse_port: true
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_http
+                codec_type: HTTP1
+                common_http_protocol_options:
+                  idle_timeout: 60s
+                  # See p01-vanilla/envoy.yaml: max_connection_duration
+                  # MUST stay UNSET.
+                  max_requests_per_connection: 100000
+                stream_idle_timeout: 60s
+                request_timeout: 10s
+                normalize_path: false
+                merge_slashes: false
+                # p08 anchor #1 — PASS_THROUGH keeps envoy from
+                # re-stamping `Server: envoy` after our
+                # response_headers_to_remove strips whatever upstream
+                # sent.
+                server_header_transformation: PASS_THROUGH
+                route_config:
+                  name: local_route
+                  virtual_hosts:
+                    - name: backend_vh
+                      domains: ["*"]
+                      # --- p07: request-header transforms ---------
+                      request_headers_to_add:
+                        - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                          header:
+                            key: x-bench-in
+                            value: "1"
+                      request_headers_to_remove:
+                        - x-forwarded-for
+                      # --- p08: response-header transforms --------
+                      response_headers_to_add:
+                        - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                          header:
+                            key: x-bench-out
+                            value: "1"
+                      response_headers_to_remove:
+                        - server
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: backend_cluster
+                            timeout: 10s
+                http_filters:
+                  # ---------------------------------------------------
+                  # 1. local_ratelimit — p03: 1000 rps service-wide,
+                  # 200-request burst cap. Fires BEFORE JWT so a
+                  # valid-token flood is shed without touching Lua.
+                  # ---------------------------------------------------
+                  - name: envoy.filters.http.local_ratelimit
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                      stat_prefix: http_local_rl_p11
+                      token_bucket:
+                        max_tokens: 200
+                        tokens_per_fill: 50
+                        fill_interval: 0.05s
+                      filter_enabled:
+                        runtime_key: local_rate_limit_enabled
+                        default_value:
+                          numerator: 100
+                          denominator: HUNDRED
+                      filter_enforced:
+                        runtime_key: local_rate_limit_enforced
+                        default_value:
+                          numerator: 100
+                          denominator: HUNDRED
+                      status:
+                        code: TooManyRequests
+                      response_headers_to_add:
+                        - append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                          header:
+                            key: retry-after
+                            value: "1"
+                  # ---------------------------------------------------
+                  # 2. buffer — p09 prerequisite. Request body must be
+                  # fully buffered before the Lua filter's
+                  # envoy_on_request can call body():getBytes().
+                  # ---------------------------------------------------
+                  - name: envoy.filters.http.buffer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                      max_request_bytes: 1048576
+                  # ---------------------------------------------------
+                  # 3. lua — p02 (JWT) + p09 (request body) on request
+                  # phase; p10 (response body) on response phase. One
+                  # Lua filter, one inline source, three shared libs.
+                  # ---------------------------------------------------
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        inline_string: |
+                          package.path = "/etc/envoy/lualib/?.lua;" ..
+                                         (package.path or "")
+                          local jwt  = require("jwt_hs256")
+                          local body = require("body_rewrite")
+
+                          -- p02 secret + 401 envelope, same values as
+                          -- envoy/p02-jwt/envoy.yaml.
+                          local BENCH_SECRET =
+                              "bench-jwt-hs256-secret-2026"
+                          local REJ_HEADERS = {
+                              [":status"] = "401",
+                              ["content-type"] = "application/json",
+                              ["www-authenticate"] =
+                                  'Bearer realm="bench", charset="UTF-8"',
+                          }
+                          local REJ_BODY =
+                              '{"error":"unauthorized",' ..
+                              '"reason":"jwt_validation_failed"}'
+
+                          function envoy_on_request(req)
+                              -- ----- p02: JWT HS256 verification -----
+                              local authz =
+                                  req:headers():get("authorization")
+                              local ok, _ =
+                                  jwt.verify(authz, BENCH_SECRET)
+                              if not ok then
+                                  req:respond(REJ_HEADERS, REJ_BODY)
+                                  return
+                              end
+
+                              -- ----- p09: request-body rewrite ------
+                              -- Only methods with a body — set_bytes on
+                              -- a bodyless method fabricates HTTP/1.1
+                              -- framing that corrupts keep-alive pools.
+                              local method =
+                                  req:headers():get(":method")
+                              if method ~= "POST" and method ~= "PUT"
+                                 and method ~= "PATCH" then
+                                  return
+                              end
+
+                              local buf = req:body()
+                              local raw = ""
+                              if buf and buf:length() > 0 then
+                                  raw = buf:getBytes(0, buf:length())
+                              end
+                              local new, err = body.rewrite_request(
+                                  raw,
+                                  {"bench", "injected"}, true,
+                                  {"secret"}
+                              )
+                              if not new then
+                                  req:logErr("p11 req-body rewrite " ..
+                                             "failed: " .. tostring(err))
+                                  return
+                              end
+                              if buf then
+                                  buf:setBytes(new)
+                              end
+                              req:headers():replace("content-type",
+                                                    "application/json")
+                          end
+
+                          function envoy_on_response(resp)
+                              -- ----- p10: response-body rewrite -----
+                              local buf = resp:body()
+                              if not buf or buf:length() == 0 then
+                                  return
+                              end
+                              local raw = buf:getBytes(0, buf:length())
+                              local new, err =
+                                  body.rewrite_response_if_json(
+                                      raw,
+                                      {"bench", "injected"}, true,
+                                      {"origin"}
+                                  )
+                              if not new then
+                                  resp:logErr("p11 resp-body rewrite " ..
+                                              "failed: " .. tostring(err))
+                                  return
+                              end
+                              if new ~= raw then
+                                  buf:setBytes(new)
+                              end
+                          end
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: backend_cluster
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      connect_timeout: 10s
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http_protocol_options: {}
+          common_http_protocol_options:
+            idle_timeout: 60s
+            max_requests_per_connection: 100000
+      upstream_connection_options:
+        tcp_keepalive:
+          keepalive_time: 60
+          keepalive_interval: 10
+          keepalive_probes: 3
+      load_assignment:
+        cluster_name: backend_cluster
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: backend
+                      port_value: 8080

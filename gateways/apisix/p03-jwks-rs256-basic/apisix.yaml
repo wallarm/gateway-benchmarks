@@ -1,0 +1,144 @@
+# gateways/apisix/p03-jwks-rs256-basic/apisix.yaml
+#
+# Policy profile p03-jwks-rs256-basic (12-profile matrix): RS256 JWT validation
+# matrix; lives parallel to p02-jwt). Canonical description:
+# docs/POLICIES.md § p03-jwks-rs256-basic.
+# Canonical fixture: fixtures/p03-jwks-rs256-basic.jsonl.
+#
+# APISIX realises "RS256 + JWKS, validate `kid` before verifying
+# signature" via the NATIVE `openid-connect` plugin, with
+# `use_jwks: true` + a `discovery` URL that points at the tiny
+# `oidc-server` sidecar in the same compose file. Under the hood the
+# plugin uses `lua-resty-openidc.bearer_jwt_verify`, which does a
+# proper JWKS → `kid` lookup before running the signature check
+# (vs the simpler `jwt-auth` plugin that takes a single PEM and
+# ignores `kid` entirely — see NOTES.md § Plugin choice for why that
+# path was rejected).
+#
+# ┌─────────────┐  Authorization: Bearer <jwt>        ┌──────────────────────────┐
+# │ downstream  │ ────────────────────────────────────▶ │ apisix :9080             │
+# │ (host)      │                                       │  plugin: openid-connect  │ ◀─── discovery
+# │             │ ◀─────── 401 / 200 ───────────────────│   (bearer_only=true)     │      │
+# └─────────────┘                                       └──────────────────────────┘      │
+#                                                                 │                        │
+#                                                                 │   fetch on first use   │
+#                                                                 │   cache TTL = 86 400 s │
+#                                                                 ▼                        ▼
+#                                                          ┌─────────────────────────────────────┐
+#                                                          │  oidc-server (nginx:alpine)         │
+#                                                          │   /.well-known/openid-configuration │
+#                                                          │   /.well-known/jwks.json            │
+#                                                          └─────────────────────────────────────┘
+#                                                                 ▲
+#                                                                 │ bind-mount (ro)
+#                                                                 │
+#                                                  gateways/_reference/jwks-rs256/jwks.json
+#
+# Native primitive contract:
+#
+#   * plugins.openid-connect.discovery
+#       URL of the OIDC discovery document (NOT a bare JWKS URL —
+#       `openid-connect` parses `jwks_uri` out of the discovery doc
+#       before it can fetch keys). Points at the `oidc-server`
+#       sidecar's `/.well-known/openid-configuration` on `bench-net`.
+#
+#   * plugins.openid-connect.bearer_only
+#       Strictly require an Authorization header on every request;
+#       reject with 401 otherwise. Matches probe 1 of the fixture.
+#
+#   * plugins.openid-connect.use_jwks
+#       When true (and `public_key` is unset), the plugin fetches the
+#       JWKS from `jwks_uri` and resolves the `kid` header of every
+#       incoming JWT against the JWKS. Unknown `kid` -> reject, which
+#       is exactly probe 3's axis.
+#
+#   * plugins.openid-connect.token_signing_alg_values_expected
+#       Pins the accepted signing algorithm to RS256. Forgery attempts
+#       via `alg: none` or alg-confusion to HS256 (the CVE class fixed
+#       in APISIX 3.15+) are rejected at alg-check time, before any
+#       signature verification.
+#
+#   * plugins.openid-connect.client_id / client_secret
+#       REQUIRED by the plugin schema (the plugin is OIDC-shaped; a
+#       full OP interaction uses them). In `bearer_only: true` mode
+#       they are NOT used to validate tokens — the bench sets stub
+#       values. `aud` verification also does NOT happen in this code
+#       path (lua-resty-openidc only verifies `aud` inside the
+#       id_token-validation flow, which bearer_only bypasses; see
+#       `lua-resty-openidc/lib/resty/openidc.lua` `bearer_jwt_verify`
+#       → `jwt_verify` and the notes in
+#       `gateways/apisix/p03-jwks-rs256-basic/NOTES.md`).
+#
+#   * plugins.openid-connect.realm
+#       Value copied into the `WWW-Authenticate` response header on
+#       401s. Set to `gateway-benchmarks` so operators eyeballing a
+#       failed probe can tell at a glance which system emitted the
+#       rejection.
+#
+# Everything else (upstream STRICT_DNS to `backend:8080`, single
+# route matching all methods on `/*`) is byte-for-byte identical to
+# the expected shape of a future `p01-vanilla` so the only axis the
+# parity fixture can measure is the JWT/JWKS primitive itself.
+
+routes:
+  - id: bench-p03-jwks-rs256-basic
+    # Catch-all for every method under the root. The canonical fixture
+    # only probes /anything, but keeping the route wide ensures the
+    # rejection behavior applies uniformly, which is the
+    # "every downstream request must carry a valid JWT" contract
+    # other gateways encode.
+    uri: /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    plugins:
+      openid-connect:
+        # Stub values (schema-required, unused in bearer_only flow).
+        # If a future enhancement ever pivots this profile away from
+        # bearer_only (e.g. a p03 `oidc-code-flow` scenario),
+        # the stub becomes a real value — but for plain JWKS+RS256
+        # bearer validation these are inert. The plugin's schema
+        # `encrypt_fields = {"client_secret"}` means the stub is
+        # also stored encrypted in the standalone YAML's APISIX
+        # process memory, which is fine.
+        client_id: bench-apisix
+        client_secret: bench-noop-stub-not-a-secret
+        # OIDC discovery document on the `oidc-server` sidecar.
+        # APISIX's default DNS resolution resolves `oidc-server` to
+        # the sidecar's `bench-net` IP. No host-side indirection.
+        discovery: http://oidc-server/.well-known/openid-configuration
+        # Strictly require a bearer token on every request — the
+        # default (false) would redirect to the authorization
+        # endpoint, which is an OIDC UA flow we are not running.
+        bearer_only: true
+        # Use JWKS (from discovery.jwks_uri) to verify JWT signature.
+        # Skips the introspection flow. Proper `kid` lookup happens
+        # inside lua-resty-openidc's bearer_jwt_verify.
+        use_jwks: true
+        # Pin the expected signing algorithm. This is the mitigation
+        # for CVE-2026-39999 (RS-to-HS algorithm confusion) that
+        # shipped in APISIX 3.15. Not setting this means the plugin
+        # would accept whatever alg the attacker put in the JWT
+        # header — which in this specific (plaintext, keys-public)
+        # bench would not actually be exploitable, but pinning is the
+        # industry-standard hardening step and we follow it.
+        token_signing_alg_values_expected: RS256
+        # `WWW-Authenticate: Bearer realm="gateway-benchmarks"` —
+        # operators eyeballing the response on a 401 see at a glance
+        # which system rejected them.
+        realm: gateway-benchmarks
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+      # APISIX defaults to `pass_host: pass` (Host header of the
+      # incoming request is forwarded upstream). Leave it as default
+      # so the `go-httpbin` backend sees the same Host the other
+      # columns see — no axis worth touching here.
+
+#END

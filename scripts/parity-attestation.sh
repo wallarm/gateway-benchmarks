@@ -24,7 +24,7 @@
 #     --gateway <name> \
 #     --profile <pXX[-slug]> \
 #     --target  <url>            # gateway endpoint, e.g. http://localhost:9080
-#     [--backend-peek <url>]     # backend introspection URL for p06/p10 checks
+#     [--backend-peek <url>]     # backend introspection URL for p08/p11 checks
 #     [--feature-missing]        # mark the whole cell as FEATURE-MISSING
 #     [--output    <path>]       # JSON result file (default: stdout only)
 #     [--verbose]                # print each probe's result
@@ -36,7 +36,11 @@
 #   - Burst probes: fanned out over `xargs -P` with per-request key-header
 #     rotation, then the 2xx / 429 / 5xx counts are asserted against the
 #     tolerances in docs/POLICIES.md § rate-limit probes.
-#   - Placeholder substitution: ${JWT_VALID}, ${JWT_EXPIRED}, ${JWT_WRONG}.
+#   - Placeholder substitution: ${JWT_VALID}, ${JWT_EXPIRED}, ${JWT_WRONG}
+#     (HS256, minted by scripts/gen-jwt.sh) and the p03
+#     ${JWT_VALID_RS256} / ${JWT_UNKNOWN_KID_RS256} (RS256+JWKS,
+#     minted by scripts/gen-jwt-rs256.sh) used only by
+#     fixtures/p03-jwks-rs256-basic.jsonl.
 
 set -euo pipefail
 shopt -s nullglob
@@ -129,10 +133,23 @@ fi
 
 # -----------------------------------------------------------------------------
 # JWT placeholders — generated lazily on first use.
+#
+# HS256 placeholders (${JWT_VALID}, ${JWT_EXPIRED}, ${JWT_WRONG}) drive
+# the canonical p02-jwt fixture and any probe that relies on a shared-
+# secret HMAC token. They are minted by scripts/gen-jwt.sh.
+#
+# RS256 placeholders (${JWT_VALID_RS256}, ${JWT_UNKNOWN_KID_RS256}) drive
+# the `p03-jwks-rs256-basic` fixture and are minted by
+# scripts/gen-jwt-rs256.sh against `gateways/_reference/jwks-rs256/`.
+# They live in a separate lazy cache so that a sweep which touches only
+# p02 never has to load the RSA key, and a sweep which touches only
+# p03-jwks-rs256-basic never has to load the HS256 secret.
 # -----------------------------------------------------------------------------
 JWT_VALID=""
 JWT_EXPIRED=""
 JWT_WRONG=""
+JWT_VALID_RS256=""
+JWT_UNKNOWN_KID_RS256=""
 
 lazy_jwt() {
     case "$1" in
@@ -145,6 +162,14 @@ lazy_jwt() {
         wrong)
             [[ -n "${JWT_WRONG}"   ]] || JWT_WRONG="$("${SCRIPT_DIR}/gen-jwt.sh" wrong-secret)"
             printf '%s' "${JWT_WRONG}";;
+        valid-rs256)
+            [[ -n "${JWT_VALID_RS256}" ]] \
+                || JWT_VALID_RS256="$("${SCRIPT_DIR}/gen-jwt-rs256.sh" valid)"
+            printf '%s' "${JWT_VALID_RS256}";;
+        unknown-kid-rs256)
+            [[ -n "${JWT_UNKNOWN_KID_RS256}" ]] \
+                || JWT_UNKNOWN_KID_RS256="$("${SCRIPT_DIR}/gen-jwt-rs256.sh" unknown-kid)"
+            printf '%s' "${JWT_UNKNOWN_KID_RS256}";;
     esac
 }
 
@@ -160,6 +185,12 @@ substitute_placeholders() {
     [[ "${s}" != *'${JWT_EXPIRED}'* ]] || s="${s//\$\{JWT_EXPIRED\}/$(lazy_jwt expired)}"
     # shellcheck disable=SC2016
     [[ "${s}" != *'${JWT_WRONG}'*   ]] || s="${s//\$\{JWT_WRONG\}/$(lazy_jwt wrong)}"
+    # shellcheck disable=SC2016
+    [[ "${s}" != *'${JWT_VALID_RS256}'*       ]] \
+        || s="${s//\$\{JWT_VALID_RS256\}/$(lazy_jwt valid-rs256)}"
+    # shellcheck disable=SC2016
+    [[ "${s}" != *'${JWT_UNKNOWN_KID_RS256}'* ]] \
+        || s="${s//\$\{JWT_UNKNOWN_KID_RS256\}/$(lazy_jwt unknown-kid-rs256)}"
     printf '%s' "${s}"
 }
 
@@ -400,10 +431,11 @@ run_burst_probe() {
 
     # Assertions
     fails=()
-    local e_429_min e_429_tol e_2xx_min
+    local e_429_min e_429_tol e_2xx_min e_429_max
     e_429_min=$(jq -r '.expect.status_429_min // empty'      <<< "${probe_json}")
     e_429_tol=$(jq -r '.expect.status_429_tolerance // 0'    <<< "${probe_json}")
     e_2xx_min=$(jq -r '.expect.status_2xx_min // empty'      <<< "${probe_json}")
+    e_429_max=$(jq -r '.expect.status_429_max // empty'      <<< "${probe_json}")
 
     if [[ -n "${e_429_min}" ]]; then
         local threshold=$(( e_429_min - e_429_tol ))
@@ -416,6 +448,17 @@ run_burst_probe() {
     if [[ -n "${e_2xx_min}" ]]; then
         if (( n_2xx < e_2xx_min )); then
             fails+=("burst: expected >= ${e_2xx_min} × 2xx, got ${n_2xx}")
+        fi
+    fi
+
+    # Upper bound on 429s. Used by scoping-check bursts (e.g. p05's
+    # free-endpoint burst) that fire at a rate that would trivially
+    # trip the rate-limit bucket if the policy were NOT correctly
+    # scoped. A single 429 here means the gateway leaked the policy
+    # onto a route that should have stayed unrestricted.
+    if [[ -n "${e_429_max}" ]]; then
+        if (( n_429 > e_429_max )); then
+            fails+=("burst: expected <= ${e_429_max} × 429 (scoping check), got ${n_429}")
         fi
     fi
 

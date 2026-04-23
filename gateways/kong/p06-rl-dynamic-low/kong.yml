@@ -1,0 +1,39 @@
+# gateways/kong/p06-rl-dynamic-low/kong.yml
+#
+# Profile: p06-rl-dynamic-low — 10 req/s per client IP, pool of 100.
+# Canonical spec: docs/POLICIES.md § p05/p06.
+# Canonical fixture: fixtures/p06-rl-dynamic-low.jsonl
+#
+# Implementation: `rate-limiting` plugin with `limit_by: header` +
+# `header_name: X-Real-IP`. Each distinct X-Real-IP value gets its
+# own bucket. Kong's native `ip` mode would also work — it uses
+# Kong's trusted-IP + real-IP machinery to pick a client IP — but
+# `header` is explicit: it keys exactly on the fixture's
+# `key_header`, which keeps this profile's semantics legible
+# without depending on KONG_TRUSTED_IPS / KONG_REAL_IP_HEADER being
+# set correctly (they are — see docker-compose.yaml — but explicit
+# is safer).
+#
+# Constants: `second: 10`, rolling 1 s window, `policy: local`.
+# See p03 for the local-policy rationale.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: rate-limiting
+        config:
+          second: 10
+          limit_by: header
+          header_name: X-Real-IP
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false

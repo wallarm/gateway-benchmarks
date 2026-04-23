@@ -1,0 +1,71 @@
+{
+  "_comment": "gateways/tyk/p02-jwt/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for the canonical p02-jwt profile (HS256 with the shared bench secret).",
+  "_comment_3": "jwt_signing_method: 'hmac' selects mw_jwt.go's HMAC validation path. jwt_source carries the shared HMAC secret base64-encoded — Tyk's getSecretFromURL/getSecretToVerifySignature pipeline base64-decodes the field and treats the result as the literal HMAC secret (when it does NOT match the ^(http|https): URL regexp).",
+  "_comment_4": "The decoded value 'bench-jwt-hs256-secret-2026' is the same secret listed in gateways/_reference/values.yaml#jwt.secret and gateways/_reference/jwt/secret.txt — every other gateway loads the exact same bytes.",
+  "_comment_5": "jwt_identity_base_field: 'iss' makes Tyk hash on the iss claim (gateway-benchmarks for our generator) so every probe shares one ephemeral session — fine for parity since bench-default-policy applies no rate limit / quota.",
+  "_comment_6": "jwt_default_policies: ['bench-default-policy'] is mandatory: without it Tyk rejects every correctly-signed token with 'no session found for token user identity'. The default policy is the permissive ACL-only shape from _policies/policies.json#bench-default-policy. We register the bench API in its access_rights below via setup.sh patching.",
+  "_comment_7": "*_validation_skew: 1 (second) keeps the canonical 1 s clock skew envelope used by every other gateway (same as nginx p02-jwt). The expired-token probe uses an exp 60 s in the past, so this skew never matters operationally — it just documents intent.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": false,
+  "active": true,
+
+  "enable_jwt": true,
+  "jwt_signing_method": "hmac",
+  "jwt_source": "YmVuY2gtand0LWhzMjU2LXNlY3JldC0yMDI2",
+  "jwt_identity_base_field": "iss",
+  "jwt_skip_kid": true,
+  "jwt_default_policies": ["bench-default-policy"],
+  "jwt_issued_at_validation_skew": 1,
+  "jwt_expires_at_validation_skew": 1,
+  "jwt_not_before_validation_skew": 1,
+  "jwt_client_base_field": "",
+  "jwt_policy_field_name": "",
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

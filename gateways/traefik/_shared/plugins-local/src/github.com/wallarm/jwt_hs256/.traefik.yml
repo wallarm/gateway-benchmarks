@@ -1,0 +1,22 @@
+displayName: JWT HS256 (bench)
+type: middleware
+
+import: github.com/wallarm/jwt_hs256
+
+summary: |
+  Validate an HS256 JWT carried in `Authorization: Bearer <jwt>`
+  against a shared secret. Refuses any non-HS256 alg (no `none`,
+  no RS256, no ES256), checks the `exp` and `nbf` claims with
+  optional clock-skew leeway, and rejects with 401 + empty body
+  + `WWW-Authenticate: Bearer`. Used by the gateway-benchmarks
+  repo (gateways/traefik/p02-jwt and p12-full-pipeline) to cover
+  the canonical POLICIES.md § p02 contract without depending on
+  community plugins that bundle audience/issuer/RS256 knobs the
+  fixture does not exercise.
+
+testData:
+  secret: bench-jwt-hs256-secret-2026
+  headerName: Authorization
+  scheme: Bearer
+  leewaySeconds: 0
+  rejectStatusCode: 401

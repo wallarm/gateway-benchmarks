@@ -1,0 +1,130 @@
+# gateways/kong/p12-full-pipeline/kong.yml
+#
+# Profile: p12-full-pipeline — composition of p02 + p03 + p07 + p09 +
+# p08 + p10 in canonical pipeline order.
+# Canonical spec: docs/POLICIES.md § p11
+# Canonical fixture: fixtures/p12-full-pipeline.jsonl
+#
+# Plugin-budget mapping (Kong's stock OSS plugin set):
+#
+#   p02-jwt           jwt                       (Consumer iss=gateway-benchmarks)
+#   p04-rl-static     rate-limiting             (1000/s, limit_by=service)
+#   p08-req-headers   request-transformer       (add X-Bench-In:1)
+#                   + pre-function.access       (clear $bench_xff -> drop XFF)
+#   p10-req-body      pre-function.access       (body_rewrite.rewrite_request)
+#   p09-resp-headers  response-transformer      (add X-Bench-Out:1, remove Server)
+#   p11-resp-body     post-function.body_filter (body_rewrite.rewrite_response_if_json)
+#                   + post-function.header_filter (clear Content-Length)
+#
+# Plugin-priority order (Kong evaluates higher first):
+#
+#   pre-function   (+1000000)  → drop XFF + request-body rewrite
+#   jwt            (1450)      → reject 401 if signature/exp invalid
+#   rate-limiting  (901)       → bucket the request
+#   request-transformer (800)  → add X-Bench-In
+#   response-transformer (800) → add X-Bench-Out, remove Server (header_filter)
+#   post-function  (-1000)     → clear Content-Length + rewrite response body
+#
+# pre-function running BEFORE jwt is intentional and harmless: a
+# rejected request still gets its body rewritten in the gateway, but
+# the upstream never sees that body (kong short-circuits with 401 in
+# the access phase before the balancer / proxy_pass step). The
+# request-side body rewrite is gated on POST/PUT/PATCH so a GET
+# burst (probe 4) doesn't pay any per-request body buffering tax.
+# post-function's body_filter runs on the 401 response body too,
+# but the fixture doesn't assert on 401 body shape, so the extra
+# `bench.injected` injection is invisible.
+#
+# Single-route topology, mirroring the apisix and nginx columns:
+# every plugin lives on `bench-route`, no fan-out, no service-vs-route
+# split. That keeps the chain reviewable in one place.
+
+_format_version: "3.0"
+
+consumers:
+  - username: bench
+    jwt_secrets:
+      - key: gateway-benchmarks
+        algorithm: HS256
+        secret: bench-jwt-hs256-secret-2026
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: jwt
+        config:
+          key_claim_name: iss
+          claims_to_verify:
+            - exp
+          run_on_preflight: false
+      - name: rate-limiting
+        config:
+          second: 1000
+          limit_by: service
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Bench-In:1"
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Bench-Out:1"
+          remove:
+            headers:
+              - "Server"
+      - name: pre-function
+        config:
+          access:
+            - |
+              ngx.var.bench_xff = ""
+              local method = ngx.req.get_method()
+              if method == "POST" or method == "PUT" or method == "PATCH" then
+                local body_rewrite = require("body_rewrite")
+                ngx.req.read_body()
+                local raw = ngx.req.get_body_data() or ""
+                local new_body = body_rewrite.rewrite_request(
+                  raw, { "bench", "injected" }, true, { "secret" }
+                )
+                ngx.req.set_body_data(new_body)
+                ngx.req.set_header("Content-Type", "application/json")
+              end
+      - name: post-function
+        config:
+          header_filter:
+            - |
+              ngx.header["Content-Length"] = nil
+          body_filter:
+            - |
+              local body_rewrite = require("body_rewrite")
+              local chunk = ngx.arg[1]
+              local eof   = ngx.arg[2]
+              local buf = ngx.ctx.bench_buf
+              if not buf then
+                buf = {}
+                ngx.ctx.bench_buf = buf
+              end
+              if chunk and chunk ~= "" then
+                buf[#buf + 1] = chunk
+              end
+              if eof then
+                local raw = table.concat(buf)
+                local new = body_rewrite.rewrite_response_if_json(
+                  raw, { "bench", "injected" }, true, { "origin" }
+                )
+                ngx.arg[1] = new
+                ngx.arg[2] = true
+              else
+                ngx.arg[1] = nil
+              end

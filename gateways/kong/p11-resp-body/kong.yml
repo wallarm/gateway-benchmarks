@@ -1,0 +1,81 @@
+# gateways/kong/p11-resp-body/kong.yml
+#
+# Profile: p11-resp-body — rewrite the response body
+#   * add    $.bench.injected = true
+#   * remove $.origin
+# Canonical spec: docs/POLICIES.md § p10
+# Canonical fixture: fixtures/p11-resp-body.jsonl
+#
+# Implementation: `post-function` plugin's `body_filter` chunk.
+# Same pattern the nginx and APISIX columns use, ported to Kong's
+# sandboxed Lua hook surface:
+#
+#   1. Accumulate upstream chunks into `ngx.ctx.bench_buf`.
+#   2. At EOF (`ngx.arg[2] == true`), join chunks, run them through
+#      `body_rewrite.rewrite_response_if_json`, and emit the new
+#      body via `ngx.arg[1]`. Non-JSON payloads short-circuit out
+#      verbatim (see `_shared/lualib/body_rewrite.lua`).
+#   3. Intermediate chunks are suppressed with `ngx.arg[1] = nil`
+#      so the client gets exactly one coherent JSON payload.
+#
+# We use `post-function` (not `pre-function`) because Kong's
+# pre-function plugin runs in `access` only by default; the
+# body_filter chunk is post-function's wheelhouse. Same `body_rewrite`
+# module as p09 (whitelisted in `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES`).
+#
+# Why we don't lean on `response-transformer-advanced`'s JSON
+# inject/drop: like in p09 it's a Kong-Enterprise plugin, not in the
+# OSS image. Stock `response-transformer` does flat header/body
+# string replacement, not JSON-shape-aware editing.
+#
+# Content-Length needs to be cleared explicitly in `header_filter`.
+# Vanilla nginx auto-detects chunk-vs-fixed length changes inside
+# body_filter and rewrites Content-Length / switches to chunked
+# transparently — Kong's pdk-mediated header_filter does NOT, so a
+# stale Content-Length survives unless we drop it ourselves. The
+# header_filter chunk below clears it; nginx then falls back to
+# `Transfer-Encoding: chunked` automatically (which the fixture is
+# length-tolerant about: it asserts JSON contents, not bytes).
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: post-function
+        config:
+          header_filter:
+            - |
+              ngx.header["Content-Length"] = nil
+          body_filter:
+            - |
+              local body_rewrite = require("body_rewrite")
+              local chunk = ngx.arg[1]
+              local eof   = ngx.arg[2]
+              local buf = ngx.ctx.bench_buf
+              if not buf then
+                buf = {}
+                ngx.ctx.bench_buf = buf
+              end
+              if chunk and chunk ~= "" then
+                buf[#buf + 1] = chunk
+              end
+              if eof then
+                local raw = table.concat(buf)
+                local new = body_rewrite.rewrite_response_if_json(
+                  raw,
+                  { "bench", "injected" }, true,
+                  { "origin" }
+                )
+                ngx.arg[1] = new
+                ngx.arg[2] = true
+              else
+                ngx.arg[1] = nil
+              end

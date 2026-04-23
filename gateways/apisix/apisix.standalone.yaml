@@ -1,0 +1,165 @@
+# gateways/apisix/apisix.standalone.yaml
+#
+# APISIX bootstrap config (mounted at /usr/local/apisix/conf/config.yaml
+# inside the gateway container). Shared across every profile — the
+# per-profile policy config lives at
+# `gateways/apisix/${GATEWAY_PROFILE}/apisix.yaml`.
+#
+# Standalone mode in APISIX 3.x is wired through the `deployment` block
+# (not the legacy `apisix.config_center: yaml` toggle that older docs
+# still reference). Details:
+#
+#   * deployment.role              = data_plane
+#       Pure-data-plane node. No control-plane responsibilities, no
+#       Admin API. Exactly the shape `scripts/parity-gateway.sh` expects
+#       (data port only, no admin wait loop).
+#
+#   * deployment.role_data_plane.config_provider = yaml
+#       Configuration is read from a local YAML file
+#       (`conf/apisix.yaml`) instead of etcd. The file is reloaded on
+#       change, but the parity harness only ever reads it once per
+#       run (container restart between profiles), so hot-reload
+#       semantics are not on the critical path here.
+#
+# Everything else below is a slimmed-down, reproducible version of the
+# upstream stock config:
+#
+#   * Single data port :9080 (HTTP/1.1). No HTTPS listener — the core
+#     matrix has a separate `*-tls` axis that is handled per-profile,
+#     and the `p03-jwks-rs256-basic` profile is plaintext-only per
+#     docs/POLICIES.md § p03-jwks-rs256-basic.
+#
+#   * Plugin allow-list — APISIX ships ~80 plugins out of the box and
+#     loads every enabled plugin at startup. The list below is the
+#     minimum set needed by the profiles that have landed so far
+#     (p03-jwks-rs256-basic) plus a small buffer for future matrix
+#     profiles (jwt-auth for p02, limit-count / limit-req for p04…p07,
+#     proxy-rewrite for p08/p10, response-rewrite for p09/p11). An
+#     explicit list keeps `config_dump` auditable and shaves ~20 ms
+#     off cold-start compared to the full default.
+#
+#   * nginx_config — deliberately left at the image defaults. APISIX
+#     reshapes this block in minor versions; overriding would risk a
+#     silent version mismatch between our conf and the upstream
+#     template. When a specific profile needs a non-default nginx
+#     setting (e.g. shared-dict sizing for a dynamic rate limit),
+#     the profile's own apisix.yaml overrides it via `nginx_config.*`
+#     in `plugin_metadata` — which is the upstream-recommended shape.
+#
+# Upstream reference:
+#   https://apisix.apache.org/docs/apisix/deployment-modes/
+#   https://github.com/apache/apisix-docker/blob/master/example/apisix_conf/config-standalone.yaml
+
+apisix:
+  # Enable the default global plugin chain. No changes from upstream —
+  # this just keeps the list explicit for reviewers.
+  node_listen:
+    - 9080
+  # Enable only the plugins we actually use. APISIX refuses to load
+  # a route that references a plugin NOT in this list, so adding a
+  # new profile that touches a new plugin also requires editing this
+  # file. That is intentional: it forces a reviewer to notice when
+  # the bench's attack surface grows.
+  enable_admin: false
+  # Disable the ssl-redirect + https listener entirely. Bench is HTTP-
+  # only for p03-jwks-rs256-basic; future p01-vanilla-tls /
+  # p12-full-pipeline-tls profiles will re-enable it locally.
+  ssl:
+    enable: false
+  # Additional Lua package search path, prepended to OpenResty's
+  # default. APISIX's entrypoint translates this into
+  # `lua_package_path "<extra_lua_path>;<original>";` in the rendered
+  # nginx.conf (see apisix/cli/ngx_tpl.lua). This lets our
+  # `serverless-pre-function` / `serverless-post-function` snippets
+  # do `require("jwt_hs256")` / `require("body_rewrite")` instead
+  # of inlining 150+ lines of Lua inside every YAML that needs them.
+  # Both modules live under `gateways/apisix/_shared/lualib/`, which
+  # the compose file mounts read-only at `/usr/local/apisix/conf/bench/`.
+  # Same model as `gateways/nginx/_shared/lualib/` — one source of
+  # truth across profiles, parity-auditable, no third-party plugins.
+  extra_lua_path: "/usr/local/apisix/conf/bench/?.lua"
+  # Drop APISIX's default `Server: APISIX/3.15.0` stamp. Per-profile
+  # plugins (response-rewrite in p08/p11) still need to remove the
+  # downstream `Server` header outright; this flag only strips the
+  # version suffix. p01 does not exercise the Server axis so keeping
+  # `server_tokens: false` shared across every profile means the
+  # baseline header shape is deterministic — reviewers get the same
+  # "Server: openresty" on every profile unless a plugin removes it,
+  # and p01's parity probes don't assert on Server at all.
+  # NOTE: we keep `Server: openresty` (not the APISIX-specific value)
+  # because that is what the stock OpenResty layer emits; openresty
+  # is the underlying listener in every APISIX build.
+  server_tokens: false
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+# Plugin allow-list. Rationale for each entry:
+#   openid-connect   → `p03-jwks-rs256-basic` (RS256 + JWKS
+#                       via discovery URL). Uses `lua-resty-openidc`
+#                       under the hood; does proper `kid` lookup.
+#   jwt-auth         → core `p02-jwt` (HS256). Kept here so the future
+#                       p02 landing does not need to edit this file.
+#   limit-count      → core `p04-rl-static`, `p05-rl-endpoint`
+#                       (service-wide / per-endpoint rate limits).
+#   limit-req        → core `p06-rl-dynamic-low`, `p07-rl-dynamic-high`
+#                       (per-key leaky bucket).
+#   proxy-rewrite    → core `p08-req-headers`, `p10-req-body`.
+#   response-rewrite → core `p09-resp-headers`, `p11-resp-body`.
+#   serverless-pre-function /
+#   serverless-post-function → last-resort Lua escape hatches for
+#                       odd-ball cases; none of the profiles below
+#                       use them today but they are worth having in
+#                       the allow-list to avoid a future cold-start
+#                       if a body-rewrite transform needs custom Lua.
+plugins:
+  - openid-connect
+  - jwt-auth
+  - limit-count
+  - limit-req
+  - proxy-rewrite
+  - response-rewrite
+  - serverless-pre-function
+  - serverless-post-function
+  # prometheus MUST be in this list even though no profile registers
+  # it on a route. Rationale: APISIX's nginx.conf template declares
+  # `lua_shared_dict prometheus-cache` ONLY when `prometheus` is in
+  # `enabled_plugins` (see cli/ngx_tpl.lua: `{% if
+  # enabled_plugins["prometheus"] or enabled_stream_plugins["prometheus"]
+  # then %}`). Several default plugins that load at worker init
+  # (notably the `syslog` stream plugin pulled in through the default
+  # `stream_plugins` list) have a transitive `require` on
+  # `apisix.plugins.prometheus.exporter`, which raises
+  # `lua_shared_dict "prometheus-cache" not configured` at module
+  # init time if the dict is absent. Listing `prometheus` here
+  # satisfies the dependency without enabling any prometheus
+  # behaviour on a route. If a future APISIX release decouples the
+  # module import from the enabled-plugin check this can be dropped.
+  - prometheus
+
+# Disable every stream-level plugin. APISIX's default stream_plugins
+# list ships with `syslog`, `ip-restriction`, `limit-conn`,
+# `mqtt-proxy`, and `traffic-split` — none of which this bench uses.
+# An empty list is ignored by the standalone-mode bootstrap loader
+# (see the `load_stream(): new plugins: {…}` log line at boot), so
+# we keep the default for now; the `prometheus` entry above is what
+# actually silences the `syslog` chain's error. A future iteration
+# may revisit this once APISIX consolidates its standalone-mode
+# config paths.
+# stream_plugins: []
+
+# NOTE: nginx_config is intentionally left at APISIX's shipped defaults
+# (from /usr/local/apisix/apisix/cli/config.lua). An earlier iteration
+# set `nginx_config: { error_log_level: warn }` here to quiet startup
+# logs, but that override displaced the default
+# `nginx_config.meta.lua_shared_dict` block, which in turn made the
+# `prometheus-cache` shared dict disappear from the rendered nginx
+# conf and broke module-level `require` chains inside several default
+# plugins (notably `plugins/prometheus/exporter.lua`). APISIX's config
+# merge is shallow on the top-level keys of `nginx_config`, so the
+# safe posture is "touch nothing unless a profile *actually* needs a
+# setting". If a future profile needs custom nginx settings, set them
+# in a focused sub-key (e.g. `nginx_config.http.lua_shared_dict`)
+# instead of overwriting the parent.

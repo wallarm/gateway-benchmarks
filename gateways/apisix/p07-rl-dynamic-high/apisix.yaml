@@ -1,0 +1,54 @@
+# gateways/apisix/p07-rl-dynamic-high/apisix.yaml
+#
+# Profile: p07-rl-dynamic-high (per-client-IP rate limit, high cardinality).
+# Canonical spec: docs/POLICIES.md § p06
+# Canonical fixture: fixtures/p07-rl-dynamic-high.jsonl
+#
+# Limit:      100 req/s per client IP, rolling 1 s window.
+# Key source: X-Real-IP header.
+# IP pool:    50 000 distinct IPs per POLICIES.md.
+# Over-limit: HTTP 429.
+#
+# Identical shape to p05, the only axis is:
+#   * `count: 100` (was 10)
+#   * documented 50 000-IP pool ceiling
+#
+# APISIX's default `limit-count` shared-dict is 10 MiB and is shared
+# across every route that uses the plugin. With ~128 bytes per slot
+# that fits ~75 000 keys, comfortably above the 50 000-IP POLICIES
+# ceiling. No need to bump the zone size.
+#
+# Fixture cells for p06:
+#   1. Single request, single IP, below 100 rps -> 200
+#   2. 10 IPs x 200 rps aggregate (20 rps/IP, 5x below limit) -> all 2xx
+#   3. 1 IP x 500 rps (5x above 100) -> >= 300 x 429
+
+routes:
+  - id: bench-p07-rl-dynamic-high
+    uris:
+      - /
+      - /*
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - PATCH
+      - HEAD
+      - OPTIONS
+    plugins:
+      limit-count:
+        count: 100
+        time_window: 1
+        key_type: var
+        key: http_x_real_ip
+        rejected_code: 429
+        rejected_msg: '{"error":"rate_limit_exceeded","limit":"100r/s","scope":"per-ip"}'
+        policy: local
+        show_limit_quota_header: false
+    upstream:
+      type: roundrobin
+      nodes:
+        "backend:8080": 1
+
+#END

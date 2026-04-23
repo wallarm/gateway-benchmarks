@@ -1,0 +1,63 @@
+{
+  "_comment": "gateways/tyk/p04-rl-static/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p04-rl-static. The canonical contract is 1000 rps, service-wide (key=service), 429 with Retry-After: 1 above limit, 1 s rolling window.",
+  "_comment_3": "global_rate_limit applies to every path served by this listen_path with a single shared bucket — exactly matching the canonical 'service-wide' axis.",
+  "_comment_4": "rate=1000, per=1 means 1000 hits per 1-second window. Tyk's Distributed Rate Limiter (DRL) is a sliding window backed by Redis; with 1200 requests fired in ~1 s we expect ~200 rejections (1200-1000), which lands inside the canonical >=150 +/- 50 envelope.",
+  "_comment_5": "use_keyless: true — no auth on this profile (matches p01 baseline). Auth is intentionally orthogonal to rate limiting; p03 measures only the rate-limit primitive.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "global_rate_limit": {
+    "rate": 1000,
+    "per": 1,
+    "ignore_case": false
+  },
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

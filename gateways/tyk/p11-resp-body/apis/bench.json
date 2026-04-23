@@ -1,0 +1,79 @@
+{
+  "_comment": "gateways/tyk/p11-resp-body/apis/bench.json",
+  "_comment_2": "Tyk Classic API definition for p11-resp-body. Canonical contract: gateway injects $.bench.injected=true and drops $.origin from the JSON response body before flushing it to the client.",
+  "_comment_3": "Tyk OSS Classic ships exactly one native primitive that can do JSON-aware response-body mutation: `extended_paths.transform_response` with a Go template (text/template + Sprig v3). The shared template lives at ../_shared/templates/p11_response_rewrite.tmpl and is mounted into the container at /opt/tyk-gateway/middleware/bench-templates/p11_response_rewrite.tmpl by docker-compose.yaml. Sprig's set/unset/dict/mustToJson are exactly the four helpers needed for this contract — see the template file for the rationale.",
+  "_comment_4": "JSVM `response` middleware in Tyk Classic OSS is gated on the gRPC/Python coprocess driver (see mw_coprocess_response_plugin.go in upstream); the otto-only `enable_jsvm: true` knob does not register a `response` array entry. `transform_jq_response` requires a custom Tyk build with the `jq` build tag — not present in tykio/tyk-gateway:v5.11.1. transform_response is the only canonical OSS-Classic path.",
+  "_comment_5": "The fixture probes hit GET /anything (probes 1+2) and POST /anything (probe 3); we register one transform_response entry per method against the wildcard path `{rest:.*}` (gorilla/mux pattern). One entry per method is the minimum viable shape — adding HEAD/PUT/etc would cost nothing but the fixture never exercises them.",
+  "name": "bench",
+  "api_id": "bench",
+  "org_id": "gateway-benchmarks",
+  "slug": "bench",
+  "use_keyless": true,
+  "active": true,
+
+  "auth": {
+    "auth_header_name": "Authorization"
+  },
+
+  "version_data": {
+    "not_versioned": true,
+    "default_version": "Default",
+    "versions": {
+      "Default": {
+        "name": "Default",
+        "expires": "",
+        "use_extended_paths": true,
+        "extended_paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": [],
+          "transform_response": [
+            {
+              "path": "{rest:.*}",
+              "method": "GET",
+              "template_data": {
+                "template_mode": "file",
+                "template_source": "/opt/tyk-gateway/middleware/bench-templates/p11_response_rewrite.tmpl",
+                "input_type": "json",
+                "enable_session": false
+              }
+            },
+            {
+              "path": "{rest:.*}",
+              "method": "POST",
+              "template_data": {
+                "template_mode": "file",
+                "template_source": "/opt/tyk-gateway/middleware/bench-templates/p11_response_rewrite.tmpl",
+                "input_type": "json",
+                "enable_session": false
+              }
+            }
+          ]
+        },
+        "global_headers": {},
+        "global_headers_remove": [],
+        "paths": {
+          "ignored": [],
+          "white_list": [],
+          "black_list": []
+        }
+      }
+    }
+  },
+
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://backend:8080/",
+    "strip_listen_path": false,
+    "preserve_host_header": false,
+    "enable_load_balancing": false
+  },
+
+  "session_lifetime": 100,
+  "do_not_track": true,
+  "tags_disabled": true,
+
+  "CORS": {
+    "enable": false
+  }
+}

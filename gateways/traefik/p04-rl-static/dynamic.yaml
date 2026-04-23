@@ -1,0 +1,59 @@
+# gateways/traefik/p04-rl-static/dynamic.yaml
+#
+# Service-wide rate limit at 1000 rps with a 200-request burst cap —
+# matches `gateways/nginx/p04-rl-static` (`limit_req_zone ... rate=1000r/s`
+# + `burst=200 nodelay`) and `gateways/envoy/p04-rl-static`
+# (`local_ratelimit` with `max_tokens: 200, tokens_per_fill: 50,
+# fill_interval: 0.05s` = 1000 rps steady with 200 burst).
+#
+# Traefik's `rateLimit` middleware is a token-bucket implementation:
+#   * average × period = steady refill rate
+#   * burst            = bucket capacity
+# We configure average=1000, period=1s, burst=200 so the bench-wide
+# "1000 rps / 200 burst" shape is verbatim. A naive `average: 1000`
+# without `burst` would cap at 1 req/token-cycle and reject anything
+# past the first request of every steady window.
+#
+# Why no `sourceCriterion`?
+# ------------------------
+# The p03 contract is SERVICE-WIDE: every request drains the same
+# bucket regardless of origin. Traefik defaults to grouping by
+# remote address when `sourceCriterion` is not set, which is close
+# but NOT what POLICIES.md §p03 specifies. To hit the literal
+# service-wide semantics we set a constant-value header criterion
+# that every request trivially satisfies, which collapses the
+# bucket-per-source map into a single bucket.
+#
+# The harness injects no such header, so we lean on Traefik's
+# documented fallback: when `sourceCriterion.requestHeaderName` is
+# set and the header is empty/absent, EVERY request lands in the
+# same implicit "no header" bucket. That is the service-wide
+# semantics we want.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p04
+      priority: 1
+
+  middlewares:
+    bench-p04:
+      rateLimit:
+        average: 1000
+        period: 1s
+        burst: 200
+        # Single bucket for the whole service — see comment above.
+        sourceCriterion:
+          requestHeaderName: X-Bench-Service-Wide
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

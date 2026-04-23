@@ -1,0 +1,50 @@
+# gateways/traefik/p09-resp-headers/dynamic.yaml
+#
+# Native traefik `headers` middleware — same primitive as p07 but on
+# the response path. Mirrors `gateways/nginx/p09-resp-headers`
+# (`add_header X-Bench-Out "1"` + `more_clear_headers Server`) and
+# `gateways/envoy/p09-resp-headers` (virtual_host
+# response_headers_to_add + response_headers_to_remove).
+#
+# Semantics:
+#   * customResponseHeaders.X-Bench-Out: "1" — injects the header on
+#     every downstream-bound response. OVERWRITE semantics, same as
+#     the request side.
+#   * customResponseHeaders.Server: "" — empty value is the
+#     documented "drop" sentinel in traefik's headers middleware.
+#     The fixture asks go-httpbin to echo back `Server:
+#     should-be-dropped` via the `/response-headers?Server=...`
+#     endpoint, so we also need traefik to NOT stamp its own
+#     default Server header (which it doesn't in v3 — the OSS build
+#     only emits Server for internal traefik-generated responses
+#     like 404 errors, not for proxied responses).
+#
+# Traefik itself does not advertise its own Server banner on proxied
+# responses in v3 (compare with the ngx_headers_more rationale for
+# nginx), so a single drop entry covers both the backend-originated
+# and fixture-echoed header.
+
+http:
+  routers:
+    backend:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p09
+      priority: 1
+
+  middlewares:
+    bench-p09:
+      headers:
+        customResponseHeaders:
+          X-Bench-Out: "1"
+          Server: ""
+
+  services:
+    backend:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: http://backend:8080

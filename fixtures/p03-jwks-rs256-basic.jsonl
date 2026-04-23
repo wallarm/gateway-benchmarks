@@ -1,0 +1,3 @@
+{"name":"no Authorization header -> 401","request":{"method":"GET","path":"/anything"},"expect":{"status":401}}
+{"name":"valid RS256 token with valid kid -> 200","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_VALID_RS256}"}},"expect":{"status":200}}
+{"name":"RS256 token with unknown kid -> 401","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_UNKNOWN_KID_RS256}"}},"expect":{"status":401}}

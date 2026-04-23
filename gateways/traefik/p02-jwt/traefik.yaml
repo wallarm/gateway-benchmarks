@@ -1,0 +1,68 @@
+# gateways/traefik/p02-jwt/traefik.yaml
+#
+# Profile: p02-jwt.
+# Canonical spec: docs/POLICIES.md § p02 — HS256 JWT validation,
+# `Authorization: Bearer <jwt>`, secret shared via
+# gateways/_reference/jwt/secret.txt.
+# Fixture: fixtures/p02-jwt.jsonl.
+#
+# Static config declares the local Yaegi plugin `jwt_hs256` (lives
+# under gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
+# jwt_hs256/), plus the always-declared `body_rewrite` so the
+# `experimental.localPlugins` map stays uniform across every profile
+# and the only diff between p01..p12 lives in dynamic.yaml. p02 does
+# NOT instantiate body_rewrite — it's loaded by Yaegi at process start
+# but never wired into a middleware chain.
+#
+# Why a custom plugin and not a community JWT plugin?
+# ---------------------------------------------------
+# Every public Traefik JWT plugin we vetted carried trust-surface
+# concerns we couldn't sign off on for the benchmark (stale
+# maintenance, extra knobs not in the canonical fixture, or imports
+# outside Yaegi's stdlib whitelist). The full rationale lives in
+# `gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
+# jwt_hs256/jwt_hs256.go`'s package comment. The plugin is
+# stdlib-only (crypto/hmac + crypto/sha256 + encoding/base64 +
+# encoding/json + time) and ~300 LoC end-to-end with comments — fully
+# auditable in one read.
+#
+# Traefik splits config into a static half (this file — entryPoints,
+# providers, plugins, api, log) and a dynamic half (dynamic.yaml —
+# routers, services, middlewares). The static file is read once at
+# process start; the dynamic file is watched by the file provider
+# and hot-reloaded.
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: ERROR
+  format: common
+
+accessLog: {}
+
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":9080"
+    forwardedHeaders:
+      # p02 does not assert on forwarded headers; leaving `insecure:
+      # false` keeps the entryPoint contract uniform with the other
+      # non-RL profiles.
+      insecure: false
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+experimental:
+  localPlugins:
+    body_rewrite:
+      modulename: github.com/wallarm/body_rewrite
+    jwt_hs256:
+      modulename: github.com/wallarm/jwt_hs256

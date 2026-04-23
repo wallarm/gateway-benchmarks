@@ -1,0 +1,44 @@
+# gateways/kong/p04-rl-static/kong.yml
+#
+# Profile: p04-rl-static — 1000 req/s per service, rolling window = 1 s.
+# Canonical spec: docs/POLICIES.md § p03
+# Canonical fixture: fixtures/p04-rl-static.jsonl
+#
+# Implementation: Kong's native `rate-limiting` plugin.
+#
+#   * `limit_by: service` — all requests share one bucket regardless of
+#     client identity. That's the p03 question: "can the gateway
+#     rate-limit the whole service?".
+#   * `second: 1000` — 1000 req/s rolling 1 s window. Kong's local
+#     policy implements this as two fixed buckets + sliding overlap,
+#     which is close enough to a rolling window that the
+#     1200-in-1-s burst trips it deterministically (≥150 × 429).
+#   * `policy: local` — in-memory counter per worker. DB-less Kong
+#     has no cluster store, so `local` is also the only option that
+#     survives without an external Redis. One-worker config (default
+#     in the 3.x image) keeps the counter single-source-of-truth.
+#   * `fault_tolerant: true` — if the counter backend misbehaves, fail
+#     open. Matches every other gateway's default.
+#   * `hide_client_headers: false` — expose `X-RateLimit-Limit-Second`
+#     + `X-RateLimit-Remaining-Second`. Attestation doesn't assert on
+#     them but keeps them on so a human sanity-check shows the bucket.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: rate-limiting
+        config:
+          second: 1000
+          limit_by: service
+          policy: local
+          fault_tolerant: true
+          hide_client_headers: false

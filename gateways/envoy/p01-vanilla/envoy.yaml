@@ -77,7 +77,7 @@ static_resources:
                 merge_slashes: false
                 # Do not generate a `server: envoy` header variation;
                 # we want the uniform default for p01 and a fine-grained
-                # override in p07. `PASS_THROUGH` would leak upstream
+                # override in p08. `PASS_THROUGH` would leak upstream
                 # headers, `APPEND_IF_ABSENT` matches nginx's default
                 # behaviour.
                 server_header_transformation: OVERWRITE

@@ -1,61 +1,29 @@
 # `wallarm / p02-jwt` — deviation notes
 
-**Pinned public verdict on `wallarm/api-gateway:0.2.0`**: `FEATURE-MISSING`.
+**Expected verdict**: `PASS (6/6)` against a Wallarm API Gateway build
+whose policy registry exposes `jwt_validation`.
 
-**Local override verdict on `wallarm/api-gateway:main-5f1ab30`**:
-`PASS (6/6)`.
+## Requirement
 
-## Why
-
-The pinned public image we have pinned —
-`wallarm/api-gateway:0.2.0@sha256:a3d4d2f780e8f1f22b27e2aa450d4a5cfde6d8c51e153a900f63da464393e825`
-— ships only three built-in policies, as reported by its own Admin API:
+This profile relies on the native `jwt_validation` policy. The
+benchmark's runner passes the Wallarm image via `WALLARM_IMAGE` (see
+[`gateways/wallarm/README.md`](../README.md)), and `setup.sh` verifies
+the primitive's presence at startup:
 
 ```bash
 $ curl -s http://localhost:9081/policies | jq -r '.policies[].policy_id'
+jwt_validation
 lua_runner
 ratelimit
 verify_api_key
+…
 ```
 
-There is **no `jwt_validation` policy** in this image. Attempts to
-bind it via `POST /services/<svc>/routes/<rt>/flow` fail with:
-
-```json
-{
-  "error": {
-    "code": "INVALID_FLOW",
-    "details": [{
-      "field": "policy_id",
-      "message": "Policy 'jwt_validation' not found in registry",
-      "value": "jwt_validation"
-    }]
-  }
-}
-```
-
-`setup.sh` now checks `/policies` at runtime. On this public image it
-returns a deliberate `FEATURE-MISSING` (exit code 42 captured by
-`scripts/parity-gateway.sh`) instead of a generic failure.
-
-## Local main override
-
-When run with:
-
-```bash
-WALLARM_IMAGE=wallarm/api-gateway:main-5f1ab30 \
-    make parity-gateway PARITY_GATEWAY=wallarm PARITY_PROFILE=p02-jwt
-```
-
-the same `setup.sh` sees `jwt_validation` in `/policies`, binds the
-native policy, and the fixture passes `6/6`:
-
-- no Authorization header -> `401`
-- garbage bearer token -> `401`
-- malformed scheme -> `401`
-- valid HS256 token -> `200`
-- expired HS256 token -> `401`
-- wrong-secret HS256 token -> `401`
+If `jwt_validation` is absent, `setup.sh` exits with `FEATURE-MISSING`
+(code 42). This is purely a sanity guard — it is not expected to fire
+against any build the runner would normally use; it catches the case
+where `WALLARM_IMAGE` points at a build predating the policy's
+introduction.
 
 ## Why we don't fall back to `lua_runner`
 
@@ -67,14 +35,15 @@ In principle we could implement HS256 validation inline with
    implementation in pure Lua, without access to a crypto library,
    would measure Lua interpreter overhead rather than the gateway's
    own auth path.
-2. The source tree (`wallarm-api-gateway/tests/integration/jwt_validation_test.sh`)
+2. The source tree
+   (`wallarm-api-gateway/tests/integration/jwt_validation_test.sh`)
    shows a first-class `jwt_validation` policy with `HS256`, `RS256`,
-   `issuer`, `audience`, and JWKS support — so the policy **exists**;
-   it is just not present in this public release.
+   `issuer`, `audience`, and JWKS support — so the policy **exists**,
+   and the benchmark should measure it, not a Lua emulation.
 
 ## Runtime binding
 
-The flow bound by the local override is the canonical one from
+The flow bound by `setup.sh` is the canonical one from
 [`docs/POLICIES.md § p02`](../../../docs/POLICIES.md#p02--jwt):
 
 ```json
@@ -90,6 +59,16 @@ The flow bound by the local override is the canonical one from
 }
 ```
 
-Tracking: [docs/GATEWAYS.md § deviations](../../../docs/GATEWAYS.md#deviations).
-The public `0.2.0` cell stays `FEATURE-MISSING` until a released Wallarm
-tag exposes `jwt_validation`.
+## Smoke probes
+
+`setup.sh` exercises all six fixture-style probes:
+
+- no Authorization header                 → `401`
+- garbage bearer token                    → `401`
+- malformed scheme                        → `401`
+- valid HS256 token                       → `200`
+- expired HS256 token                     → `401`
+- wrong-secret HS256 token                → `401`
+
+Tracking:
+[docs/GATEWAYS.md § deviations](../../../docs/GATEWAYS.md#deviations).

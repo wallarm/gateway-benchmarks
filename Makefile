@@ -4,7 +4,8 @@
 	orchestrator-build orchestrator-test \
 	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
-	parity-check parity-check-all parity-gateway parity-gateway-all
+	parity-check parity-check-all parity-gateway parity-gateway-all \
+	load-gateway load-gateway-load-sweep
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -74,9 +75,13 @@ help: ## Show this help
 	@echo ""
 	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
 	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile against a live target"
-	@echo "  $(GREEN)parity-check-all$(NC)      Sweep parity across all 10 profiles against PARITY_TARGET"
+	@echo "  $(GREEN)parity-check-all$(NC)      Sweep parity across all 12 profiles against PARITY_TARGET"
 	@echo "  $(GREEN)parity-gateway$(NC)        End-to-end: bring up <PARITY_GATEWAY>, run one profile, tear down"
-	@echo "  $(GREEN)parity-gateway-all$(NC)    End-to-end sweep of p01…p10 against <PARITY_GATEWAY>"
+	@echo "  $(GREEN)parity-gateway-all$(NC)    End-to-end sweep of p01…p12 against <PARITY_GATEWAY>"
+	@echo ""
+	@echo "$(YELLOW)Load (Phase 4):$(NC)"
+	@echo "  $(GREEN)load-gateway$(NC)              Single load cell end-to-end (compose up → parity → k6 → tear down)"
+	@echo "  $(GREEN)load-gateway-load-sweep$(NC)   Sweep all 4 load profiles for one (LOAD_GATEWAY × LOAD_POLICY × LOAD_SCENARIO)"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
@@ -227,14 +232,16 @@ parity-check: ## Run parity against a running target (see PARITY_* variables)
 		--output  $(PARITY_OUT)/$(PARITY_GATEWAY)-$(PARITY_PROFILE).json \
 		--verbose
 
-parity-check-all: ## Run parity across every profile p01..p10 against PARITY_TARGET
-	@echo "$(YELLOW)parity: sweeping p01..p10 against $(PARITY_TARGET)$(NC)"
+parity-check-all: ## Run parity across every profile p01..p12 against PARITY_TARGET
+	@echo "$(YELLOW)parity: sweeping p01..p12 against $(PARITY_TARGET)$(NC)"
 	@mkdir -p $(PARITY_OUT)
 	@set -e; \
 	 passed=0; failed=0; \
-	 for p in p01-vanilla p02-jwt p03-rl-static p04-rl-dynamic-low \
-	          p05-rl-dynamic-high p06-req-headers p07-resp-headers \
-	          p08-req-body p09-resp-body p10-full-pipeline; do \
+	 for p in p01-vanilla p02-jwt p03-jwks-rs256-basic \
+	          p04-rl-static p05-rl-endpoint \
+	          p06-rl-dynamic-low p07-rl-dynamic-high \
+	          p08-req-headers p09-resp-headers \
+	          p10-req-body p11-resp-body p12-full-pipeline; do \
 	     rc=0; \
 	     bash scripts/parity-attestation.sh \
 	         --gateway $(PARITY_GATEWAY) \
@@ -272,13 +279,15 @@ parity-gateway: ## Bring up <PARITY_GATEWAY>, run <PARITY_PROFILE>, tear down
 		--output  reports/$(PARITY_RUN_ID)/parity/$(PARITY_GATEWAY)-$(PARITY_PROFILE).json \
 		--verbose
 
-parity-gateway-all: ## Run every profile p01..p10 end-to-end against <PARITY_GATEWAY>
-	@echo "$(YELLOW)parity-gateway: sweeping p01..p10 against $(PARITY_GATEWAY)$(NC)"
+parity-gateway-all: ## Run every profile p01..p12 end-to-end against <PARITY_GATEWAY>
+	@echo "$(YELLOW)parity-gateway: sweeping p01..p12 against $(PARITY_GATEWAY)$(NC)"
 	@mkdir -p reports/$(PARITY_RUN_ID)/parity
 	@passed=0; failed=0; missing=0; \
-	 for p in p01-vanilla p02-jwt p03-rl-static p04-rl-dynamic-low \
-	          p05-rl-dynamic-high p06-req-headers p07-resp-headers \
-	          p08-req-body p09-resp-body p10-full-pipeline; do \
+	 for p in p01-vanilla p02-jwt p03-jwks-rs256-basic \
+	          p04-rl-static p05-rl-endpoint \
+	          p06-rl-dynamic-low p07-rl-dynamic-high \
+	          p08-req-headers p09-resp-headers \
+	          p10-req-body p11-resp-body p12-full-pipeline; do \
 	     out=reports/$(PARITY_RUN_ID)/parity/$(PARITY_GATEWAY)-$$p.json; \
 	     if [ ! -d gateways/$(PARITY_GATEWAY)/$$p ]; then \
 	         printf '  %-22s  %-16s  (directory missing — not yet implemented)\n' "$$p" "FEATURE-MISSING"; \
@@ -302,4 +311,66 @@ parity-gateway-all: ## Run every profile p01..p10 end-to-end against <PARITY_GAT
 	 done; \
 	 echo ""; \
 	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$missing other (reports in reports/$(PARITY_RUN_ID)/parity/)"
+
+# ---------------------------------------------------------------------------
+# Load (Phase 4): one (gateway, policy, scenario, load-profile) cell end-to-
+# end. The runner script (scripts/load-gateway.sh) brings up the gateway,
+# runs parity attestation as a precondition, fires k6 against the gateway
+# inside its own bench-net, and tears the stack down on exit.
+#
+# Usage examples:
+#   make load-gateway LOAD_GATEWAY=nginx LOAD_POLICY=p01-vanilla \
+#                     LOAD_SCENARIO=s01-vanilla-http LOAD_PROFILE=p1-baseline
+#
+#   make load-gateway-load-sweep LOAD_GATEWAY=envoy LOAD_POLICY=p01-vanilla \
+#                                LOAD_SCENARIO=s01-vanilla-http
+# ---------------------------------------------------------------------------
+LOAD_RUN_ID    ?= $(RUN_ID)
+LOAD_GATEWAY   ?= nginx
+LOAD_POLICY    ?= p01-vanilla
+LOAD_SCENARIO  ?= s01-vanilla-http
+LOAD_PROFILE   ?= p1-baseline
+LOAD_SEED      ?= 42
+LOAD_OPTS      ?=
+
+load-gateway: ## Single load cell end-to-end (k6 against one gateway × policy × scenario × load profile)
+	@RUN_ID=$(LOAD_RUN_ID) bash scripts/load-gateway.sh \
+		--gateway  $(LOAD_GATEWAY) \
+		--policy   $(LOAD_POLICY) \
+		--scenario $(LOAD_SCENARIO) \
+		--load     $(LOAD_PROFILE) \
+		--seed     $(LOAD_SEED) \
+		$(LOAD_OPTS)
+
+load-gateway-load-sweep: ## Sweep all 4 load profiles for one (LOAD_GATEWAY, LOAD_POLICY, LOAD_SCENARIO)
+	@echo "$(YELLOW)load-gateway-load-sweep: $(LOAD_GATEWAY) / $(LOAD_POLICY) / $(LOAD_SCENARIO) × {p1-baseline,p2-sustained,p3-ramp,p4-stress}$(NC)"
+	@passed=0; excluded=0; failed=0; \
+	 for lp in p1-baseline p2-sustained p3-ramp p4-stress; do \
+	     out_dir=reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/$(LOAD_POLICY)__$${lp}__$(LOAD_SCENARIO); \
+	     RUN_ID=$(LOAD_RUN_ID) bash scripts/load-gateway.sh \
+	         --gateway  $(LOAD_GATEWAY) \
+	         --policy   $(LOAD_POLICY) \
+	         --scenario $(LOAD_SCENARIO) \
+	         --load     $$lp \
+	         --seed     $(LOAD_SEED) \
+	         $(LOAD_OPTS) \
+	         > /dev/null 2>&1 && rc=0 || rc=$$?; \
+	     summary=$$out_dir/k6-summary.json; \
+	     excluded_marker=$$out_dir/excluded.json; \
+	     if [ -s "$$excluded_marker" ]; then \
+	         reason=$$(jq -r '.reason' "$$excluded_marker" 2>/dev/null); \
+	         printf '  %-14s  %-9s  (%s)\n' "$$lp" "EXCLUDED" "$$reason"; \
+	         excluded=$$((excluded+1)); \
+	     elif [ -s "$$summary" ]; then \
+	         reqs=$$(jq -r '.metrics.http_reqs.count // 0'                 "$$summary" 2>/dev/null); \
+	         p95=$$( jq -r '.metrics.http_req_duration["p(95)"] // 0'      "$$summary" 2>/dev/null); \
+	         printf '  %-14s  %-9s  reqs=%-7s  p95=%sms\n' "$$lp" "PASS" "$$reqs" "$$p95"; \
+	         passed=$$((passed+1)); \
+	     else \
+	         printf '  %-14s  %-9s  (rc=%d, see %s/logs/k6.log)\n' "$$lp" "FAIL" "$$rc" "$$out_dir"; \
+	         failed=$$((failed+1)); \
+	     fi; \
+	 done; \
+	 echo ""; \
+	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$excluded EXCLUDED (reports in reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/)"
 

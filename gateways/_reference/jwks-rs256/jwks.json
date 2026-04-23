@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "bench-rs256-2026",
+      "n": "6OGfbNN190m8F_xa8sZ4UjEk7ONG6OvTJm376pCmO0FOgCleynymCIfbI4EH3ObxewnlLOVcVwZ8uvcTIc3OSAZVD2SjbOY0dc1s-eQpjrjMQOK2UHSs0fcFjHvlof6c_mfiB0XBk1OYWWWYV5AqfeoK16AzCGKj7DEw6BGOmIf13pWKFwkuikgXEZpyAsoeP-Dz67ga1gYwcbtB84KzmDSE88AduzDtHPOJ9xVA273FoLBU0MItp60IA9WpzyQyr7AIYOeigF8rFocAH00YChyG2-XWNom-ddcSD_0la9IjbJQWehCFVETI6Lb69-jN-N1iGv-AkPUpjv8Xv3y1-Q",
+      "e": "AQAB"
+    }
+  ]
+}

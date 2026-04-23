@@ -1,0 +1,50 @@
+# gateways/kong/p05-rl-endpoint/kong.yml
+#
+# Profile: p05-rl-endpoint — rate-limit ONLY /anything/limited at
+#   100 req/s; every other path on the same service stays
+#   unrestricted. Canonical spec: docs/POLICIES.md § p04.
+# Canonical fixture: fixtures/p05-rl-endpoint.jsonl
+#
+# Implementation:
+#
+#   * Two routes on the same service. Kong evaluates routes in order
+#     of specificity (longer path prefix wins), so `bench-limited`
+#     with `paths: [/anything/limited]` takes precedence over the
+#     catch-all `bench-route` for that exact path.
+#   * The `rate-limiting` plugin is bound to `bench-limited` only
+#     (plugins are entity-scoped in declarative configs: putting a
+#     plugin under a route applies ONLY to that route). Everything
+#     that falls through to the catch-all route runs unlimited,
+#     which is the scoping invariant probe 4 tests.
+#   * `limit_by: service` + `second: 100`: all clients share one
+#     bucket; rolling 1 s window. Matches docs/POLICIES.md § p04.
+#
+# Design note: we do NOT add a dedicated /anything/free route —
+# the catch-all already handles it. Two routes is the minimum
+# topology that proves the scope invariant (limited vs everything
+# else) with zero wasted surface area.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-limited
+        paths:
+          - /anything/limited
+        strip_path: false
+        preserve_host: true
+        plugins:
+          - name: rate-limiting
+            config:
+              second: 100
+              limit_by: service
+              policy: local
+              fault_tolerant: true
+              hide_client_headers: false
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true

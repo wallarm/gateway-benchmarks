@@ -1,0 +1,165 @@
+# gateways/kong/docker-compose.yaml
+#
+# Single-gateway stack used by `make parity-gateway` for parity attestation.
+# Same port contract as every other gateway under `gateways/<gw>/`:
+#
+#     loadgen (host)  →  kong :9080  →  backend :8080
+#
+# Kong is deployed in **DB-less declarative mode**
+# (`KONG_DATABASE=off`, `KONG_DECLARATIVE_CONFIG=/kong/kong.yml`). That
+# removes the Postgres/Cassandra dependency and keeps the profile
+# behaviour expressible as a single YAML file per profile — the same
+# declarative posture as nginx's `nginx.conf`, envoy's `envoy.yaml`,
+# and apisix's `apisix.yaml` (standalone mode). The bench never needs
+# the Admin API; changing policies between profiles is done by
+# swapping the mounted `kong.yml` and restarting the container.
+#
+# Per-profile declarative config is picked by GATEWAY_PROFILE env var
+# (default `p01-vanilla`). Each profile directory must contain:
+#
+#   kong.yml     - Kong DB-less declarative config
+#                  (_format_version + services + routes + plugins
+#                  + optional consumers/jwt_secrets for p02)
+#   setup.sh     - post-up readiness + smoke for the profile
+#   NOTES.md     - profile-specific notes / deviations
+#
+# Shared across profiles (mounted read-only into every boot):
+#
+#   _shared/lualib/  → /usr/local/kong/custom/
+#                      (Lua modules reusable across pre-function /
+#                       post-function plugins, in particular
+#                       `body_rewrite.lua` for p09 / p10 / p11
+#                       which is a byte-for-byte port of the nginx
+#                       column's `_shared/lualib/body_rewrite.lua`).
+#                      Picked up via `KONG_LUA_PACKAGE_PATH`.
+#
+# Default image pin:
+#   kong/kong:3.9.1 — last tagged OSS release on Docker Hub at
+#   Phase-3b time. The image already bundles the pre-function /
+#   post-function plugins we rely on for p09 / p10; no third-party
+#   plugin surface is introduced.
+#
+# Image digest refreshed with:
+#   docker pull kong/kong:3.9.1 && docker image inspect \
+#     kong/kong:3.9.1 --format '{{index .RepoDigests 0}}'
+#
+# Kong listens on 8000/8443 by default; we remap the proxy to 9080
+# for symmetry with every other column. The admin API stays internal
+# and is disabled via KONG_ADMIN_LISTEN=off — parity never touches it
+# (all config is declarative).
+
+name: gateway-benchmarks-kong
+
+services:
+  backend:
+    image: gateway-benchmarks/backend:v2.22.1
+    container_name: gwb-kong-backend
+    restart: "no"
+    # Backend listens on :8080 inside the container. We do NOT publish
+    # it on the host — only the gateway needs to talk to it, over the
+    # private `bench-net` bridge. Add `- "8088:8080"` temporarily if
+    # you want to probe it from the host.
+    networks:
+      bench-net:
+        aliases: [backend]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-kong/kong:3.9.1@sha256:6addf50e6bd8d578314cb9ce4f2d2d1e3781d2edecef59f707e00c6e05d384f5}
+    container_name: gwb-kong
+    restart: "no"
+    depends_on:
+      - backend
+    environment:
+      # --- DB-less declarative mode -----------------------------------
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      # --- Listeners --------------------------------------------------
+      # Proxy on :9080 (bench-standard). Admin fully disabled — the
+      # parity harness never introspects the Admin API; every knob
+      # comes from the declarative config on disk.
+      KONG_PROXY_LISTEN: "0.0.0.0:9080 reuseport backlog=16384"
+      KONG_ADMIN_LISTEN: "off"
+      KONG_STATUS_LISTEN: "off"
+      # --- Headers / provenance ---------------------------------------
+      # Drop Kong's "Server: kong/3.9.1" and "Via: kong/3.9.1"
+      # stamps on responses. The p08 / p12 profiles still explicitly
+      # remove the upstream Server via response-transformer, but
+      # turning off Kong's own branding at the bootstrap stage means
+      # baseline header shape is deterministic across every profile
+      # (reviewers see no kong provenance unless a probe opts into it).
+      # Same intent as `apisix.server_tokens: false` in the apisix
+      # column.
+      KONG_HEADERS: "off"
+      # --- Trusted IPs / real-IP --------------------------------------
+      # The bench's loadgen is "untrusted peer" by default on the
+      # bridge network. For p05 / p06 the rate-limit plugin needs to
+      # key on X-Real-IP verbatim, which requires trusting the
+      # incoming X-Real-IP header. Mirror of traefik's
+      # `forwardedHeaders.insecure: true` per-profile knob — except
+      # in Kong the trust-list is a bootstrap option, so we set it
+      # once here and let every profile keep a uniform compose surface.
+      KONG_TRUSTED_IPS: "0.0.0.0/0,::/0"
+      KONG_REAL_IP_HEADER: "X-Real-IP"
+      KONG_REAL_IP_RECURSIVE: "on"
+      # --- Logging ---------------------------------------------------
+      # Both access_log and error_log go to the container's stdout /
+      # stderr, which `scripts/parity-gateway.sh` captures via
+      # `docker logs` for the post-run artefact bundle.
+      KONG_PROXY_ACCESS_LOG: "/dev/stdout"
+      KONG_ADMIN_ACCESS_LOG: "off"
+      KONG_PROXY_ERROR_LOG: "/dev/stderr"
+      KONG_ADMIN_ERROR_LOG: "/dev/stderr"
+      KONG_LOG_LEVEL: "notice"
+      # --- Shared Lua package path -----------------------------------
+      # Tells OpenResty (and therefore pre-function / post-function
+      # plugins) to also search our mounted lualib before the default
+      # LuaRocks paths. `require("body_rewrite")` in a profile's
+      # `pre-function.access` or `post-function.body_filter` therefore
+      # resolves to `/usr/local/kong/custom/body_rewrite.lua` without
+      # any extra wrapper boilerplate.
+      KONG_LUA_PACKAGE_PATH: "/usr/local/kong/custom/?.lua;;"
+      # --- Lua sandbox whitelist -------------------------------------
+      # Kong's pre-function/post-function plugins run in a sandbox
+      # that blocks arbitrary `require()` by default
+      # ("require 'X' not allowed within sandbox"). We whitelist our
+      # one shared module — `body_rewrite` — used by p09 / p10 / p11
+      # for JSON-shape-aware body editing. We deliberately stop short
+      # of `KONG_UNTRUSTED_LUA: "on"` (which removes the sandbox
+      # entirely) to keep the principle of least privilege intact:
+      # the only code that can be require'd from a kong.yml is the
+      # 80-line, audited module under `_shared/lualib/`.
+      KONG_UNTRUSTED_LUA: "sandbox"
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "body_rewrite"
+    # Custom entrypoint shim that pre-patches Kong's nginx template to
+    # make X-Forwarded-For overridable per route via $bench_xff before
+    # delegating to the stock /entrypoint.sh. Required for p07 / p11 —
+    # see _shared/bench-start.sh for the rationale + diff. The shim
+    # exec's the original entrypoint, so behaviour is unchanged for any
+    # profile that doesn't touch ngx.var.bench_xff.
+    entrypoint: ["/bench/bench-start.sh"]
+    command: ["kong", "docker-start"]
+    volumes:
+      - ./${GATEWAY_PROFILE:-p01-vanilla}/kong.yml:/kong/kong.yml:ro
+      # Shared Lua library — body_rewrite.lua ported from the nginx
+      # column. Available to every profile that registers a
+      # pre-function / post-function plugin (p09 / p10 / p11). The
+      # jwt_hs256.lua module from the nginx column is intentionally
+      # NOT ported here: p02 / p11 use Kong's native `jwt` plugin
+      # with a declarative `consumers:` / `jwt_secrets:` block instead
+      # (which gives us signature verify + exp check + key-claim
+      # lookup in one bundle — see `p02-jwt/NOTES.md`).
+      - ./_shared/lualib:/usr/local/kong/custom:ro
+      - ./_shared/bench-start.sh:/bench/bench-start.sh:ro
+    ports:
+      - "9080:9080"  # data plane (parity-gateway target)
+    # Kong exits cleanly on SIGTERM via its supervisord wrapper; 5 s
+    # is more than enough for `docker compose down` between parity
+    # runs.
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [gateway]
+
+networks:
+  bench-net:
+    driver: bridge

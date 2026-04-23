@@ -1,0 +1,42 @@
+# gateways/kong/p09-resp-headers/kong.yml
+#
+# Profile: p09-resp-headers — gateway adds `X-Bench-Out: 1` and drops
+#   `Server`. Canonical spec: docs/POLICIES.md § p08.
+# Canonical fixture: fixtures/p09-resp-headers.jsonl
+#
+# Implementation: Kong's native `response-transformer` plugin.
+#
+#   * `add.headers: ["X-Bench-Out:1"]` — added to every response.
+#   * `remove.headers: ["Server"]` — drops the upstream's Server
+#     header before it goes back to the client.
+#
+# Kong itself does NOT add a `Server: kong/x.y.z` header in our
+# bench setup because we set `KONG_HEADERS: off` in
+# docker-compose.yaml. That env knob is the recommended way to
+# silence kong's own latency / version stamps; it does NOT silence
+# the UPSTREAM's `Server`, which is what we still need
+# response-transformer to drop here. Probes 1 and 2 cover both
+# upstream paths (`/response-headers` lets the client request a
+# specific upstream header value, `/get` returns go-httpbin's
+# default response shape) and confirm the drop is unconditional.
+
+_format_version: "3.0"
+
+services:
+  - name: bench
+    url: http://backend:8080
+    routes:
+      - name: bench-route
+        paths:
+          - /
+        strip_path: false
+        preserve_host: true
+    plugins:
+      - name: response-transformer
+        config:
+          add:
+            headers:
+              - "X-Bench-Out:1"
+          remove:
+            headers:
+              - "Server"

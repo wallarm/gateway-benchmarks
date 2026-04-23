@@ -310,8 +310,7 @@ parity_args=(
     --target  "${GATEWAY_TARGET}"
     --output  "${parity_out}"
 )
-parity_rc=0
-bash scripts/parity-attestation.sh "${parity_args[@]}" >/dev/null 2>&1 || parity_rc=$?
+bash scripts/parity-attestation.sh "${parity_args[@]}" >/dev/null 2>&1 || true
 parity_status="$(jq -r '.status' "${parity_out}" 2>/dev/null || echo UNKNOWN)"
 case "${parity_status}" in
     PASS)

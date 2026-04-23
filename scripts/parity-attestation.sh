@@ -356,9 +356,8 @@ run_burst_probe() {
     method=$(jq -r '.burst.request.method // "GET"' <<< "${probe_json}")
     path=$(jq -r   '.burst.request.path   // "/"'  <<< "${probe_json}")
 
-    local total duration_s key_header key_pool
+    local total key_header key_pool
     total=$(jq -r       '.burst.total_requests'     <<< "${probe_json}")
-    duration_s=$(jq -r  '.burst.duration_s // 1'    <<< "${probe_json}")
     key_header=$(jq -r  '.burst.key_header // ""'   <<< "${probe_json}")
     key_pool=$(jq -r    '.burst.key_pool   // ""'   <<< "${probe_json}")
 

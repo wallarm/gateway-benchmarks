@@ -415,7 +415,13 @@ docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 STATS_CSV="${OUTPUT}/docker-stats.csv"
 GATEWAY_CONTAINER="gwb-${GATEWAY}"
 SIDECAR_PID=""
-if [[ -x scripts/docker-stats-sidecar.sh ]]; then
+# `bench run` (the Go orchestrator) owns its own native Go
+# docker-stats collector (internal/stats) and suppresses this shell
+# sidecar via BENCH_SKIP_DOCKER_STATS=1 so there's only ever one
+# sampler writing docker-stats.csv. Pure-shell operators (running
+# load-gateway.sh directly) fall through to the shell sidecar as
+# before — BENCH_SKIP_DOCKER_STATS unset == legacy behaviour.
+if [[ "${BENCH_SKIP_DOCKER_STATS:-0}" != "1" ]] && [[ -x scripts/docker-stats-sidecar.sh ]]; then
     bash scripts/docker-stats-sidecar.sh \
         --container "${GATEWAY_CONTAINER}" \
         --output    "${STATS_CSV}" \
@@ -462,6 +468,67 @@ fi
 
 if (( STREAM == 1 )) && [[ -f "${OUTPUT}/k6-stream.json" ]]; then
     gzip -f "${OUTPUT}/k6-stream.json"
+fi
+
+# -----------------------------------------------------------------------------
+# Gateway crash detection — writes gateway-crash.json if the gateway
+# container has exited mid-run (non-zero exit, or OOM-killed). The
+# `bench run` orchestrator turns that sentinel into a CRASHED verdict
+# (distinct from FAIL) so downstream scoring can penalise crashes and
+# optionally retry the cell. This block is guarded by
+# BENCH_CHECK_GATEWAY_CRASH so direct shell invocations keep their
+# historical "exit non-zero on failure" contract.
+#
+# The check runs BEFORE the EXIT trap's teardown so the container is
+# still inspectable — once `docker compose down` runs, the container
+# is gone and we can't ask Docker what its exit state was.
+# -----------------------------------------------------------------------------
+CRASH_JSON="${OUTPUT}/gateway-crash.json"
+if [[ "${BENCH_CHECK_GATEWAY_CRASH:-0}" == "1" ]]; then
+    # `docker inspect` returns non-zero when the container is missing;
+    # tolerate that by falling back to a synthetic "missing" row.
+    inspect_out="$(docker inspect "${GATEWAY_CONTAINER}" \
+        --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.FinishedAt}}' \
+        2>/dev/null || echo 'missing|-1|false|')"
+    IFS='|' read -r cstatus cexit coom cfinished <<<"${inspect_out}"
+    case "${cstatus}" in
+        exited|dead|missing)
+            # exit_code=0 with status=exited is a clean shutdown of a
+            # process that runs-then-exits (none of our gateways do
+            # that) — we still flag it CRASHED because the gateway is
+            # expected to be alive for the full cell.
+            jq -cn \
+                --arg  container   "${GATEWAY_CONTAINER}" \
+                --arg  status      "${cstatus}" \
+                --argjson exit_code "${cexit:-0}" \
+                --argjson oom      "${coom:-false}" \
+                --arg  finished_at "${cfinished}" \
+                --arg  gateway     "${GATEWAY}" \
+                --arg  policy      "${POLICY}" \
+                --arg  scenario    "${SCENARIO}" \
+                --arg  load        "${LOAD}" \
+                --arg  run_id      "${RUN_ID}" \
+                '{
+                    gateway:     $gateway,
+                    policy:      $policy,
+                    scenario:    $scenario,
+                    load:        $load,
+                    run_id:      $run_id,
+                    container:   $container,
+                    status:      $status,
+                    exit_code:   $exit_code,
+                    oom_killed:  $oom,
+                    finished_at: $finished_at
+                }' > "${CRASH_JSON}"
+            bad "gateway ${GATEWAY_CONTAINER}: status=${cstatus} exit=${cexit} oom=${coom}"
+            # Rewrite k6_rc so the Verdict section below falls into the
+            # error exit path even when k6 itself got 0 — the cell is
+            # not PASS regardless.
+            if (( k6_rc == 0 )); then
+                k6_rc=6
+            fi
+            ;;
+    esac
 fi
 
 # -----------------------------------------------------------------------------

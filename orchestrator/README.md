@@ -17,7 +17,9 @@ reproducibility gate:
    - records the verdict + duration into an append-only checkpoint
      so an interrupted sweep can resume.
 3. **Aggregates** every per-cell `k6-summary.json` + `docker-stats.csv`
-   + `parity.json` into the canonical 27-column wide table:
+   + `parity.json` into the canonical 31-column wide table
+   (27 legacy + 4 bandwidth: `net_rx_total_bytes`, `net_tx_total_bytes`,
+   `net_rx_peak_bps`, `net_tx_peak_bps`):
    - `reports/<run-id>/matrix.csv`
    - `reports/<run-id>/cells.jsonl` (superset with derived
      `health` / `timing_broken` columns)
@@ -247,7 +249,7 @@ For every `bench run` invocation:
 ```
 reports/<run-id>/
 ├── manifest.json          # pinned source SHA, image digests, k6, host info, seed
-├── matrix.csv             # 27-column wide table (canonical)
+├── matrix.csv             # 31-column wide table (27 legacy + 4 bandwidth)
 ├── cells.jsonl            # JSONL superset, one Cell per line, health field added
 ├── matrix.md              # short markdown rollup (gateway × policy × verdict)
 ├── checkpoint.jsonl       # append-only record (resumable; use --resume)

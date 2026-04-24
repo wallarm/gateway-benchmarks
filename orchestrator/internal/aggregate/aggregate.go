@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wallarm/gateway-benchmarks/orchestrator/internal/classify"
 )
@@ -48,32 +49,43 @@ type Cell struct {
 	Verdict      string `json:"verdict"`
 	ParityStatus string `json:"parity_status"`
 
-	HTTPReqs              int64   `json:"http_reqs"`
-	HTTPReqRate           float64 `json:"http_req_rate"`
-	IterDurationAvgMs     float64 `json:"iter_duration_avg_ms"`
-	HTTPReqDurationP50    float64 `json:"http_req_duration_p50"`
-	HTTPReqDurationP90    float64 `json:"http_req_duration_p90"`
-	HTTPReqDurationP95    float64 `json:"http_req_duration_p95"`
-	HTTPReqDurationP99    float64 `json:"http_req_duration_p99"`
-	HTTPReqDurationMax    float64 `json:"http_req_duration_max"`
-	HTTPReqFailedRate     float64 `json:"http_req_failed_rate"`
-	Policy2xx             int64   `json:"policy_2xx"`
-	Policy4xxExpected     int64   `json:"policy_4xx_expected"`
-	Policy4xxUnexpected   int64   `json:"policy_4xx_unexpected"`
-	Policy5xxUnexpected   int64   `json:"policy_5xx_unexpected"`
-	ChecksTotal           int64   `json:"checks_total"`
-	ChecksPasses          int64   `json:"checks_passes"`
-	ChecksFails           int64   `json:"checks_fails"`
-	MemRSSPeakBytes       int64   `json:"mem_rss_peak"`
-	MemRSSSteadyBytes     int64   `json:"mem_rss_steady"`
-	CPUPctPeak            float64 `json:"cpu_pct_peak"`
-	CPUPctSteady          float64 `json:"cpu_pct_steady"`
+	HTTPReqs            int64   `json:"http_reqs"`
+	HTTPReqRate         float64 `json:"http_req_rate"`
+	IterDurationAvgMs   float64 `json:"iter_duration_avg_ms"`
+	HTTPReqDurationP50  float64 `json:"http_req_duration_p50"`
+	HTTPReqDurationP90  float64 `json:"http_req_duration_p90"`
+	HTTPReqDurationP95  float64 `json:"http_req_duration_p95"`
+	HTTPReqDurationP99  float64 `json:"http_req_duration_p99"`
+	HTTPReqDurationMax  float64 `json:"http_req_duration_max"`
+	HTTPReqFailedRate   float64 `json:"http_req_failed_rate"`
+	Policy2xx           int64   `json:"policy_2xx"`
+	Policy4xxExpected   int64   `json:"policy_4xx_expected"`
+	Policy4xxUnexpected int64   `json:"policy_4xx_unexpected"`
+	Policy5xxUnexpected int64   `json:"policy_5xx_unexpected"`
+	ChecksTotal         int64   `json:"checks_total"`
+	ChecksPasses        int64   `json:"checks_passes"`
+	ChecksFails         int64   `json:"checks_fails"`
+	MemRSSPeakBytes     int64   `json:"mem_rss_peak"`
+	MemRSSSteadyBytes   int64   `json:"mem_rss_steady"`
+	CPUPctPeak          float64 `json:"cpu_pct_peak"`
+	CPUPctSteady        float64 `json:"cpu_pct_steady"`
+
+	// Bandwidth — cumulative totals over the cell (last − first
+	// sample) plus the peak-per-second delta observed between two
+	// adjacent samples. Added in the post-Phase-8 tech-debt sweep
+	// alongside the native Go stats collector; the shell sidecar
+	// already wrote the raw counters into docker-stats.csv but the
+	// aggregator never consumed them.
+	NetRxTotalBytes int64   `json:"net_rx_total_bytes"`
+	NetTxTotalBytes int64   `json:"net_tx_total_bytes"`
+	NetRxPeakBps    float64 `json:"net_rx_peak_bps"`
+	NetTxPeakBps    float64 `json:"net_tx_peak_bps"`
 
 	// Derived; not in the canonical CSV but persisted to JSONL for
 	// downstream reporters.
-	Health        classify.Health `json:"health,omitempty"`
-	TimingBroken  bool            `json:"timing_broken,omitempty"`
-	OutputDirRel  string          `json:"output_dir,omitempty"`
+	Health       classify.Health `json:"health,omitempty"`
+	TimingBroken bool            `json:"timing_broken,omitempty"`
+	OutputDirRel string          `json:"output_dir,omitempty"`
 }
 
 // Aggregator collects per-cell artefacts under reports/<RunID>/raw.
@@ -185,7 +197,12 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 	return cells, nil
 }
 
-// canonicalColumns mirrors scripts/aggregate-csv.sh § COLUMNS.
+// canonicalColumns mirrors scripts/aggregate-csv.sh § COLUMNS and
+// appends the four bandwidth columns introduced in the post-Phase-8
+// tech-debt sweep. The bandwidth columns live at the end so existing
+// consumers that parse matrix.csv by index for the legacy 27 columns
+// keep working; parsers that read by header name transparently pick
+// up the new fields.
 var canonicalColumns = []string{
 	"gateway", "policy", "scenario", "load", "run_id", "verdict", "parity_status",
 	"http_reqs", "http_req_rate", "iter_duration_avg_ms",
@@ -195,9 +212,10 @@ var canonicalColumns = []string{
 	"policy_2xx", "policy_4xx_expected", "policy_4xx_unexpected", "policy_5xx_unexpected",
 	"checks_total", "checks_passes", "checks_fails",
 	"mem_rss_peak", "mem_rss_steady", "cpu_pct_peak", "cpu_pct_steady",
+	"net_rx_total_bytes", "net_tx_total_bytes", "net_rx_peak_bps", "net_tx_peak_bps",
 }
 
-// WriteCSV writes the canonical 27-column wide CSV.
+// WriteCSV writes the canonical 31-column wide CSV (27 legacy + 4 bandwidth).
 func (a *Aggregator) WriteCSV(path string, cells []Cell) error {
 	f, err := openWrite(path)
 	if err != nil {
@@ -371,8 +389,27 @@ func loadParity(path string, cell *Cell) {
 }
 
 // -----------------------------------------------------------------------------
-// docker-stats.csv rollup — same logic as aggregate-csv.sh's awk.
-// CSV columns: time,cpu_ns_total,cpu_ns_system,cpu_online,rss_bytes,...
+// docker-stats.csv rollup — same logic as aggregate-csv.sh's awk,
+// extended with bandwidth rollup. CSV columns (fixed schema, see
+// internal/stats.CSVHeader + scripts/docker-stats-sidecar.sh):
+//
+//   0 ts_utc           RFC3339 timestamp of the sample
+//   1 cpu_ns_total     cumulative ns, .cpu_stats.cpu_usage.total_usage
+//   2 cpu_ns_system    cumulative ns, .cpu_stats.system_cpu_usage
+//   3 cpu_online       integer,        .cpu_stats.online_cpus
+//   4 mem_bytes        cumulative,     .memory_stats.usage
+//   5 mem_limit        static,         .memory_stats.limit
+//   6 net_rx_bytes     cumulative,     Σ .networks.*.rx_bytes
+//   7 net_tx_bytes     cumulative,     Σ .networks.*.tx_bytes
+//   8 blkio_read_bytes cumulative,     Σ blkio op=read entries
+//   9 blkio_write_bytes cumulative,    Σ blkio op=write entries
+//
+// Outputs (written onto cell):
+//   - MemRSSPeakBytes / MemRSSSteadyBytes — max / tail-median of mem
+//   - CPUPctPeak      / CPUPctSteady      — max / tail-median of CPU%
+//   - NetRxTotalBytes / NetTxTotalBytes   — last − first counter
+//   - NetRxPeakBps    / NetTxPeakBps      — max Δbytes / Δsec between
+//                                            adjacent samples
 // -----------------------------------------------------------------------------
 
 func loadDockerStats(path string, cell *Cell) {
@@ -398,6 +435,18 @@ func loadDockerStats(path string, cell *Cell) {
 		prevCPU            int64
 		prevSys            int64
 		online             int64
+
+		// Bandwidth — we need the first-row and last-row
+		// counters for totals, and the Δbytes / Δsec between
+		// adjacent samples for the peak-bps. prevNetRx / prevNetTx
+		// hold the previous sample's values; the timestamp column
+		// gives us the Δsec.
+		firstNetRx, firstNetTx int64
+		lastNetRx, lastNetTx   int64
+		netRxPeakBps           float64
+		netTxPeakBps           float64
+		prevNetRx, prevNetTx   int64
+		prevTS                 time.Time
 	)
 
 	if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][1]), 10, 64); err == nil {
@@ -408,6 +457,19 @@ func loadDockerStats(path string, cell *Cell) {
 	}
 	if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][3]), 10, 64); err == nil {
 		online = v
+	}
+	if len(rows[0]) >= 8 {
+		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][6]), 10, 64); err == nil {
+			firstNetRx = v
+			prevNetRx = v
+		}
+		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][7]), 10, 64); err == nil {
+			firstNetTx = v
+			prevNetTx = v
+		}
+	}
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(rows[0][0])); err == nil {
+		prevTS = t
 	}
 
 	for _, row := range rows[1:] {
@@ -437,6 +499,32 @@ func loadDockerStats(path string, cell *Cell) {
 		}
 		rssSamples = append(rssSamples, rss)
 		cpuSamples = append(cpuSamples, cpuPct)
+
+		// Bandwidth rollup — only when the schema has at least 8
+		// columns (older CSVs from pre-Phase-4 runs have only 5).
+		if len(row) >= 8 {
+			netRx, _ := strconv.ParseInt(strings.TrimSpace(row[6]), 10, 64)
+			netTx, _ := strconv.ParseInt(strings.TrimSpace(row[7]), 10, 64)
+			lastNetRx = netRx
+			lastNetTx = netTx
+
+			if !prevTS.IsZero() {
+				if t, err := time.Parse(time.RFC3339, strings.TrimSpace(row[0])); err == nil {
+					dt := t.Sub(prevTS).Seconds()
+					if dt > 0 {
+						if bps := float64(netRx-prevNetRx) / dt; bps > netRxPeakBps {
+							netRxPeakBps = bps
+						}
+						if bps := float64(netTx-prevNetTx) / dt; bps > netTxPeakBps {
+							netTxPeakBps = bps
+						}
+					}
+					prevTS = t
+				}
+			}
+			prevNetRx = netRx
+			prevNetTx = netTx
+		}
 	}
 
 	if n := len(rssSamples); n > 0 {
@@ -453,6 +541,14 @@ func loadDockerStats(path string, cell *Cell) {
 	cell.MemRSSSteadyBytes = rssSteady
 	cell.CPUPctPeak = roundTo(cpuPeak, 2)
 	cell.CPUPctSteady = roundTo(cpuSteady, 2)
+	if lastNetRx >= firstNetRx {
+		cell.NetRxTotalBytes = lastNetRx - firstNetRx
+	}
+	if lastNetTx >= firstNetTx {
+		cell.NetTxTotalBytes = lastNetTx - firstNetTx
+	}
+	cell.NetRxPeakBps = roundTo(netRxPeakBps, 2)
+	cell.NetTxPeakBps = roundTo(netTxPeakBps, 2)
 }
 
 // -----------------------------------------------------------------------------
@@ -544,6 +640,10 @@ func rowCSV(c Cell) []string {
 		fmt.Sprintf("%d", c.MemRSSSteadyBytes),
 		formatFloat(c.CPUPctPeak),
 		formatFloat(c.CPUPctSteady),
+		fmt.Sprintf("%d", c.NetRxTotalBytes),
+		fmt.Sprintf("%d", c.NetTxTotalBytes),
+		formatFloat(c.NetRxPeakBps),
+		formatFloat(c.NetTxPeakBps),
 	}
 }
 

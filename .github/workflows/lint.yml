@@ -9,7 +9,11 @@ jobs:
   shellcheck:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # v5 is the first checkout release on Node 24; v4 emits the
+      # "Node.js 20 actions are deprecated" warning and will stop
+      # working on 2026-09-16. Kept on v5 (not v6) because v6 requires
+      # Actions Runner v2.329+ — v5 matches the ubuntu-24.04 default.
+      - uses: actions/checkout@v5
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run shellcheck
@@ -31,7 +35,7 @@ jobs:
   markdown:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: markdown-link-check
         uses: gaurav-nelson/github-action-markdown-link-check@v1
         with:
@@ -44,8 +48,10 @@ jobs:
   go-vet:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      # setup-go v6 is the first release on Node 24; v5 emits the
+      # same Node 20 deprecation warning as checkout@v4.
+      - uses: actions/setup-go@v6
         with:
           go-version-file: orchestrator/go.mod
           cache-dependency-path: orchestrator/go.sum
@@ -55,8 +61,8 @@ jobs:
   go-test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: orchestrator/go.mod
           cache-dependency-path: orchestrator/go.sum

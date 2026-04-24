@@ -21,24 +21,26 @@ import (
 
 func newRunCmd() *cobra.Command {
 	var (
-		gatewaysCSV   string
-		policiesCSV   string
-		scenariosCSV  string
-		loadsCSV      string
-		seed          int64
-		repetitions   int
-		mode          string
-		dryRun        bool
-		stopOnFail    bool
-		stream        bool
-		keepUp        bool
-		watchdogMins  int
-		skipParity    bool
-		gatewayTarget string
-		backendPeek   string
-		notes         string
-		resume        bool
-		renderReport  bool
+		gatewaysCSV        string
+		policiesCSV        string
+		scenariosCSV       string
+		loadsCSV           string
+		seed               int64
+		repetitions        int
+		mode               string
+		dryRun             bool
+		stopOnFail         bool
+		stream             bool
+		keepUp             bool
+		watchdogMins       int
+		retryOnCrash       int
+		skipParity         bool
+		gatewayTarget      string
+		backendPeek        string
+		notes              string
+		resume             bool
+		renderReport       bool
+		disableNativeStats bool
 	)
 
 	cmd := &cobra.Command{
@@ -144,13 +146,15 @@ Use --dry-run first to see the planned cell list.`,
 
 			// -------------------------------------------------- runners
 			runr := &runner.Runner{
-				RepoRoot: flagRepoRoot,
-				RunID:    runID,
-				Seed:     seed,
-				Stream:   stream,
-				KeepUp:   keepUp,
-				Watchdog: time.Duration(watchdogMins) * time.Minute,
-				Logger:   cmd.OutOrStderr(),
+				RepoRoot:           flagRepoRoot,
+				RunID:              runID,
+				Seed:               seed,
+				Stream:             stream,
+				KeepUp:             keepUp,
+				Watchdog:           time.Duration(watchdogMins) * time.Minute,
+				RetryOnCrash:       retryOnCrash,
+				DisableNativeStats: disableNativeStats,
+				Logger:             cmd.OutOrStderr(),
 			}
 			parityChk := &parity.Checker{
 				RepoRoot: flagRepoRoot,
@@ -223,8 +227,12 @@ Use --dry-run first to see the planned cell list.`,
 				default:
 					failed++
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s (%.1fs)\n",
-					idx, res.Verdict, cell.ID(), res.Duration)
+				tries := ""
+				if res.Attempts > 1 {
+					tries = fmt.Sprintf(" [%d attempts]", res.Attempts)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s (%.1fs)%s\n",
+					idx, res.Verdict, cell.ID(), res.Duration, tries)
 
 				if stopOnFail && (res.Verdict == runner.VerdictFail ||
 					res.Verdict == runner.VerdictCrashed ||
@@ -308,6 +316,12 @@ Use --dry-run first to see the planned cell list.`,
 	cmd.Flags().BoolVar(&keepUp, "keep-up", false, "leave the gateway up between cells (debug)")
 	cmd.Flags().IntVar(&watchdogMins, "watchdog-mins", 30,
 		"per-cell watchdog timeout in minutes (0 to disable)")
+	cmd.Flags().IntVar(&retryOnCrash, "retry-on-crash", 1,
+		"re-run a cell up to N additional times if the gateway container "+
+			"crashes mid-run (0 disables, 1 = retry once). FAIL and TIMEOUT are never retried.")
+	cmd.Flags().BoolVar(&disableNativeStats, "disable-native-stats", false,
+		"fall back to the shell docker-stats sidecar (scripts/docker-stats-sidecar.sh) "+
+			"instead of the native Go collector. Default is the native collector.")
 	cmd.Flags().BoolVar(&skipParity, "skip-parity", false,
 		"skip parity-attestation.sh (NOT recommended; use only for debugging)")
 	cmd.Flags().StringVar(&gatewayTarget, "target", "",

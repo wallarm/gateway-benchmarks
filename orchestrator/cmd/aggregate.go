@@ -21,7 +21,7 @@ func newAggregateCmd() *cobra.Command {
 		Use:   "aggregate",
 		Short: "Re-aggregate per-cell artefacts into matrix.csv / cells.jsonl / matrix.md",
 		Long: `aggregate walks reports/<run-id>/raw/ and emits the canonical
-27-column wide CSV plus a JSONL superset and a short markdown rollup.
+31-column wide CSV (27 legacy + 4 bandwidth) plus a JSONL superset and a short markdown rollup.
 
 This is the same projection scripts/aggregate-csv.sh produces, just
 implemented natively in Go so the orchestrator doesn't need jq/awk

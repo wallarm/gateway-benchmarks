@@ -2,7 +2,7 @@
 .PHONY: help prereqs-check lint \
 	backend-build backend-build-amd64 backend-run backend-smoke \
 	orchestrator-build orchestrator-test orchestrator-vet \
-	bench-run bench-validate bench-aggregate bench-manifest bench-version bench-report \
+	bench-run bench-validate bench-aggregate bench-manifest bench-version bench-report bench-compare-runs \
 	perf-local-up perf-local-parity perf-local-cycle-smoke \
 	perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report \
@@ -78,6 +78,7 @@ help: ## Show this help
 	@echo "  $(GREEN)bench-manifest$(NC)        Print manifest.json of the latest (or specific) run"
 	@echo "  $(GREEN)bench-version$(NC)         Print bench binary version + build metadata"
 	@echo "  $(GREEN)bench-report$(NC)          Render reports/\$$(BENCH_RUN_ID)/report.html (Phase 7)"
+	@echo "  $(GREEN)bench-compare-runs$(NC)    Diff two runs against the tolerance table (Phase 8)"
 	@echo ""
 	@echo "$(YELLOW)Local mode (Phase 5):$(NC)"
 	@echo "  $(GREEN)perf-local-up$(NC)             Bring up loadgen+gateway+backend on 2 isolated bridge networks"
@@ -291,6 +292,22 @@ bench-report: orchestrator-build ## Render reports/$(BENCH_RUN_ID)/report.html (
 			$(if $(BENCH_REPORT_TITLE),--title "$(BENCH_REPORT_TITLE)",) \
 			$(if $(BENCH_REPORT_ENV),--env "$(BENCH_REPORT_ENV)",); \
 	fi
+
+# Phase 8 — reproducibility gate. Compare two bench runs against the
+# canonical tolerance table (RPS ±3 %, latency p50/p95/p99 ±10 %,
+# mem ±5 %, CPU ±10 %; 5xx / 4xx_expected must match). Exit codes:
+#   0 REPRODUCIBLE | 1 SOFT DIFF | 2 NOT REPRODUCIBLE
+BENCH_COMPARE_A    ?=
+BENCH_COMPARE_B    ?=
+BENCH_COMPARE_ARGS ?=
+bench-compare-runs: orchestrator-build ## Diff two runs (BENCH_COMPARE_A / BENCH_COMPARE_B) against the tolerance table
+	@if [ -z "$(BENCH_COMPARE_A)" ] || [ -z "$(BENCH_COMPARE_B)" ]; then \
+		echo "$(RED)BENCH_COMPARE_A and BENCH_COMPARE_B must be set$(NC)"; \
+		echo "  example: make bench-compare-runs BENCH_COMPARE_A=run-1 BENCH_COMPARE_B=run-2"; \
+		exit 64; \
+	fi
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" compare-runs \
+		"$(BENCH_COMPARE_A)" "$(BENCH_COMPARE_B)" $(BENCH_COMPARE_ARGS)
 
 # ---------------------------------------------------------------------------
 # Local mode (Phase 5 + 6)

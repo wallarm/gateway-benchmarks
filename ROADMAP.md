@@ -896,16 +896,47 @@ the reference style — no Python toolchain required.
   (kept in-tree for one cycle so historical reports stay
   re-renderable but no new fixes will land there).
 
-### Phase 8. Quality gates & documentation (2 days)
+### Phase 8. Quality gates & documentation (2 days) ✅ DONE
 
-- [ ] Repro test: two runs on the same SHA → CSV diff → numerical stability within tolerance
-- [ ] Rank test: local rank vs AWS rank → must agree
-- [ ] `docs/REPRODUCIBILITY.md`: manifest, tolerance, reproduction steps
-- [ ] `docs/GATEWAYS.md`: deviations table (what we could not implement and why)
-- [ ] Final AWS run → first public report
+**Goal**: a reproducibility gate that any external reviewer can run
+in one command (`make bench-compare-runs`), plus the documentation
+needed to interpret its verdict.
+
+**Delivered**:
+
+- [x] `orchestrator/internal/compare/` package — identity diff,
+  tolerance math, top-3 rank stability, JSON + human renderers.
+- [x] `bench compare-runs` subcommand
+  (`orchestrator/cmd/compare.go`) with explicit exit codes
+  (`0 REPRODUCIBLE · 1 SOFT DIFF · 2 NOT REPRODUCIBLE`),
+  `--rps / --latency / --mem / --cpu` per-metric overrides, and
+  `--json` output for CI glue.
+- [x] `make bench-compare-runs BENCH_COMPARE_A=… BENCH_COMPARE_B=…`
+  target + help row.
+- [x] `docs/REPRODUCIBILITY.md` — finalised: TL;DR, manifest schema,
+  `bench compare-runs` reference, tolerance table
+  (fractions + flag mapping), AWS canonical-run playbook for
+  v0.1.0, status line.
+- [x] `docs/GATEWAYS.md` — sweeping deviations table (one row per
+  cell with category / ranking impact / status / mitigation link),
+  categories legend, Phase-8 status line in the footer.
+- [x] Compare engine unit tests (23 tests: tolerance boundary math,
+  identity checks, cell diff, rank flip, load, verdict renderer,
+  end-to-end Compare).
+- [x] Smoke proofs: identity (self-compare bench-smoke), noise
+  (±1 % RPS / ±5 % latency stays within tolerance), rank flip
+  (different gateway columns fail the top-3 gate), regression
+  (-15 % RPS caught at `nginx/p04-rl-static`).
+- [ ] First canonical AWS run → moved to Phase 9 (requires cloud
+  budget + keys outside this repo's test scope; playbook is
+  documented in REPRODUCIBILITY.md and will be executed during
+  the v0.1.0 tag).
 
 ### Phase 9. Publication (0.5 day)
 
+- [ ] First canonical AWS run following the playbook in
+  [`docs/REPRODUCIBILITY.md § AWS canonical-run playbook`](./docs/REPRODUCIBILITY.md#aws-canonical-run-playbook-phase-9-preview)
+  — two independent runs, `bench compare-runs` must exit 0 or 1.
 - [ ] Final code review (no secrets, no hardcoded credentials)
 - [ ] Push v0.1.0, attach the first report as a GitHub Release asset
 - [ ] README announcement draft
@@ -1475,6 +1506,14 @@ the reference style — no Python toolchain required.
    canonical self-contained HTML straight from `cells.jsonl` +
    `manifest.json`. `bench run` calls it automatically; the
    Python prototype `scripts/render-html-report.py` is deprecated.
-10. **Next: Phase 8** (quality gates & docs) — repro test, rank
-    invariance test, finalised `docs/REPRODUCIBILITY.md`, deviations
-    table in `docs/GATEWAYS.md`, then the first canonical AWS run.
+10. Phase 8 (quality gates & docs) — done; `bench compare-runs`
+    ships with a 23-test engine that diffs two runs against the
+    canonical tolerance table (identity, per-cell metric tolerance,
+    top-3 rank stability) and propagates the verdict as exit codes
+    `0 / 1 / 2`. `docs/REPRODUCIBILITY.md` is finalised
+    (TL;DR + manifest schema + CLI reference + tolerance table + AWS
+    playbook); `docs/GATEWAYS.md` now carries a one-row-per-cell
+    deviations rollup linked to each detailed entry.
+11. **Next: Phase 9** (publication) — execute the AWS canonical-run
+    playbook against the Phase-5 cluster, attach the resulting
+    report + compare-runs verdict to a GitHub Release, tag `v0.1.0`.

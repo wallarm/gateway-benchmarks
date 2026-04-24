@@ -22,7 +22,7 @@ This project is developed and maintained by **Wallarm, Inc.** — the author of 
 
 - All gateway configs, k6 scenarios, and infrastructure are **open and frozen at report release** (the git SHA is pinned in `manifest.json`).
 - **Parity attestation** runs before every cell: the same request, the same JWT seed, the same rate-limit window — gateways either behave identically, or the cell is marked as a `deviation` and excluded from the aggregate.
-- Reasonable external tuning of a competing gateway is accepted as a PR — see the [template](./.github/PULL_REQUEST_TEMPLATE.md) *(to be added in Phase 8)*.
+- Reasonable external tuning of a competing gateway is accepted as a PR — see the [template](./.github/PULL_REQUEST_TEMPLATE.md) *(landing alongside v0.1.0)*.
 - All deviations are documented in [docs/GATEWAYS.md](./docs/GATEWAYS.md) with a reason and an upstream reference.
 
 ## Gateways Under Test
@@ -453,10 +453,16 @@ are the wrap-up.
   canonical self-contained HTML straight from `cells.jsonl` +
   `manifest.json`; `bench run` calls it automatically; the
   Python prototype `scripts/render-html-report.py` is deprecated)
-- [ ] Phase 8 — Quality gates + docs (repro test, rank invariance
-  test, finalised `docs/REPRODUCIBILITY.md`, deviations table in
-  `docs/GATEWAYS.md`, first canonical AWS run)
-- [ ] Phase 9 — Publication / v0.1.0
+- [x] Phase 8 — Quality gates + docs (`bench compare-runs` diffs
+  two runs against the canonical tolerance table — identity,
+  per-cell metric tolerance, top-3 rank stability — with exit codes
+  `0 REPRODUCIBLE · 1 SOFT DIFF · 2 NOT REPRODUCIBLE`;
+  `docs/REPRODUCIBILITY.md` finalised with manifest schema, CLI
+  reference, tolerance table and AWS canonical-run playbook;
+  `docs/GATEWAYS.md` ships a one-row-per-cell deviations rollup)
+- [ ] Phase 9 — Publication / v0.1.0 (execute the AWS canonical-run
+  playbook, attach HTML report + `compare-runs` verdict to the
+  GitHub Release)
 
 See [ROADMAP.md](./ROADMAP.md) for details.
 

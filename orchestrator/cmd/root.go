@@ -36,10 +36,10 @@ var rootCmd = &cobra.Command{
   3. For passing cells it invokes scripts/load-gateway.sh, captures
      k6-summary.json, docker-stats.csv and any sidecars.
   4. After the sweep it aggregates everything into reports/<RUN_ID>/
-     {manifest.json, matrix.csv, cells.jsonl, matrix.md}.
-
-Phase 6 wraps the proven shell drivers; Phase 7 will replace the
-HTML rendering step that currently lives in scripts/render-html-report.py.`,
+     {manifest.json, matrix.csv, cells.jsonl, matrix.md} and renders
+     report.html via the native 'bench report' subcommand.
+  5. 'bench compare-runs' (Phase 8) diffs any two sweeps against the
+     canonical tolerance table and confirms top-3 rank stability.`,
 	Version: version.Short(),
 }
 
@@ -69,6 +69,7 @@ func init() {
 	rootCmd.AddCommand(newValidateCmd())
 	rootCmd.AddCommand(newAggregateCmd())
 	rootCmd.AddCommand(newReportCmd())
+	rootCmd.AddCommand(newCompareCmd())
 	rootCmd.AddCommand(newManifestCmd())
 	rootCmd.AddCommand(newVersionCmd())
 }

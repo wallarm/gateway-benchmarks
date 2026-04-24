@@ -1,6 +1,29 @@
 # Reproducibility
 
-> What it takes for two independent runs to produce **the same ranking** within tolerance.
+> What it takes for two independent runs to produce **the same
+> ranking** within tolerance. Phase 8 ships both the pinning
+> (manifest / seed / digest) **and** the gate that proves two runs
+> actually agree: `bench compare-runs`.
+
+## TL;DR — the reproducibility gate
+
+```bash
+# Two runs on the same SHA, same hardware, same matrix:
+make perf-local-run BENCH_RUN_ID=run-a
+make perf-local-run BENCH_RUN_ID=run-b
+
+# The Phase-8 quality gate:
+make bench-compare-runs BENCH_COMPARE_A=run-a BENCH_COMPARE_B=run-b
+#   exit 0 → REPRODUCIBLE
+#   exit 1 → SOFT DIFF (matrix shape changed, one side has extra cells)
+#   exit 2 → NOT REPRODUCIBLE (identity mismatch, metric outside tolerance,
+#                              or top-3 rank unstable)
+```
+
+A run that fails `compare-runs` is a **release blocker** and must be
+triaged before its HTML report is published.
+
+---
 
 ## What we pin (TASK §7)
 
@@ -105,49 +128,179 @@ The digest is recorded in the manifest. Two runs with different digests for the 
 - Total RAM
 - Uptime (to detect warm/cold hosts)
 
-## Verifying reproducibility
+---
+
+## Verifying reproducibility — `bench compare-runs`
+
+The Phase-8 gate diffs two bench runs against the canonical tolerance
+table and answers three questions:
+
+1. **Identity** — do the manifests agree on the invariants that *must*
+   be byte-identical? `git_sha`, `seed`, `k6_digest`, `selected_rows`
+   (matrix shape), and the per-gateway image digests.
+2. **Numeric similarity** — for every matched cell, does each metric
+   stay within its configured tolerance? The defaults live one level
+   below (§Tolerances).
+3. **Ranking stability** — for every (policy, load, scenario) column,
+   does the **top-3** gateway order agree across runs?
+
+Invocation:
 
 ```bash
-# Run #1
-make perf-local-run RUN_ID=run-1
-# Run #2 (10 minutes later or on a different host)
-make perf-local-run RUN_ID=run-2
+# Via the orchestrator binary:
+orchestrator/bin/bench compare-runs run-a run-b
 
-# Diff
-scripts/compare-runs.sh reports/run-1 reports/run-2
+# Via make (stops early with a clear error if either id is missing):
+make bench-compare-runs BENCH_COMPARE_A=run-a BENCH_COMPARE_B=run-b
+
+# JSON for CI pipelines (same data as the human report):
+orchestrator/bin/bench compare-runs run-a run-b --json
+
+# Override tolerances (fractions, not percentages):
+orchestrator/bin/bench compare-runs run-a run-b \
+    --rps 0.02 --latency 0.05 --mem 0.03
+
+# Explicit cells.jsonl paths (useful for stitched / historical runs):
+orchestrator/bin/bench compare-runs \
+    --input-a reports/combined-pathA-p1-baseline/cells.jsonl \
+    --input-b reports/pathA-20260423T090028Z/cells.jsonl
 ```
 
-The script checks:
+Exit codes:
 
-1. **Identity**: git SHA, seed, matrix, and every digest must match.
-2. **Numeric similarity**: for every cell —
-   - RPS: tolerance ±3%
-   - p95 latency: tolerance ±10%
-   - memory peak: tolerance ±5%
-   - error counts: must match within 10 per million
-3. **Ranking stability**: the top-3 gateways by RPS in each cell must match across both runs.
+| Code | Meaning            | When it fires |
+|------|--------------------|---------------|
+| `0`  | `REPRODUCIBLE`     | identity ✓, every metric within tolerance, top-3 stable |
+| `1`  | `SOFT DIFF`        | shape mismatch (only-in-A / only-in-B cells) but identity + tolerance still hold where both sides are present |
+| `2`  | `NOT REPRODUCIBLE` | identity mismatch, metric outside tolerance, or top-3 rank flipped |
 
-If any check fails → the run is tagged `not reproducible` and becomes a release blocker.
+The exit code is propagated by `make bench-compare-runs` so the gate
+drops straight into CI without extra glue.
+
+### Human-readable output
+
+```
+compare-runs: run-a  ↔  run-b
+────────────────────────────────────────────────────────────────────
+identity
+  ✓ git_sha            142744e37ca4135d142cd0e58e337cc10568aa2b
+  ✓ seed               42
+  ✓ k6_digest          sha256:4fd3a69…
+  ✓ selected_rows      48 rows
+  ✓ gateway_digests    7 gateways
+
+cells: matched=48  only-in-A=0  only-in-B=0  divergent=1
+  ✗ nginx/p04-rl-static/p1-baseline/s04-rl-static-http  verdictA=PASS verdictB=PASS
+      rps          A=50538.89rps  B=42958.05rps  rel=15.00% (tol=±3.00%)
+
+rank stability: top-3 agrees on every column ✓
+
+verdict: NOT REPRODUCIBLE — metric outside tolerance  (exit=2)
+```
+
+When both manifests are missing (historical / stitched runs from
+before Phase 6) the identity block is skipped with a single
+`SKIP — manifest.json missing on one or both runs` line and the
+exit code is driven entirely by the numeric + rank comparison.
+
+---
 
 ## Tolerances (TASK §8)
 
-| Metric | Tolerance |
-|--------|-----------|
-| RPS (throughput)         | ±3% |
-| Latency p50, p95, p99    | ±10% |
-| Memory peak              | ±5% |
-| Memory steady-state      | ±5% |
-| CPU %                    | ±10% |
-| Bandwidth (bytes/s)      | ±3% |
-| Errors 5XX absolute      | 0 (must match) |
-| Errors 4XX-expected      | 0 (must match) |
+These are the defaults `bench compare-runs` applies when no flag is
+passed. Fractions (not percentages) so the CLI and the docs stay in
+lockstep.
+
+| Metric                       | Tolerance | Flag         | Rationale |
+|------------------------------|-----------|--------------|-----------|
+| RPS (throughput)             | ±3 %      | `--rps`      | k6 closed-loop variance across clean runs stays under ~1 %; 3 % absorbs thermal noise on Apple Silicon and rack neighbour jitter in AWS. |
+| Latency p50, p95, p99        | ±10 %     | `--latency`  | Tail latency is more variable than RPS; 10 % is the tightest band we can defend across both Docker Desktop and EC2. |
+| Memory peak                  | ±5 %      | `--mem`      | Capturing genuine regressions (e.g. a new worker per CPU) while tolerating normal allocator drift. |
+| Memory steady-state          | ±5 %      | `--mem`      | Same rationale; `bench compare-runs` averages the steady window. |
+| CPU %                        | ±10 %     | `--cpu`      | Docker stats sampling jitter; peaks are especially noisy on macOS. |
+| Errors 5XX absolute          | must match | `--errors-strict=false` lifts the strict gate | A 5xx is a policy break, not noise. |
+| Errors 4XX-expected          | must match | same        | Expected 4xx lives on policy boundaries (p04/p06/p07 rate limits, p02/p03 auth) — it is *the* verifiable signal. |
+| Rank top-3 (per column)      | must match | n/a         | Ranking is the product of the benchmark; if it flips, the benchmark is not reproducible. |
+
+Internal defaults live in
+[`orchestrator/internal/compare/compare.go · DefaultTolerances()`](../orchestrator/internal/compare/compare.go);
+the table above is the single source of truth that both the code
+and the CLI `--help` quote.
+
+---
 
 ## Factors we cannot eliminate
 
-- **EC2 noisy neighbour**: even inside a cluster placement group a small jitter from rack neighbours is possible. Mitigation — 2 repetitions and take the median.
-- **Thermal throttling in local mode**: Docker Desktop on macOS does not guarantee pinning. Mitigation — local mode is explicitly tagged `less-reliable`; the local ranking is distinct from AWS (though the top-3 typically agree).
-- **Upstream availability** (Kong pulls especially): if hub.docker.com is unreachable, the run aborts and is reported as `prereq_failed`.
+- **EC2 noisy neighbour**: even inside a cluster placement group a
+  small jitter from rack neighbours is possible. Mitigation — 2
+  repetitions (`bench run --reps 2`) and take the median; keep the
+  per-cell watchdog conservative so a slow neighbour cannot bleed
+  into the next cell.
+- **Thermal throttling in local mode**: Docker Desktop on macOS does
+  not guarantee CPU pinning. Mitigation — local mode is explicitly
+  tagged `less-reliable`; the local ranking is distinct from AWS
+  (though the top-3 typically agree, see the AWS canonical playbook
+  below).
+- **Upstream availability** (Kong pulls especially): if hub.docker.com
+  is unreachable, the run aborts and is reported as `prereq_failed`.
+- **Wallarm built-from-source**: the benchmark runs the in-tree build
+  addressed by the `WALLARM_IMAGE` tag. Two runs that differ only in
+  `WALLARM_IMAGE` are apples-to-oranges and `compare-runs` correctly
+  flags the `gateway_digests` identity check.
+
+---
+
+## AWS canonical-run playbook (Phase 9 preview)
+
+The first public report in `v0.1.0` is produced by running the
+following sequence on an AWS cluster provisioned by
+`infra/aws/` (Phase 5). The playbook is reproducible by any
+operator with the right IAM credentials and serves double duty as
+the acceptance test for Phases 5 + 6 + 7 + 8 together.
+
+```bash
+# 1. Bring up the 3-EC2 cluster placement group (Phase 5):
+make perf-aws-init
+make perf-aws-deploy
+
+# 2. Full HTTP matrix, 2 repetitions, seed pinned (Phase 6 orchestrator):
+make perf-aws-run \
+    BENCH_RUN_ID=v0.1.0-aws-a \
+    BENCH_REPS=2 \
+    BENCH_SEED=42 \
+    BENCH_NOTES="v0.1.0 canonical run A — 3×c6i.2xlarge, cluster PG, seed=42"
+
+# 3. Second independent run — different timestamp, same everything else:
+make perf-aws-run \
+    BENCH_RUN_ID=v0.1.0-aws-b \
+    BENCH_REPS=2 \
+    BENCH_SEED=42 \
+    BENCH_NOTES="v0.1.0 canonical run B — reproducibility witness"
+
+# 4. Gate: the two runs must be REPRODUCIBLE:
+make bench-compare-runs \
+    BENCH_COMPARE_A=v0.1.0-aws-a \
+    BENCH_COMPARE_B=v0.1.0-aws-b
+
+# 5. Render the canonical HTML from run A:
+make perf-aws-report BENCH_RUN_ID=v0.1.0-aws-a
+
+# 6. Tear down the cluster (Phase 5):
+make perf-aws-destroy
+```
+
+Gate output for step 4 is archived into the release notes alongside
+the HTML report. A run pair that fails step 4 must be triaged and
+re-collected before `v0.1.0` is tagged.
+
+---
 
 ## Status
 
-> Stub. Implementation — Phases 6 (manifest + seed) and 8 (compare-runs.sh + quality gates).
+- **Phase 6** — manifest + seed + digest pinning: `DONE` (see
+  `orchestrator/internal/manifest`).
+- **Phase 7** — HTML reproducible straight from `cells.jsonl`: `DONE`
+  (see `orchestrator/internal/report`).
+- **Phase 8** — `bench compare-runs` quality gate + canonical
+  tolerance table + this playbook: **`DONE`**.
+- **Phase 9** — first canonical AWS run + `v0.1.0` release: **NEXT**.

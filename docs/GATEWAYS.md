@@ -81,6 +81,60 @@ Every objective difference that keeps a cell from being a 100 %
 apples-to-apples comparison is recorded here. Each entry links the
 exact cell (`<gw>, <profile>`), the root cause and the mitigation.
 
+### Summary table
+
+One-row-per-cell rollup (Phase 8 §
+[`docs/REPRODUCIBILITY.md`](./REPRODUCIBILITY.md)). The detailed
+entries live below — jump straight there via the `↓ details` link
+on each row. `Ranking impact` obeys the tolerance table in
+REPRODUCIBILITY.md §Tolerances; `status` matches the per-entry
+footer.
+
+| Gateway  | Cell(s)                               | Category     | Ranking impact | Status    | Mitigation (summary) |
+|----------|---------------------------------------|--------------|----------------|-----------|----------------------|
+| wallarm  | `p01-vanilla`                         | gw-config    | none           | accepted  | Register one service per path prefix (`base_path: "/"` rejected by Admin API). [↓ details](#gwwallarm-pp01-vanilla) |
+| wallarm  | `p02-jwt`                             | (historical) | none           | retired   | Retired once `WALLARM_IMAGE` went source-built; `/policies` sanity guard preserved. [↓ details](#gwwallarm-pp02-jwt-historical-no-longer-active) |
+| wallarm  | `p04-rl-static`                       | gw-primitive | none           | mitigated | `window_type: sliding` (`fixed+window=1` is a no-op on the public build). [↓ details](#gwwallarm-pp04-rl-static) |
+| wallarm  | `p06-rl-dynamic-low`, `p07-rl-dynamic-high` | gw-primitive | none    | accepted  | Same `window_type: sliding`; `ratelimit_key: ${request.headers.x-real-ip}`. [↓ details](#gwwallarm-pp06-rl-dynamic-low--p07-rl-dynamic-high) |
+| harness  | every RL burst probe                  | harness      | none           | accepted  | `run_burst_probe` fires ASAP instead of pacing across `duration_s` — a *stricter* invariant. [↓ details](#harness-pburst-runner-ignores-duration_s) |
+| wallarm  | `p08-req-headers`                     | gw-routing   | none           | accepted  | Upstream re-pointed at `/anything/headers` to dodge trailing-slash 404. [↓ details](#gwwallarm-pp08-req-headers) |
+| wallarm  | `p09-resp-headers`                    | gw-routing   | none on add-side; drop-side structural | accepted | add-side verified; drop-side (`Server:` strip) structural on wallarm until `preserve_path` lands. [↓ details](#gwwallarm-pp09-resp-headers) |
+| wallarm  | `p10-req-body`                        | gw-primitive | none           | accepted  | `lua_runner` (no first-class `body_transform` policy in the current build). [↓ details](#gwwallarm-pp10-req-body) |
+| wallarm  | `p11-resp-body`                       | (see §p11-resp-body) | none           | accepted  | Same `lua_runner` + chunked fallback as p10. [↓ details](#gwwallarm-pp11-resp-body) |
+| wallarm  | `p12-full-pipeline`                   | (historical) | none           | retired   | Same retirement as wallarm/p02. [↓ details](#gwwallarm-pp12-full-pipeline-historical-no-longer-active) |
+| envoy    | `p04-rl-static`                       | gw-primitive | none           | no deviation | Canonical 1000 rps rolling; historical `max_connection_duration: 0s` trap documented only. [↓ details](#gwenvoy-pp04-rl-static) |
+| envoy    | `p06-rl-dynamic-low`, `p07-rl-dynamic-high` | gw-primitive | none on parity; cardinality mitigated | mitigated | Enumerated `descriptors[]` (v1.33 wildcard landed post-pin); bump to v1.33+ tracked. [↓ details](#gwenvoy-pp06-rl-dynamic-low--p07-rl-dynamic-high-infraenumerated-descriptors) |
+| envoy    | `*`                                   | infra        | none           | accepted  | Docker Desktop VirtioFS inode swap gotcha (macOS only). [↓ details](#gwenvoy-p-infradocker-desktop-virtiofs-cache) |
+| traefik  | `p06-rl-dynamic-low`, `p07-rl-dynamic-high` | gw-config    | none     | accepted  | `forwardedHeaders.insecure: true` inside YAML (CLI flag silently ignored). [↓ details](#gwtraefik-pp06-rl-dynamic-low--p07-rl-dynamic-high-infraforwardedheaders-insecure) |
+| traefik  | `p10-req-body`, `p11-resp-body`, `p12-full-pipeline` | plugin       | none | accepted  | Yaegi literal coercion helper in `body_rewrite`. [↓ details](#gwtraefik-pp10-req-body--p11-resp-body--p12-full-pipeline-infrayaegi-json-literal-coercion) |
+| traefik  | `p02-jwt`, `p12-full-pipeline`        | plugin       | none           | accepted  | `RawMessage` per-claim decoding (Yaegi skips method dispatch on custom JSON types). [↓ details](#gwtraefik-pp02-jwt--p12-full-pipeline-infrayaegi-json-no-method-dispatch) |
+| apisix   | `p08-req-headers`, `p12-full-pipeline` | infra-patch | none           | accepted  | Entrypoint `sed` rerouting XFF through a writable `$bench_xff` variable. [↓ details](#gwapisix-pp08-req-headers--p12-full-pipeline-infranginx-conf-xff-patch) |
+| apisix   | `p09-resp-headers`, `p12-full-pipeline` | gw-config    | none          | accepted  | `serverless-post-function` header_filter for `p09`; baseline `server_tokens: false` for `p12`. [↓ details](#gwapisix-pp09-resp-headers--p12-full-pipeline-infrangx-header-server-nil) |
+| kong     | `p08-req-headers`, `p12-full-pipeline` | infra-patch | none           | accepted  | Entrypoint `sed` on kong's nginx template; `$bench_xff` rewrite + one-line Lua shim. [↓ details](#gwkong-pp08-req-headers--p12-full-pipeline-infranginx-template-xff-patch) |
+| kong     | `p10-req-body`, `p11-resp-body`, `p12-full-pipeline` | sandbox      | none     | accepted  | `KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES=body_rewrite` (single 80-line shared module). [↓ details](#gwkong-pp10-req-body--p11-resp-body--p12-full-pipeline-infrauntrusted-lua-sandbox-whitelist) |
+| kong     | `p11-resp-body`, `p12-full-pipeline`  | gw-config    | none           | accepted  | `header_filter` chunk clears upstream `Content-Length`; chunked fallback. [↓ details](#gwkong-pp11-resp-body--p12-full-pipeline-infrapost-function-content-length-drop) |
+| harness  | `go-httpbin-echo-shape`               | harness      | none           | accepted  | `assert_json_*` helpers accept both scalar and array-of-one. [↓ details](#harness-pgo-httpbin-echo-shape) |
+| platform | every cell on Apple Silicon           | platform     | none           | accepted  | Never `--platform linux/amd64` wallarm on arm64 (qemu Lua segfault). [↓ details](#platform-pqemu-amd64-on-arm64) |
+
+Categories explained:
+
+- **gw-config** — deviation is a knob exposed by the gateway's own
+  config surface (YAML / Admin API / env var).
+- **gw-primitive** — the gateway's native primitive differs in shape
+  from `docs/POLICIES.md` but remains canonical-equivalent (e.g.
+  bucket type, window semantics).
+- **gw-routing** — path-compose / header assembly quirks we route
+  around at the fixture level.
+- **plugin** — a Yaegi / Lua user plugin that emulates a primitive
+  the gateway does not ship natively.
+- **infra** / **infra-patch** — a shim outside the gateway's own
+  plugin surface (entrypoint `sed`, template patch, etc.).
+- **sandbox** — Lua sandbox whitelist for a known-audited module.
+- **harness** — the parity harness itself makes the deviation (and
+  Phase 4 k6 load confirms it is stricter than paced traffic).
+- **platform** — host-OS / architecture quirk, never ranking-bearing.
+- **historical** — retired in-tree, kept here for reviewer context.
+
 ### Template
 
 ```markdown
@@ -1637,7 +1691,7 @@ Per-scenario reference material:
       `strconv`) is entirely within Yaegi's whitelist.
       `coerceJSONLiteral` in `New()` coerces YAML-stringified
       scalars back to native Go types (see deviation
-      [`[gw=traefik, p=p09/p10, infra=yaegi-json-literal-coercion]`](#gwtraefik-pp10-req-body--p11-resp-body-infrayaegi-json-literal-coercion)).
+      [`[gw=traefik, p=p09/p10, infra=yaegi-json-literal-coercion]`](#gwtraefik-pp10-req-body--p11-resp-body--p12-full-pipeline-infrayaegi-json-literal-coercion)).
       3/3 + 3/3 PASS.
     * `p02-jwt` — local Yaegi plugin `jwt_hs256` under
       `_shared/plugins-local/src/github.com/wallarm/jwt_hs256/`,
@@ -2021,4 +2075,9 @@ Per-scenario reference material:
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst
   actually fits inside its 1 s window. Validated end-to-end against
   `wallarm / p04-rl-static` → `2xx=998, 429=202, 5xx=0`.
+- Deviations rollup table (this document) — **Phase 8 DONE**; one
+  row per active cell, categorised and linked to the detailed entry.
+- Quality gate that exercises this table — `bench compare-runs`
+  (Phase 8 DONE, see [docs/REPRODUCIBILITY.md §
+  bench compare-runs](./REPRODUCIBILITY.md#verifying-reproducibility--bench-compare-runs)).
 - Full status by phase: [ROADMAP.md § Phase 3](../ROADMAP.md#phase-3-parity-framework-3-5-days--core-work).

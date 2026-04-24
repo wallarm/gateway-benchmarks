@@ -37,12 +37,19 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # Default tags applied to every resource. Some AWS Organizations
+  # enforce mandatory tags via SCP — Wallarm's qa account, for
+  # example, requires `Product` and `Environment` on every resource
+  # or `ec2:CreateVpc` / `ec2:RunInstances` is denied. Override
+  # `product_tag` / `environment_tag` from terraform.tfvars to fit
+  # your org's tag policy.
   default_tags {
     tags = {
-      Project   = "gateway-benchmarks"
-      ManagedBy = "tofu"
-      Phase     = "5"
-      Owner     = var.owner_tag
+      Product     = var.product_tag
+      Project     = var.project_tag
+      Environment = var.environment_tag
+      Owner       = var.owner_tag
+      ManagedBy   = "opentofu"
     }
   }
 }

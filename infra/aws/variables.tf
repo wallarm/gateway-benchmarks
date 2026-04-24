@@ -117,8 +117,31 @@ variable "allowed_ssh_cidrs" {
 # -----------------------------------------------------------------------------
 # Tagging / ownership
 # -----------------------------------------------------------------------------
+# Some AWS Organizations enforce mandatory tags via SCP (e.g. Wallarm's
+# qa account denies `ec2:CreateVpc` / `ec2:RunInstances` if Product /
+# Environment are missing). The defaults below match an unrestricted
+# account; override them in terraform.tfvars when targeting an Org
+# with tag-policy enforcement.
+variable "product_tag" {
+  description = "Product tag — required by some AWS Organizations' tag-enforcement SCPs. Wallarm's qa account requires `Product=qa`. Free-form for unrestricted accounts."
+  type        = string
+  default     = "gateway-benchmarks"
+}
+
+variable "project_tag" {
+  description = "Project tag — recommended for cost-explorer attribution."
+  type        = string
+  default     = "gateway-benchmarks"
+}
+
+variable "environment_tag" {
+  description = "Environment tag — required by some AWS Organizations' tag-enforcement SCPs. Common values: `staging`, `dev`, `prod`."
+  type        = string
+  default     = "staging"
+}
+
 variable "owner_tag" {
-  description = "Free-form Owner tag applied to every resource. Useful for AWS cost-explorer attribution when multiple operators share an account."
+  description = "Owner tag applied to every resource. Useful for AWS cost-explorer attribution when multiple operators share an account."
   type        = string
   default     = "gateway-benchmarks"
 }

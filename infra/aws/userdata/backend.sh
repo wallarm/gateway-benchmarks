@@ -15,7 +15,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
     ca-certificates curl git gnupg jq openssl python3-minimal \
-    docker.io docker-compose-v2
+    docker.io docker-compose-v2 docker-buildx
 
 cat <<'EOF' >/etc/sysctl.d/99-bench.conf
 net.core.somaxconn        = 65535
@@ -50,11 +50,23 @@ fi
 chown -R ubuntu:ubuntu "${REPO_DIR}"
 
 # -----------------------------------------------------------------------------
-# Pre-pull go-httpbin (matches BACKEND_IMAGE in Makefile + every
-# gateways/<gw>/docker-compose.yaml — see backend/Dockerfile for the
-# vendored build that sits at the same v2.22.1 SHA).
-# -----------------------------------------------------------------------------
-docker pull ghcr.io/mccutchen/go-httpbin:v2.22.1
+# Build the vendored backend image.
+#
+# Why not just `docker pull ghcr.io/mccutchen/go-httpbin:v2.22.1`?
+# Because mccutchen/go-httpbin's GHCR registry only retains a sliding
+# window of tags (verified empirically 2026-04-24: every numbered tag
+# v2.x.y had been purged, leaving only :latest). Pinning to :latest
+# would break the manifest-reproducibility contract since we cannot
+# control its digest. Building from the vendored upstream/ source
+# (which is byte-locked to v2.22.1 commit f26ca58 — see
+# backend/Dockerfile ARGs) gives a deterministic image that we tag
+# under the same upstream coordinate so every gateway compose file
+# can reference `ghcr.io/mccutchen/go-httpbin:v2.22.1` unchanged.
+DOCKER_BUILDKIT=1 docker build \
+    --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --tag ghcr.io/mccutchen/go-httpbin:v2.22.1 \
+    --tag gateway-benchmarks/backend:v2.22.1 \
+    "${REPO_DIR}/backend"
 
 # -----------------------------------------------------------------------------
 # systemd unit — backend stays up across reboots

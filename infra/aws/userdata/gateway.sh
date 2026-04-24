@@ -21,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
     ca-certificates curl git gnupg jq openssl python3-minimal \
-    docker.io docker-compose-v2 \
+    docker.io docker-compose-v2 docker-buildx \
     build-essential        # needed for the wallarm-image local build
 
 cat <<'EOF' >/etc/sysctl.d/99-bench.conf
@@ -75,9 +75,15 @@ chown -R ubuntu:ubuntu "${REPO_DIR}"
     wait
 } || echo "WARN: at least one pre-pull failed — `docker pull` it manually before the sweep."
 
-# Pre-pull the backend image too, in case the operator runs a single-
-# host smoke (gateway + backend on this host) for sanity-checking
-# without the loadgen host.
-docker pull --quiet ghcr.io/mccutchen/go-httpbin:v2.22.1 || true
+# Build the vendored backend image too, in case the operator runs a
+# single-host smoke (gateway + backend on this host) for sanity-
+# checking without the loadgen host. See infra/aws/userdata/backend.sh
+# for why we build instead of pull.
+DOCKER_BUILDKIT=1 docker build \
+    --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --tag ghcr.io/mccutchen/go-httpbin:v2.22.1 \
+    --tag gateway-benchmarks/backend:v2.22.1 \
+    "${REPO_DIR}/backend" || \
+    echo "WARN: vendored backend build failed — single-host smoke won't work; sweep is unaffected."
 
 echo "==> userdata/gateway: done at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

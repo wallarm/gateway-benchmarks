@@ -2,42 +2,25 @@
 #
 # 3 EC2 c6i.2xlarge in a single cluster placement group, single AZ,
 # single subnet. Each one has a tightly-scoped role — see the
-# user_data scripts under infra/aws/userdata/.
+# user_data scripts under infra/aws/userdata/ (referenced from the
+# corresponding launch template in launch_templates.tf).
 #
-# Static private IPs (loadgen=10, gateway=20, backend=30) make the
-# SSH helper outputs deterministic and let userdata reference peers
-# by IP without needing a service-discovery layer.
+# Almost everything about the instance lives in launch_templates.tf
+# (AMI, type, user_data, networking, EBS, tag_specifications). This
+# file just attaches the instance to the cluster placement group +
+# carries the public-facing instance tags. See launch_templates.tf
+# header for why this split exists.
 
 # -----------------------------------------------------------------------------
 # Loadgen — runs k6 against the gateway
 # -----------------------------------------------------------------------------
 resource "aws_instance" "loadgen" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.loadgen.id]
-  placement_group             = aws_placement_group.bench.name
-  associate_public_ip_address = true
-  private_ip                  = var.loadgen_private_ip
-  key_name                    = var.ssh_key_name
-
-  root_block_device {
-    volume_type = "gp3"
-    volume_size = var.ebs_size_gb
-    iops        = var.ebs_iops
-    throughput  = var.ebs_throughput_mbps
-    encrypted   = true
-    tags = {
-      Name = "${var.name_prefix}-loadgen-root"
-    }
+  launch_template {
+    id      = aws_launch_template.loadgen.id
+    version = "$Latest"
   }
 
-  # Bootstraps Docker + pulls the pinned k6 image so the first
-  # `k6 run` invocation doesn't have to. Userdata runs once on the
-  # initial boot; idempotent across reboots via cloud-init's
-  # builtin cache (so manual `cloud-init clean && reboot` is the
-  # way to re-run it).
-  user_data = file("${path.module}/userdata/loadgen.sh")
+  placement_group = aws_placement_group.bench.name
 
   # Userdata changes invalidate the instance — we want a fresh boot
   # so the new bootstrap actually runs. Without this, modifying
@@ -54,27 +37,12 @@ resource "aws_instance" "loadgen" {
 # Gateway — the system under test
 # -----------------------------------------------------------------------------
 resource "aws_instance" "gateway" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.gateway.id]
-  placement_group             = aws_placement_group.bench.name
-  associate_public_ip_address = true
-  private_ip                  = var.gateway_private_ip
-  key_name                    = var.ssh_key_name
-
-  root_block_device {
-    volume_type = "gp3"
-    volume_size = var.ebs_size_gb
-    iops        = var.ebs_iops
-    throughput  = var.ebs_throughput_mbps
-    encrypted   = true
-    tags = {
-      Name = "${var.name_prefix}-gateway-root"
-    }
+  launch_template {
+    id      = aws_launch_template.gateway.id
+    version = "$Latest"
   }
 
-  user_data                   = file("${path.module}/userdata/gateway.sh")
+  placement_group             = aws_placement_group.bench.name
   user_data_replace_on_change = true
 
   tags = {
@@ -87,27 +55,12 @@ resource "aws_instance" "gateway" {
 # Backend — the upstream go-httpbin
 # -----------------------------------------------------------------------------
 resource "aws_instance" "backend" {
-  ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public.id
-  vpc_security_group_ids      = [aws_security_group.backend.id]
-  placement_group             = aws_placement_group.bench.name
-  associate_public_ip_address = true
-  private_ip                  = var.backend_private_ip
-  key_name                    = var.ssh_key_name
-
-  root_block_device {
-    volume_type = "gp3"
-    volume_size = var.ebs_size_gb
-    iops        = var.ebs_iops
-    throughput  = var.ebs_throughput_mbps
-    encrypted   = true
-    tags = {
-      Name = "${var.name_prefix}-backend-root"
-    }
+  launch_template {
+    id      = aws_launch_template.backend.id
+    version = "$Latest"
   }
 
-  user_data                   = file("${path.module}/userdata/backend.sh")
+  placement_group             = aws_placement_group.bench.name
   user_data_replace_on_change = true
 
   tags = {

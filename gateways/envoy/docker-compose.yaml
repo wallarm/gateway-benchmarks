@@ -56,16 +56,24 @@ services:
     # log overrides keep filter-level traces silent while the
     # orchestrator still sees real warnings.
     #
-    # `--concurrency 1` pins envoy to a single worker thread. It is
-    # only relevant to throughput, NOT to rate-limit semantics:
-    # envoy's local_ratelimit filter uses a SHARED token bucket
-    # across every worker in the process (see v1.32 proto docs and
-    # the inline comment in each p03/p05/p06 envoy.yaml for the
-    # empirical verification we ran), so the effective service-wide
-    # or per-IP rate is independent of worker count. One worker is
-    # the simplest deterministic posture for parity attestation; a
-    # future load-phase campaign can raise `--concurrency` to
-    # saturate the platform without touching the rate-limit config.
+    # `--concurrency 0` means "auto-detect": envoy spawns one worker
+    # thread per hardware thread visible to the container (same
+    # contract as nginx `worker_processes auto`, kong/apisix openresty
+    # defaults). This is the load-phase posture — other gateways all
+    # run multi-worker, so pinning envoy to a single worker would
+    # kneecap its throughput numbers on anything other than a 1-vCPU
+    # host.
+    #
+    # Rate-limit semantics are INDEPENDENT of worker count: envoy's
+    # local_ratelimit filter uses a SHARED token bucket across every
+    # worker in the process (v1.17+, v1.32 proto doc: "By default the
+    # token bucket is shared across all workers, thus the rate limits
+    # are applied per Envoy process"). We verified empirically on p03
+    # (1200-request burst on max_tokens=500 with --concurrency 1 vs
+    # --concurrency 2 both yielded ≈555 passes) — buckets are NOT
+    # multiplied by worker count. Every RL profile (p04/p05/p06/p07)
+    # sizes its buckets at the canonical rate verbatim and survives
+    # the change to auto-concurrency unchanged.
     command:
       - "-c"
       - "/etc/envoy/envoy.yaml"
@@ -74,7 +82,7 @@ services:
       - "--component-log-level"
       - "upstream:warn,connection:error,http:warn"
       - "--concurrency"
-      - "1"
+      - "0"
     # envoy.yaml is mounted read-only per profile. The mount target
     # is always /etc/envoy/envoy.yaml; the source is picked by the
     # `GATEWAY_PROFILE` env var (default `p01-vanilla`) — the

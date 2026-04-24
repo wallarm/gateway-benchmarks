@@ -42,7 +42,7 @@ the same `envoy.filters.http.local_ratelimit` filter:
 ## Thread model
 
 Same as p03 / p05: shared token bucket across workers (v1.17+
-default). `docker-compose.yaml` pins `--concurrency 1`.
+default). `docker-compose.yaml` passes `--concurrency 0` (auto).
 
 ## Deviation from POLICIES.md § p06 — enumerated descriptors
 

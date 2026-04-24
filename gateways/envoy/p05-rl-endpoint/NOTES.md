@@ -87,8 +87,9 @@ external RLS dependency.
 
 ## Thread model
 
-`--concurrency 1`, same as every other envoy profile in this bench.
-`local_ratelimit`'s token bucket is shared across workers by default
-(v1.17+, confirmed on p03/p05/p06), so raising worker count would
-change raw throughput but never the effective rate limit. One
-worker is the simplest deterministic posture for parity attestation.
+`--concurrency 0` (auto), same as every other envoy profile in
+this bench. `local_ratelimit`'s token bucket is shared across
+workers by default (v1.17+, confirmed on p03/p05/p06), so worker
+count changes raw throughput but never the effective rate limit.
+The 100 rps cap on `/anything/limited` is process-wide, not
+per-worker.

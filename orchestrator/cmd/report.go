@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -85,7 +86,16 @@ Output defaults to reports/<id>/report.html (next to the JSONL).`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d cells)\n", out, len(loaded.Cells))
+			// Prefer a repo-relative path so the line can be copy-
+			// pasted into `open …` even when the repo root contains
+			// spaces (e.g. "/…/LEGA GATEWAY/…"). Fall back to the
+			// absolute path only when --output steered the file
+			// outside the repo root.
+			displayOut := out
+			if rel, rerr := filepath.Rel(flagRepoRoot, out); rerr == nil && !strings.HasPrefix(rel, "..") {
+				displayOut = rel
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d cells)\n", displayOut, len(loaded.Cells))
 			return nil
 		},
 	}

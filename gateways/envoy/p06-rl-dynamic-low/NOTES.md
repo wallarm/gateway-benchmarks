@@ -65,7 +65,7 @@ produced identical pass counts). Each per-IP bucket here is one
 shared-across-workers bucket per descriptor, sized at the
 canonical 10 rps verbatim. Raising `--concurrency` lifts
 throughput headroom but never the effective per-IP rate.
-`docker-compose.yaml` pins `--concurrency 1` for determinism.
+`docker-compose.yaml` passes `--concurrency 0` (auto).
 
 ## Deviation from POLICIES.md § p05 — enumerated descriptors
 

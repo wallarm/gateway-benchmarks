@@ -107,9 +107,17 @@ cache is refreshed and further edits via editor-native save
 (which writes-then-renames, also changing the inode) work as
 expected.
 
-## Thread model: `--concurrency 1`, shared bucket
+## Thread model: `--concurrency 0` (auto), shared bucket
 
-`docker-compose.yaml` pins `--concurrency 1`. Envoy's
+`docker-compose.yaml` passes `--concurrency 0`, which tells envoy
+to auto-detect and spawn one worker per hardware thread visible
+to the container — the same posture every other gateway in this
+bench uses (nginx `worker_processes auto`, kong/apisix openresty
+defaults). Single-worker posture would kneecap envoy's throughput
+on anything other than a 1-vCPU host and produce apples-to-oranges
+numbers against the multi-worker gateways.
+
+Rate-limit semantics are independent of worker count. Envoy's
 `local_ratelimit` filter uses a **shared** token bucket across
 every worker thread in the process by default (v1.17+, confirmed
 by the v1.32 proto doc: "By default the token bucket is shared
@@ -132,10 +140,9 @@ canonical rate verbatim:
 
 Raising `--concurrency` does not change the rate limit (single
 bucket per descriptor regardless of thread count); it only
-changes raw throughput headroom. One worker is the simplest
-deterministic posture for parity attestation; a future load-phase
-campaign can raise `--concurrency` without touching any RL
-config.
+changes raw throughput headroom. Auto-concurrency is therefore
+safe for parity attestation and correct for load-phase — no RL
+config has to move to accompany it.
 
 ## Feature matrix
 

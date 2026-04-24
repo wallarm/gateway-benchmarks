@@ -165,6 +165,24 @@ Use --dry-run first to see the planned cell list.`,
 				Verbose:  flagVerbose,
 			}
 
+			// In local mode the per-cell stack is booted by
+			// scripts/load-gateway.sh (runner.Run), so nothing listens
+			// on --target before that script runs. Running parity here
+			// would always fail with connection-refused. load-gateway.sh
+			// invokes parity-attestation.sh itself once the stack is up
+			// (scripts/load-gateway.sh §4 "parity precondition") and
+			// writes the same parity.json artefact the aggregator reads,
+			// so the external gate is both redundant and broken in local
+			// mode — turn it off automatically. AWS mode keeps the gate
+			// because the 3-host cluster is already up when `bench run`
+			// starts. --skip-parity remains as an explicit escape hatch
+			// for AWS debugging.
+			parityAutoSkipped := false
+			if mode == "local" && !skipParity {
+				skipParity = true
+				parityAutoSkipped = true
+			}
+
 			// -------------------------------------------------- sweep
 			fmt.Fprintf(cmd.OutOrStdout(), "=== bench run ===\n")
 			fmt.Fprintf(cmd.OutOrStdout(), "  run-id:    %s\n", runID)
@@ -174,6 +192,10 @@ Use --dry-run first to see the planned cell list.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "  target:    %s\n", gatewayTarget)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  reports:   %s/\n", runDir)
+			if parityAutoSkipped {
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"  parity:    delegated to load-gateway.sh (auto in --mode local)\n")
+			}
 
 			var pass, excluded, failed, crashed, skipped int
 			for i, cell := range cells {
@@ -324,7 +346,19 @@ Use --dry-run first to see the planned cell list.`,
 					fmt.Fprintf(cmd.ErrOrStderr(), "report skipped: %v\n", rerr)
 				} else {
 					if !flagQuiet {
-						fmt.Fprintf(cmd.OutOrStdout(), "  report:   %s\n", out)
+						// Keep the path consistent with the aggregate
+						// block above (matrix/cells/summary are all
+						// printed relative to the repo root). Rendering
+						// returns an absolute path, which breaks
+						// copy-paste into `open …` when the repo root
+						// contains spaces. Fall back to the absolute
+						// path only if --output steered the file
+						// outside the repo root.
+						displayOut := out
+						if rel, rerr := filepath.Rel(flagRepoRoot, out); rerr == nil && !strings.HasPrefix(rel, "..") {
+							displayOut = rel
+						}
+						fmt.Fprintf(cmd.OutOrStdout(), "  report:   %s\n", displayOut)
 					}
 				}
 			}
@@ -374,7 +408,10 @@ Use --dry-run first to see the planned cell list.`,
 		"fall back to the shell docker-stats sidecar (scripts/docker-stats-sidecar.sh) "+
 			"instead of the native Go collector. Default is the native collector.")
 	cmd.Flags().BoolVar(&skipParity, "skip-parity", false,
-		"skip parity-attestation.sh (NOT recommended; use only for debugging)")
+		"skip the pre-load parity-attestation.sh gate. Auto-enabled in "+
+			"--mode local (load-gateway.sh runs parity itself once the "+
+			"per-cell stack is up). In --mode aws the gate is on by default "+
+			"and skipping is NOT recommended — use only for debugging.")
 	cmd.Flags().StringVar(&gatewayTarget, "target", "",
 		"override gateway URL forwarded to parity-attestation.sh (e.g. http://localhost:9080)")
 	cmd.Flags().StringVar(&backendPeek, "backend-peek", "",

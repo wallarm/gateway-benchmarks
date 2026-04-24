@@ -94,8 +94,10 @@ shape produced identical pass counts (≈555 each). Buckets are
 NOT multiplied by worker count; raising `--concurrency` only
 lifts throughput headroom.
 
-`docker-compose.yaml` pins `--concurrency 1` for simplicity
-(deterministic parity attestation, no effect on RL semantics).
+`docker-compose.yaml` passes `--concurrency 0` (auto = one worker
+per hardware thread) — consistent with every other gateway in this
+bench. The shared-bucket verification above guarantees the RL
+cap stays at 1000 rps regardless of worker count.
 
 ## Historical context (no current deviation)
 

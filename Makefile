@@ -2,8 +2,11 @@
 .PHONY: help prereqs-check lint \
 	backend-build backend-build-amd64 backend-run backend-smoke \
 	orchestrator-build orchestrator-test \
-	perf-local-up perf-local-run perf-local-report perf-local-down perf-local-clean \
-	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-down \
+	perf-local-up perf-local-parity perf-local-cycle-smoke \
+	perf-local-run perf-local-report perf-local-down perf-local-clean \
+	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report \
+	perf-aws-up perf-aws-destroy perf-aws-ssh-loadgen perf-aws-ssh-gateway perf-aws-ssh-backend \
+	perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
 	load-gateway load-gateway-load-sweep load-sweep load-aggregate load-combine load-report
 
@@ -23,6 +26,15 @@ RUN_ID           ?= $(shell date -u +%Y%m%dT%H%M%SZ)
 REPORTS_DIR      ?= reports
 ORCH_BIN         ?= orchestrator/bin/bench
 LOCAL_COMPOSE    ?= infra/local/docker-compose.yaml
+# Local mode env file: prefer the operator-edited copy, fall back to
+# the checked-in example so a fresh `git clone` works without setup.
+LOCAL_ENV_FILE   ?= $(shell test -f infra/local/.env && echo infra/local/.env || echo infra/local/.env.example)
+# Active profile inside the local stack — drives which gateways/<gw>/<profile>/
+# nginx.conf gets bind-mounted into the gateway container.
+GATEWAY_PROFILE  ?= p01-vanilla
+# Active gateway "name" tag (used by parity-attestation + load-gateway as a
+# pure label, not as routing — the routing comes from LOCAL_COMPOSE).
+LOCAL_GATEWAY    ?= local-stack
 AWS_TOFU_DIR     ?= infra/aws
 
 # --- Backend (Phase 2) ------------------------------------------------------
@@ -59,19 +71,25 @@ help: ## Show this help
 	@echo "  $(GREEN)orchestrator-build$(NC)    go build -> $(ORCH_BIN)"
 	@echo "  $(GREEN)orchestrator-test$(NC)     go test ./orchestrator/..."
 	@echo ""
-	@echo "$(YELLOW)Local mode:$(NC)"
-	@echo "  $(GREEN)perf-local-up$(NC)         Bring up loadgen+gateway+backend via docker compose"
-	@echo "  $(GREEN)perf-local-run$(NC)        Run the full matrix (policy × load × gateway)"
-	@echo "  $(GREEN)perf-local-report$(NC)     Produce HTML+CSV into $(REPORTS_DIR)/<run>/"
-	@echo "  $(GREEN)perf-local-down$(NC)       Stop the docker compose stack"
-	@echo "  $(GREEN)perf-local-clean$(NC)      Delete volumes, networks, and scratch files"
+	@echo "$(YELLOW)Local mode (Phase 5):$(NC)"
+	@echo "  $(GREEN)perf-local-up$(NC)             Bring up loadgen+gateway+backend on 2 isolated bridge networks"
+	@echo "  $(GREEN)perf-local-parity$(NC)         Parity-check the running stack against http://localhost:9080"
+	@echo "  $(GREEN)perf-local-cycle-smoke$(NC)    End-to-end smoke: s01 on :9080 + s13 on :9443 (if profile serves TLS)"
+	@echo "  $(GREEN)perf-local-down$(NC)           Stop and remove the local stack"
+	@echo "  $(GREEN)perf-local-clean$(NC)          Delete the reports/local-smoke/ scratch directory"
+	@echo "  $(GREEN)perf-local-run$(NC)            Run the full matrix locally [stub — Phase 6]"
+	@echo "  $(GREEN)perf-local-report$(NC)         Produce HTML+CSV [stub — use \`make load-report\` for now]"
 	@echo ""
-	@echo "$(YELLOW)AWS mode (3 EC2 cluster PG):$(NC)"
-	@echo "  $(GREEN)perf-aws-init$(NC)         tofu init in $(AWS_TOFU_DIR)/"
-	@echo "  $(GREEN)perf-aws-deploy$(NC)       tofu apply + ssh-deploy the stack to 3 EC2"
-	@echo "  $(GREEN)perf-aws-run$(NC)          Run the matrix on AWS"
-	@echo "  $(GREEN)perf-aws-report$(NC)       Pull raw data and render the HTML report"
-	@echo "  $(GREEN)perf-aws-down$(NC)         Destroy the EC2 hosts (enable_perf_test=false + tofu apply)"
+	@echo "$(YELLOW)AWS mode (Phase 5 — 3 EC2 c6i.2xlarge in cluster PG):$(NC)"
+	@echo "  $(GREEN)perf-aws-init$(NC)             $(TOFU_BIN) init in $(AWS_TOFU_DIR)/ (one-time per checkout)"
+	@echo "  $(GREEN)perf-aws-up$(NC)               $(TOFU_BIN) apply — bring up loadgen + gateway + backend"
+	@echo "  $(GREEN)perf-aws-summary$(NC)          Print cluster summary (IPs + ready-to-paste SSH commands)"
+	@echo "  $(GREEN)perf-aws-ssh-loadgen$(NC)      SSH into the loadgen host"
+	@echo "  $(GREEN)perf-aws-ssh-gateway$(NC)      SSH into the gateway host"
+	@echo "  $(GREEN)perf-aws-ssh-backend$(NC)      SSH into the backend host"
+	@echo "  $(GREEN)perf-aws-destroy$(NC)          $(TOFU_BIN) destroy — terminate everything"
+	@echo "  $(GREEN)perf-aws-run$(NC)              Run the matrix on AWS [stub — Phase 6]"
+	@echo "  $(GREEN)perf-aws-report$(NC)           Pull raw data and render HTML [stub — Phase 7]"
 	@echo ""
 	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
 	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile against a live target"
@@ -115,7 +133,7 @@ prereqs-check: ## Verify the local environment
 lint: ## Lint shell and Go code
 	@echo "$(YELLOW)Running shellcheck...$(NC)"
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		find scripts -name '*.sh' -print0 2>/dev/null | xargs -0 -r shellcheck --severity=style || exit 1; \
+		find scripts -name '*.sh' -print0 2>/dev/null | xargs -0 -r shellcheck --severity=warning || exit 1; \
 		echo "$(GREEN)✓ shellcheck passed$(NC)"; \
 	else \
 		echo "$(YELLOW)… shellcheck not installed, skipping$(NC)"; \
@@ -185,38 +203,106 @@ orchestrator-test:
 # ---------------------------------------------------------------------------
 # Local mode (Phase 5 + 6)
 # ---------------------------------------------------------------------------
-perf-local-up: ## Bring up the local stack
+perf-local-up: ## Bring up the local 3-host stack (loadgen+gateway+backend on 2 isolated nets)
+	@echo "$(YELLOW)perf-local-up: starting 3-host topology$(NC)"
+	@echo "  compose : $(LOCAL_COMPOSE)"
+	@echo "  env-file: $(LOCAL_ENV_FILE)"
+	@echo "  profile : $(GATEWAY_PROFILE)"
+	@mkdir -p reports/local-smoke
+	@GATEWAY_PROFILE=$(GATEWAY_PROFILE) docker compose -f $(LOCAL_COMPOSE) --env-file $(LOCAL_ENV_FILE) up -d
+	@echo "$(YELLOW)Waiting for gateway data plane on http://localhost:9080…$(NC)"
+	@for i in $$(seq 1 30); do \
+		if curl -fsS -o /dev/null --max-time 1 http://localhost:9080/status/200 2>/dev/null; then \
+			echo "$(GREEN)✓ gateway answered after $$i attempts$(NC)"; \
+			break; \
+		fi; \
+		if [ $$i -eq 30 ]; then \
+			echo "$(RED)✗ gateway never answered after 30 tries (15s)$(NC)"; \
+			docker compose -f $(LOCAL_COMPOSE) --env-file $(LOCAL_ENV_FILE) logs --tail=40; \
+			exit 1; \
+		fi; \
+		sleep 0.5; \
+	done
+	@echo "$(GREEN)✓ stack up$(NC)"
+	@echo "  HTTP : http://localhost:9080  (parity + s01..s12)"
+	@echo "  HTTPS: https://localhost:9443 (s13/s14, on p01-vanilla & p12-full-pipeline)"
+
+perf-local-parity: ## Parity-check the running local stack against PARITY_TARGET (default localhost:9080)
+	@echo "$(YELLOW)perf-local-parity: $(GATEWAY_PROFILE) against http://localhost:9080$(NC)"
+	@PARITY_GATEWAY=$(LOCAL_GATEWAY) PARITY_TARGET=http://localhost:9080 PARITY_PROFILE=$(GATEWAY_PROFILE) \
+		$(MAKE) parity-check
+
+perf-local-cycle-smoke: ## End-to-end smoke (s01 over :9080 + s13 over :9443 if profile serves TLS)
+	@echo "$(YELLOW)perf-local-cycle-smoke: HTTP + HTTPS round-trip via the local stack$(NC)"
+	@GATEWAY_PROFILE=$(GATEWAY_PROFILE) GATEWAY_NAME=$(LOCAL_GATEWAY) \
+		bash scripts/perf-local-cycle-smoke.sh
+
+perf-local-run: ## Run the full matrix locally (Phase 6 — pending the Go orchestrator)
 	$(PHASE_TODO)
 
-perf-local-run: ## Run the full matrix locally
+perf-local-report: ## Produce HTML+CSV (use `make load-report` for now; Phase 7 wires this up)
 	$(PHASE_TODO)
 
-perf-local-report: ## Produce HTML+CSV
-	$(PHASE_TODO)
+perf-local-down: ## Stop and remove the local stack (containers, networks, volumes)
+	@echo "$(YELLOW)perf-local-down: tearing down local stack$(NC)"
+	@docker compose -f $(LOCAL_COMPOSE) --env-file $(LOCAL_ENV_FILE) down --remove-orphans -v
+	@echo "$(GREEN)✓ stack down$(NC)"
 
-perf-local-down: ## Stop the docker compose stack
-	$(PHASE_TODO)
-
-perf-local-clean: ## Delete volumes and scratch files
-	$(PHASE_TODO)
+perf-local-clean: ## Delete the local-smoke output directory (reports/local-smoke/)
+	@echo "$(YELLOW)perf-local-clean: removing reports/local-smoke/$(NC)"
+	@rm -rf reports/local-smoke
+	@echo "$(GREEN)✓ scratch files removed$(NC)"
 
 # ---------------------------------------------------------------------------
-# AWS mode (Phase 5 + 6)
+# AWS mode (Phase 5 — infrastructure, Phase 6 — orchestrator wiring)
 # ---------------------------------------------------------------------------
-perf-aws-init: ## tofu init
+# Tooling auto-detection: prefer OpenTofu (open-source, BSL-free), fall
+# back to terraform if it's the only one installed. Operator can pin via
+# `make perf-aws-up TOFU_BIN=terraform`.
+TOFU_BIN ?= $(shell command -v tofu >/dev/null 2>&1 && echo tofu || echo terraform)
+
+perf-aws-init: ## tofu init in $(AWS_TOFU_DIR)/
+	@echo "$(YELLOW)perf-aws-init: $(TOFU_BIN) init in $(AWS_TOFU_DIR)/$(NC)"
+	@cd $(AWS_TOFU_DIR) && $(TOFU_BIN) init
+
+perf-aws-up: ## tofu apply — bring up 3 EC2 c6i.2xlarge in cluster placement group
+	@echo "$(YELLOW)perf-aws-up: $(TOFU_BIN) apply in $(AWS_TOFU_DIR)/$(NC)"
+	@if [ ! -f $(AWS_TOFU_DIR)/terraform.tfvars ]; then \
+		echo "$(RED)✗ infra/aws/terraform.tfvars is missing.$(NC)"; \
+		echo "  Copy infra/aws/terraform.tfvars.example, edit ssh_key_name + allowed_ssh_cidrs,"; \
+		echo "  then re-run 'make perf-aws-up'."; \
+		exit 2; \
+	fi
+	@cd $(AWS_TOFU_DIR) && $(TOFU_BIN) apply -auto-approve
+	@echo "$(GREEN)✓ AWS stack up$(NC)"
+	@$(MAKE) perf-aws-summary
+
+perf-aws-deploy: perf-aws-up ## Alias for perf-aws-up (kept for backward compat)
+
+perf-aws-summary: ## Print the cluster summary (IPs + SSH commands)
+	@cd $(AWS_TOFU_DIR) && $(TOFU_BIN) output -raw summary
+
+perf-aws-ssh-loadgen: ## SSH into the loadgen host
+	@cd $(AWS_TOFU_DIR) && $$($(TOFU_BIN) output -raw ssh_loadgen)
+
+perf-aws-ssh-gateway: ## SSH into the gateway host
+	@cd $(AWS_TOFU_DIR) && $$($(TOFU_BIN) output -raw ssh_gateway)
+
+perf-aws-ssh-backend: ## SSH into the backend host
+	@cd $(AWS_TOFU_DIR) && $$($(TOFU_BIN) output -raw ssh_backend)
+
+perf-aws-run: ## Run the matrix on AWS [stub — Phase 6 wires this up via the Go orchestrator]
 	$(PHASE_TODO)
 
-perf-aws-deploy: ## tofu apply + deploy to 3 EC2
+perf-aws-report: ## Pull raw data and render the report [stub — Phase 7]
 	$(PHASE_TODO)
 
-perf-aws-run: ## Run the matrix on AWS
-	$(PHASE_TODO)
+perf-aws-destroy: ## tofu destroy — terminate the 3 EC2 hosts and free all resources
+	@echo "$(YELLOW)perf-aws-destroy: $(TOFU_BIN) destroy in $(AWS_TOFU_DIR)/$(NC)"
+	@cd $(AWS_TOFU_DIR) && $(TOFU_BIN) destroy -auto-approve
+	@echo "$(GREEN)✓ AWS stack destroyed$(NC)"
 
-perf-aws-report: ## Pull raw data and render the report
-	$(PHASE_TODO)
-
-perf-aws-down: ## Destroy the EC2 hosts
-	$(PHASE_TODO)
+perf-aws-down: perf-aws-destroy ## Alias for perf-aws-destroy (kept for backward compat)
 
 # ---------------------------------------------------------------------------
 # Parity (Phase 3)

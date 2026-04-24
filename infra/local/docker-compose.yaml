@@ -1,0 +1,246 @@
+# infra/local/docker-compose.yaml
+#
+# Phase 5 — Local infrastructure mode.
+#
+# 3-host topology emulated on a single Docker daemon:
+#
+#   ┌──────────────┐  bench-edge-net   ┌──────────────┐  bench-upstream-net   ┌──────────────┐
+#   │   loadgen    │ ───────────────►  │   gateway    │ ──────────────────►   │   backend    │
+#   │ (k6, idle)   │     :9080/:9443   │ (under test) │       :8080           │ (go-httpbin) │
+#   └──────────────┘                   └──────────────┘                       └──────────────┘
+#                       ▲                                ▲
+#                       │                                │
+#                       └─ loadgen DOES NOT see backend ─┘
+#
+# Two isolated bridge networks ensure the loadgen container has no
+# direct route to the backend — a request must traverse the gateway.
+# That mirrors the AWS topology (loadgen-host / gateway-host /
+# backend-host in private subnets), not just port-isolation.
+#
+# Resource pinning (legacy compose fields, work in standalone mode):
+#   loadgen   2 CPU / 1G   — k6 sustained-load worker
+#   gateway   4 CPU / 2G   — every supported gateway fits
+#   backend   1 CPU / 512M — pure passthrough echo
+#
+# Linux kernel knobs:
+#   ulimits.nofile.soft|hard = 65536  — k6's per-VU socket budget
+#   sysctls.net.core.somaxconn = 4096 — listen() backlog
+#
+# Default gateway is `nginx` with profile `p01-vanilla`. Override via
+# the .env file in this directory or on the CLI:
+#
+#   GATEWAY_IMAGE=openresty/openresty:1.25.3.2-2-alpine \
+#   GATEWAY_PROFILE=p12-full-pipeline \
+#   docker compose -f infra/local/docker-compose.yaml up -d
+#
+# The bind-mounts pull every gateway-specific file (nginx.conf, lualib,
+# JWKS material, TLS material) from gateways/nginx/ + gateways/_reference/
+# so this file stays gateway-agnostic — only the IMAGE / PROFILE pair
+# changes per run. Reviewer-facing smoke runs always use the canonical
+# nginx + p01-vanilla / p12-full-pipeline pair to keep results
+# reproducible across hosts.
+
+name: gateway-benchmarks-local
+
+services:
+  # ---------------------------------------------------------------------------
+  # backend — go-httpbin echo service (TASK §6 / docs/GATEWAYS.md §upstream)
+  # ---------------------------------------------------------------------------
+  backend:
+    image: ${BACKEND_IMAGE:-gateway-benchmarks/backend:v2.22.1}
+    container_name: gwb-local-backend
+    restart: "no"
+
+    # Backend listens on :8080 inside its own container. We deliberately
+    # do not publish it on the host — the loadgen container has no
+    # route to the bench-upstream-net (see networks: section below) so
+    # any traffic *must* traverse the gateway. Add `- "8088:8080"`
+    # temporarily if you need to probe it from the host for debugging.
+
+    # cpus/mem_limit are legacy compose fields that the standalone
+    # daemon honours without requiring swarm mode. They map to the
+    # same kernel cgroups as `--cpus` / `--memory` on `docker run`.
+    cpus: ${BACKEND_CPUS:-1.0}
+    mem_limit: ${BACKEND_MEM:-512m}
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # The vendored backend is a distroless image (gateway-benchmarks/
+    # backend:v2.22.1, built from go-httpbin) — it has no shell, no
+    # wget, no curl, no nc, so an `internal` HEALTHCHECK is impossible
+    # without a multi-stage rebuild. Instead, we rely on:
+    #   1. go-httpbin's near-instant startup (<100ms) — it logs
+    #      "go-httpbin listening on http://0.0.0.0:8080" before the
+    #      gateway resolver kicks in.
+    #   2. nginx's tolerance of "host not found in upstream" at first
+    #      proxy_pass: the upstream block resolves at request time,
+    #      not at startup, so a 50ms backend lag is invisible to k6.
+    #   3. The TCP-probing sidecar in the loadgen smoke script
+    #      (perf-local-cycle-smoke.sh waits up to 10s for the gateway
+    #      to answer on :9080 before firing k6).
+    # Net result: depends_on without a condition is sufficient and
+    # correct for a distroless backend; adding a healthcheck that
+    # always fails would be worse than no healthcheck at all.
+
+    networks:
+      bench-upstream-net:
+        aliases: [backend]
+
+  # ---------------------------------------------------------------------------
+  # gateway — the system under test
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: ${GATEWAY_IMAGE:-nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4}
+    container_name: gwb-local-gateway
+    restart: "no"
+
+    # depends_on without `condition` means "start backend first,
+    # but don't block on a healthcheck" — which is correct for the
+    # distroless go-httpbin (no shell ⇒ no internal healthcheck;
+    # see backend service notes). nginx itself tolerates a brief
+    # upstream-resolver lag because the `upstream { server backend:8080; }`
+    # block resolves on first proxy_pass, not at startup.
+    depends_on:
+      - backend
+
+    # Same nginx command line as gateways/nginx/docker-compose.yaml so
+    # an operator can swap in any of the existing per-profile
+    # nginx.conf files without re-templating. Override via
+    # GATEWAY_COMMAND for non-nginx images (envoy, kong, traefik, ...);
+    # see gateways/<gw>/docker-compose.yaml for the per-gateway form.
+    command: ${GATEWAY_COMMAND:-nginx -c /etc/nginx/nginx.conf -g "daemon off;"}
+
+    volumes:
+      # Per-profile nginx.conf — the one knob that selects which
+      # policy is under test. ${GATEWAY_PROFILE} defaults to p01-vanilla
+      # so reviewers can `docker compose up -d` and immediately get a
+      # working pure-proxy gateway.
+      - ../../gateways/nginx/${GATEWAY_PROFILE:-p01-vanilla}/nginx.conf:/etc/nginx/nginx.conf:ro
+
+      # Shared Lua library — only OpenResty profiles read from it
+      # (mainline nginx ignores the path). Mounted unconditionally so
+      # one .env switch flips between mainline and OpenResty without
+      # touching the compose file.
+      - ../../gateways/nginx/_shared/lualib:/usr/local/openresty/lualib/bench:ro
+
+      # Reference JWKS / RSA material — used by p03-jwks-rs256-basic
+      # only; inert for every other profile.
+      - ../../gateways/_reference/jwks-rs256:/etc/nginx/jwks-rs256:ro
+
+      # Reference TLS material — used by p01-vanilla and p12-full-pipeline
+      # to back the s13/s14 HTTPS scenarios. Cert SAN covers
+      # bench.local / localhost / gateway / 127.0.0.1, valid until 2126.
+      - ../../gateways/_reference/tls:/etc/nginx/tls:ro
+
+    cpus: ${GATEWAY_CPUS:-4.0}
+    mem_limit: ${GATEWAY_MEM:-2g}
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # somaxconn caps the TCP accept-queue depth. Default 128 is too
+    # low for a 100 VU × 5m sustained-load run; nginx will start
+    # dropping SYN-ACKs before its workers wake up. 4096 matches the
+    # `worker_connections 16384` ceiling without being wasteful.
+    sysctls:
+      net.core.somaxconn: 4096
+
+    # nginx handles SIGTERM gracefully; keep the grace short so
+    # `make perf-local-down` in CI doesn't sit on a 30s default.
+    stop_grace_period: 5s
+
+    ports:
+      - "${GATEWAY_HOST_PORT_HTTP:-9080}:9080"   # HTTP/1.1 data plane
+      - "${GATEWAY_HOST_PORT_HTTPS:-9443}:9443"  # TLS data plane (s13/s14)
+
+    networks:
+      bench-edge-net:
+        aliases: [gateway]
+      bench-upstream-net:
+        aliases: [gateway]
+
+  # ---------------------------------------------------------------------------
+  # loadgen — k6, idle until the operator runs `docker compose exec`
+  # ---------------------------------------------------------------------------
+  loadgen:
+    image: ${K6_IMAGE:-grafana/k6:1.7.1@sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f}
+    container_name: gwb-local-loadgen
+    restart: "no"
+
+    # k6's default entrypoint is `k6` itself — which exits the moment
+    # there's no script. We replace it with `tail -f /dev/null` so the
+    # container sits idle and the operator drives runs via
+    # `docker compose exec loadgen k6 run /k6/scenarios/<scn>.js`.
+    # Same image, same digest, different lifecycle.
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+    # k6 doesn't need to depend on backend directly (see networks: —
+    # there is no edge between loadgen and backend on purpose). It
+    # *does* need the gateway up before any `k6 run` invocation, but
+    # the operator-driven `docker compose exec` pattern means this
+    # condition only matters at the moment the operator triggers a
+    # run, and the smoke script (perf-local-cycle-smoke.sh) waits on
+    # the gateway data plane explicitly before firing any traffic.
+    depends_on:
+      - gateway
+
+    volumes:
+      # Mount the k6 source tree read-only so scenarios can be edited
+      # on the host and re-run without rebuilding the image. The
+      # canonical `k6 run` invocation inside the container is then:
+      #   k6 run --summary-export=/out/k6-summary.json /k6/scenarios/s01-vanilla-http.js
+      - ../../k6:/k6:ro
+
+      # Output directory — bind-mounted so summary JSONs land under
+      # reports/<run-id>/raw/ on the host without `docker cp`.
+      # Default: reports/local-smoke/ relative to the repo root.
+      - ${LOCAL_OUTPUT_DIR:-../../reports/local-smoke}:/out:rw
+
+    cpus: ${LOADGEN_CPUS:-2.0}
+    mem_limit: ${LOADGEN_MEM:-1g}
+
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # k6 needs no inbound listener so somaxconn defaults are fine,
+    # but the per-VU socket budget is what actually matters; that's
+    # handled by ulimits.nofile above.
+
+    networks:
+      # IMPORTANT: loadgen is on bench-edge-net ONLY. It can resolve
+      # the gateway service alias `gateway` and hit :9080 / :9443, but
+      # it has no route to `backend:8080` — any direct probe will
+      # `connection refused` / `name resolution failed`. That's the
+      # 3-host topology promise: a request must transit the gateway.
+      bench-edge-net:
+        aliases: [loadgen]
+
+# -----------------------------------------------------------------------------
+# Networks — two isolated bridges
+# -----------------------------------------------------------------------------
+networks:
+  # loadgen ↔ gateway only. Backend is NOT a member of this network,
+  # so loadgen's DNS resolver does not see `backend` and its kernel
+  # has no route to backend's ip in this namespace.
+  bench-edge-net:
+    name: gwb-local-edge
+    driver: bridge
+
+  # gateway ↔ backend only. Loadgen is NOT a member, same isolation
+  # guarantee in the other direction.
+  bench-upstream-net:
+    name: gwb-local-upstream
+    driver: bridge
+    # Internal=true would cut all egress to the host network — useful
+    # for the strictest "the backend can never call out" stance.
+    # Disabled by default because go-httpbin's startup banner does
+    # an outbound DNS probe in some images and we don't want to
+    # surprise reviewers; flip to `internal: true` to harden.
+    internal: false

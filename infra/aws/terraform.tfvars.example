@@ -1,0 +1,33 @@
+# infra/aws/terraform.tfvars.example
+#
+# Copy to `terraform.tfvars` and tweak before invoking `tofu apply`.
+# Compose v2 / OpenTofu read terraform.tfvars in the same directory
+# as the .tf files automatically — no -var-file flag needed.
+
+# ---------------------------------------------------------------------------
+# REQUIRED — there is no default for these, you must set them
+# ---------------------------------------------------------------------------
+
+# Name of an existing AWS EC2 key pair (in aws_region) whose private
+# half is on your laptop. Create one with:
+#   aws ec2 create-key-pair --region us-east-1 --key-name gwb-bench \
+#     --query 'KeyMaterial' --output text > ~/.ssh/gwb-bench.pem
+#   chmod 600 ~/.ssh/gwb-bench.pem
+ssh_key_name = "gwb-bench"
+
+# CIDR(s) allowed to SSH the 3 hosts. Auto-detect your current IP:
+#   curl -s ifconfig.me
+#
+# Then put it here as a /32:
+allowed_ssh_cidrs = ["203.0.113.42/32"]
+
+# ---------------------------------------------------------------------------
+# OPTIONAL — overrides for the canonical defaults
+# ---------------------------------------------------------------------------
+
+# aws_region          = "us-east-1"
+# availability_zone   = "us-east-1a"
+# instance_type       = "c6i.2xlarge"
+# ssh_private_key_path = "~/.ssh/gwb-bench.pem"
+# name_prefix         = "gwb"
+# owner_tag           = "your-name"

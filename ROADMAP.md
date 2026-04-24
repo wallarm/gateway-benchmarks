@@ -700,20 +700,34 @@ variant is a tracked follow-up.
   `p2c-paced`; `p3c-paced` / `p4c-paced` need a dedicated Linux
   loadgen with raised `ulimit -n` and `net.core.somaxconn`.
 
-### Phase 5. Infrastructure (2 days)
+### Phase 5. Infrastructure (2 days) — DONE
 
 **Goal**: 3 isolated hosts in both modes.
 
-**Local**:
-- [ ] `infra/local/docker-compose.yml`: 3 services (loadgen, gateway, backend) with pinned `cpus` + `mem_limit`
-- [ ] 3 isolated bridge networks (loadgen↔gateway, gateway↔backend) — emulating separate hosts
-- [ ] Smoke path: `make perf-local-up && make perf-local-parity && make perf-local-cycle-smoke`
+**Local** (delivered, smoke verified):
+- [x] `infra/local/docker-compose.yaml`: 3 services (loadgen 2 CPU/1G, gateway 4 CPU/2G, backend 1 CPU/512M) with pinned `cpus` + `mem_limit` + `ulimits.nofile=65536` + `sysctls.net.core.somaxconn=4096`
+- [x] 2 isolated bridge networks: `bench-edge-net` (loadgen ↔ gateway only) + `bench-upstream-net` (gateway ↔ backend only) — verified loadgen cannot resolve `backend` (DNS isolation enforced by docker network namespace)
+- [x] TLS scaffolding: canonical `bench.local` cert chain under `gateways/_reference/tls/` (SAN: bench.local / localhost / gateway / 127.0.0.1, valid until 2126); `listen 9443 ssl;` server blocks landed in nginx `p01-vanilla` + `p12-full-pipeline`; `BENCH_TARGET_URL_HTTPS=https://gateway:9443` activates `s13` / `s14`
+- [x] Smoke path proven end-to-end: `make perf-local-up` (12 s cold) → `make perf-local-parity` (4/4 PASS) → `make perf-local-cycle-smoke` (s01 + s13, 4.4 M checks, 0 failed, TLS handshake observed on first iter, p95 ~0.83 ms over loopback) → `make perf-local-down` (3 s teardown)
+- [x] Backend healthcheck design: distroless `gateway-benchmarks/backend:v2.22.1` has no shell, so `compose healthcheck` is impossible — relying on go-httpbin's near-instant startup + nginx upstream-resolver tolerance + an explicit data-plane wait loop in the `perf-local-up` Makefile target (30 retries × 0.5 s)
 
-**AWS**:
-- [ ] `infra/aws/main.tf`: 3 EC2 `c6i.2xlarge` in a cluster placement group
-- [ ] Internal-only traffic gateway↔backend and loadgen↔gateway
-- [ ] Outputs: 3 IPs, SSH helpers
-- [ ] `make perf-aws-up / perf-aws-destroy`
+**AWS** (delivered, `tofu validate` clean):
+- [x] `infra/aws/main.tf`: 3 EC2 `c6i.2xlarge` in a single cluster placement group (one AZ, ~10 µs intra-cluster RTT), Ubuntu 24.04 LTS (Canonical AMI lookup, never pinned), gp3 300 GB / 3000 IOPS / 125 MB/s encrypted EBS
+- [x] Network isolation via security groups (no rule loadgen → backend; gateway is the only path); rule descriptions ASCII-only (AWS rejects Unicode arrows in SG descriptions, learned the hard way)
+- [x] Outputs: 3 public + 3 private IPs, ready-to-paste SSH commands, `BENCH_TARGET_URL` / `BENCH_TARGET_URL_HTTPS` strings, multi-line summary printed after `tofu apply`
+- [x] cloud-init userdata per role (`infra/aws/userdata/{loadgen,gateway,backend}.sh`): Docker install, kernel tuning (`net.core.somaxconn=65535`, `nofile=65536`), repo clone to `/opt/gateway-benchmarks`, image pre-pull (k6 on loadgen, every gateway image on gateway, go-httpbin on backend); backend runs go-httpbin under a `gwb-backend.service` systemd unit for crash-safety
+- [x] Makefile: `perf-aws-init` / `perf-aws-up` / `perf-aws-summary` / `perf-aws-ssh-{loadgen,gateway,backend}` / `perf-aws-destroy` (auto-detects `tofu` vs `terraform`, falls back gracefully)
+- [x] `.terraform.lock.hcl` committed with multi-platform hashes (linux_amd64 + linux_arm64 + darwin_amd64 + darwin_arm64) so reviewers on any platform get bit-identical AWS provider 5.100.0
+- [x] `infra/aws/terraform.tfvars.example` ships as the operator template; real `terraform.tfvars` (with personal SSH key + IP) stays gitignored
+
+**Open follow-ups** (not blocking Phase 6):
+- `infra/aws/userdata/_common.sh` is a reference copy that the 3 role
+  scripts duplicate inline (cloud-init can't `source` other files).
+  A CI lint diffing each role's inline copy against `_common.sh` would
+  catch drift; tracked as a post-Phase-7 polish.
+- Optional: switch `infra/aws/` backend from `local` to `s3+dynamodb`
+  for shared state when more than one operator runs benches in the
+  same account; one-line change in `versions.tf`.
 
 ### Phase 6. Orchestrator (4–6 days — largest chunk)
 

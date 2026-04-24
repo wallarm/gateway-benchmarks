@@ -25,10 +25,17 @@ reports
 reports/**
 
 # ---- Terraform / OpenTofu ----
+# .terraform/ is the local plugin/module cache — never tracked.
 infra/aws/.terraform/
-infra/aws/.terraform.lock.hcl
+# .terraform.lock.hcl IS tracked — it pins exact provider versions
+# so reviewers reproducing the AWS deploy get bit-identical
+# provider behaviour. Standard HashiCorp guidance.
 infra/aws/terraform.tfstate
 infra/aws/terraform.tfstate.backup
+infra/aws/terraform.tfstate.lock.info
+# tfvars + tfvars.json hold operator-specific values (SSH key name,
+# allowed IPs, sometimes secrets) — keep them out, ship the
+# .tfvars.example template instead.
 infra/aws/terraform.tfvars
 infra/aws/*.auto.tfvars
 infra/aws/crash.log

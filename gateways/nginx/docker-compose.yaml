@@ -74,8 +74,25 @@ services:
       # See gateways/nginx/p03-jwks-rs256-basic/NOTES.md and
       # gateways/_reference/jwks-rs256/README.md.
       - ../_reference/jwks-rs256:/etc/nginx/jwks-rs256:ro
+      # Reference TLS material (shared bench.local cert + key, valid
+      # until 2126). Only the p01-vanilla and p12-full-pipeline
+      # profiles read from /etc/nginx/tls/ today — they each ship a
+      # second `listen 9443 ssl;` server block that backs the
+      # s13-vanilla-https and s14-full-pipeline-https k6 scenarios
+      # respectively. Every other nginx profile ignores the path
+      # (their nginx.conf has no `ssl_certificate` directive), so the
+      # mount is inert and leaves their HTTP-only behaviour untouched.
+      # See gateways/_reference/tls/ and docs/POLICIES.md § HTTPS.
+      - ../_reference/tls:/etc/nginx/tls:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target)
+      - "9080:9080"  # data plane (parity-gateway target, HTTP/1.1)
+      # TLS data plane — only meaningful on profiles that actually
+      # listen on :9443 (currently p01-vanilla and p12-full-pipeline).
+      # On every other profile the host-side bind succeeds but the
+      # connection refuses inside the container; the s13/s14 scenarios
+      # are gated on BENCH_TARGET_URL_HTTPS so they only fire when
+      # GATEWAY_PROFILE actually serves TLS.
+      - "9443:9443"
     # nginx handles SIGTERM gracefully; the stop-grace-period is kept
     # low so `docker compose down` in teardown is snappy even on CI.
     stop_grace_period: 5s

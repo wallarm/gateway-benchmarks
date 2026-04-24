@@ -61,15 +61,17 @@ orchestrator ──(1)──► parse every raw/*.json
 
 ## Network ports
 
+Aligned across local + AWS modes so a single `BENCH_TARGET_URL` flip switches between them.
+
 | Host | Port | Protocol | Purpose |
 |------|------|----------|---------|
-| loadgen  | 22       | TCP      | SSH (orchestrator ↔ host) |
+| loadgen  | 22       | TCP      | SSH (operator ↔ host) |
 | gateway  | 22       | TCP      | SSH |
-| gateway  | 8080     | HTTP/1.1 | primary proxy port (profiles p01-p03, p06-p10) |
-| gateway  | 8443     | HTTPS    | TLS (profiles p02, p04-p06, p09, p11) |
-| gateway  | 9901     | HTTP     | admin/metrics of the gateway (where available) |
+| gateway  | 9080     | HTTP/1.1 | data plane (parity + s01–s12) |
+| gateway  | 9443     | HTTPS    | TLS data plane (s13 / s14, available on `p01-vanilla` + `p12-full-pipeline`) |
+| gateway  | 9901     | HTTP     | admin / metrics — only where the gateway exposes one (envoy, kong, apisix, tyk) |
 | backend  | 22       | TCP      | SSH |
-| backend  | 8080     | HTTP/1.1 | forked go-httpbin |
+| backend  | 8080     | HTTP/1.1 | go-httpbin (vendored, pinned digest) |
 
 ## Local-mode network namespaces
 
@@ -77,44 +79,55 @@ In `infra/local/docker-compose.yaml`:
 
 ```yaml
 networks:
-  bench-loadgen:   # loadgen ↔ gateway
-  bench-upstream:  # gateway ↔ backend
+  bench-edge-net:      # loadgen ↔ gateway only (gateway answers :9080 + :9443)
+  bench-upstream-net:  # gateway ↔ backend only (gateway resolves backend:8080)
 ```
 
 Containers:
 
 ```
-k6          → bench-loadgen                          (emulates loadgen-host)
-gateway     → bench-loadgen + bench-upstream         (emulates gateway-host)
-backend     → bench-upstream                         (emulates backend-host)
+loadgen     → bench-edge-net                                  (emulates loadgen-host)
+gateway     → bench-edge-net + bench-upstream-net             (emulates gateway-host)
+backend     → bench-upstream-net                              (emulates backend-host)
 ```
 
-So k6 never talks to the backend directly; the packet path always goes through the gateway.
+DNS isolation is enforced by docker network namespacing — loadgen
+literally cannot resolve `backend:8080` (`wget: bad address 'backend:8080'`).
+Verified after every `make perf-local-up` by the smoke check in
+`scripts/perf-local-cycle-smoke.sh`. So k6 never talks to the
+backend directly; the packet path always goes through the gateway.
 
 ## AWS mode
 
-`infra/aws/` contains a Terraform module:
+`infra/aws/` ships an OpenTofu / Terraform module:
 
-- VPC with a single private subnet
-- Cluster Placement Group (SR-IOV, same rack, minimal latency)
-- 3 × `c6i.2xlarge` (8 vCPU, 16 GB RAM, 12.5 Gbps burst network)
-- EBS gp3 300 GB, 3000 IOPS, 125 MB/s — identical across hosts
-- Ubuntu 24.04 LTS (AMI pinned by ID)
-- Security Group: SSH from `allowed_ssh_cidrs`, private traffic inside the VPC
-- Cloud-init: Docker ≥ 24 from the official repo
+- VPC `10.50.0.0/16` with one public subnet `10.50.1.0/24` (single AZ — cluster placement groups are AZ-scoped)
+- **Cluster placement group** packs all 3 instances on the same physical rack — drops intra-cluster RTT from ~250 µs (default) to ~10–30 µs
+- 3 × `c6i.2xlarge` (8 vCPU, 16 GiB RAM, up to 12.5 Gbps network)
+- EBS gp3 300 GB, 3000 IOPS, 125 MB/s, encrypted — identical across hosts
+- Ubuntu 24.04 LTS (Canonical's `noble-amd64-server-*`, dynamically looked up — never pinned, so reviews stay on the current kernel; the ID is recorded in the Terraform state for repro)
+- **Security groups enforce the same isolation as the local nets**:
+  loadgen → gateway :9080/:9443 (allowed), gateway → backend :8080
+  (allowed), loadgen → backend :8080 (denied — must transit the gateway)
+- Cloud-init userdata per role installs Docker, tunes the kernel
+  (`somaxconn=65535`, `nofile=65536`), clones the bench repo to
+  `/opt/gateway-benchmarks`, pre-pulls the pinned images; backend
+  runs go-httpbin under a `gwb-backend.service` systemd unit for
+  crash-safety
 
-Exported outputs:
+Exported outputs (see `infra/aws/outputs.tf` for the full list):
 
 ```hcl
-loadgen_host_public_ip
-gateway_host_public_ip
-backend_host_public_ip
-loadgen_host_private_ip
-gateway_host_private_ip
-backend_host_private_ip
+loadgen_public_ip   gateway_public_ip   backend_public_ip
+loadgen_private_ip  gateway_private_ip  backend_private_ip
+ssh_loadgen          ssh_gateway         ssh_backend          # ready-to-paste SSH commands
+bench_target_url_http   = "http://10.50.1.20:9080"
+bench_target_url_https  = "https://10.50.1.20:9443"
+summary                 = "<multi-line topology + helper recap>"
 ```
 
-The orchestrator takes the private IPs and wires them into the k6 target URL and the gateway configs.
+The orchestrator (Phase 6) reads the private IPs and feeds them into
+`scripts/load-gateway.sh` as `BENCH_TARGET_URL` / `BENCH_TARGET_URL_HTTPS`.
 
 ## Differences from the legacy perf harness (reviewer note)
 
@@ -130,4 +143,11 @@ The orchestrator takes the private IPs and wires them into the k6 target URL and
 
 ## Status
 
-> Stub — filled in alongside Phases 5 and 6.
+> **Phase 5 — done.** Local 3-host emulation (`infra/local/`) and AWS
+> 3 EC2 cluster (`infra/aws/`) both ship with TLS plumbing, kernel
+> tuning, and Makefile lifecycle targets. End-to-end smoke proven
+> locally (parity 4/4 + s01 + s13, 4.4 M k6 checks, 0 failed).
+> Phase 6 (Go orchestrator) is the next blocker for full-matrix runs
+> on AWS — until it lands, single cells can be exercised on AWS with
+> the same `scripts/load-gateway.sh` that drives Phase 4 locally,
+> via the helpers dropped onto the loadgen host by cloud-init.

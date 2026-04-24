@@ -21,6 +21,7 @@ package runner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -97,6 +99,7 @@ type Runner struct {
 	KeepUp   bool          // pass --keep-up
 	Watchdog time.Duration // zero = disabled
 	Logger   io.Writer     // defaults to os.Stderr
+	Verbose  bool          // stream child stdout/stderr
 	Env      []string      // additional KEY=VAL pairs (e.g. WALLARM_IMAGE=…)
 
 	// RetryOnCrash is the number of *additional* attempts after the
@@ -201,8 +204,19 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 	}
 	cmd.Env = append(os.Environ(), append(childEnv, r.Env...)...)
 
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	var (
+		stdout    io.ReadCloser
+		stderr    io.ReadCloser
+		stdoutBuf bytes.Buffer
+		stderrBuf bytes.Buffer
+	)
+	if r.Verbose {
+		stdout, _ = cmd.StdoutPipe()
+		stderr, _ = cmd.StderrPipe()
+	} else {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+	}
 
 	if err := cmd.Start(); err != nil {
 		return Result{
@@ -216,11 +230,13 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 		}
 	}
 
-	prefix := fmt.Sprintf("[%s] ", cell.ID())
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); pipeWithPrefix(r.Logger, stdout, prefix) }()
-	go func() { defer wg.Done(); pipeWithPrefix(r.Logger, stderr, prefix) }()
+	if r.Verbose {
+		prefix := fmt.Sprintf("[%s] ", cell.ID())
+		wg.Add(2)
+		go func() { defer wg.Done(); pipeWithPrefix(r.Logger, stdout, prefix) }()
+		go func() { defer wg.Done(); pipeWithPrefix(r.Logger, stderr, prefix) }()
+	}
 
 	waitErr := cmd.Wait()
 	wg.Wait()
@@ -271,10 +287,13 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 		res.Verdict = VerdictExcluded
 	case rc != 0 && waitErr != nil:
 		res.Verdict = VerdictFail
-		res.Error = waitErr.Error()
+		res.Error = fallbackChildError(compactChildOutput(stderrBuf.String(), stdoutBuf.String()), waitErr.Error())
 	default:
 		res.Verdict = VerdictFail
-		res.Error = "no k6-summary.json and no excluded.json on disk"
+		res.Error = fallbackChildError(
+			compactChildOutput(stderrBuf.String(), stdoutBuf.String()),
+			"no k6-summary.json and no excluded.json on disk",
+		)
 	}
 	return res
 }
@@ -291,18 +310,30 @@ func (r *Runner) startStatsCollector(ctx context.Context, cell matrix.Cell, outp
 		return func() {}
 	}
 	c := &stats.Collector{
-		Container:      "gwb-" + cell.Gateway,
-		Output:         filepath.Join(outputDirAbs, "docker-stats.csv"),
-		Interval:       r.StatsInterval,
-		Socket:         r.StatsSocket,
-		StartupTimeout: 60 * time.Second,
+		Container: "gwb-" + cell.Gateway,
+		Output:    filepath.Join(outputDirAbs, "docker-stats.csv"),
+		Interval:  r.StatsInterval,
+		Socket:    r.StatsSocket,
+		// 3 minutes covers the slowest cold-start gateway in the
+		// catalogue (APISIX standalone with etcd dependency, ~75s
+		// observed on c6i.2xlarge cold cache; wallarm stack ~50s).
+		// 60s used to be the default and bit us during the v0.1.0
+		// AWS canonical bring-up — the collector gave up before
+		// compose up finished and docker-stats.csv was missing
+		// for every cell, leaving CPU/memory/bandwidth columns at
+		// zero in the wide CSV.
+		StartupTimeout: 3 * time.Minute,
 		Logger: func(format string, args ...any) {
-			fmt.Fprintf(r.Logger, "[%s] stats: "+format+"\n", append([]any{cell.ID()}, args...)...)
+			if r.Verbose {
+				fmt.Fprintf(r.Logger, "[%s] stats: "+format+"\n", append([]any{cell.ID()}, args...)...)
+			}
 		},
 	}
 	stop, err := c.Start(ctx)
 	if err != nil {
-		fmt.Fprintf(r.Logger, "[%s] stats: collector disabled (%v)\n", cell.ID(), err)
+		if r.Verbose {
+			fmt.Fprintf(r.Logger, "[%s] stats: collector disabled (%v)\n", cell.ID(), err)
+		}
 		return func() {}
 	}
 	return stop
@@ -350,4 +381,46 @@ func fileNonEmpty(path string) bool {
 		return false
 	}
 	return st.Size() > 0
+}
+
+func compactChildOutput(stderr, stdout string) string {
+	out := strings.TrimSpace(stripANSI(stderr))
+	if out == "" {
+		out = strings.TrimSpace(stripANSI(stdout))
+	}
+	if out == "" {
+		return ""
+	}
+	lines := strings.FieldsFunc(out, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	})
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts = append(parts, line)
+	}
+	if len(parts) > 3 {
+		parts = parts[len(parts)-3:]
+	}
+	out = strings.Join(parts, " | ")
+	if len(out) > 240 {
+		out = out[:237] + "..."
+	}
+	return out
+}
+
+func fallbackChildError(preferred, fallback string) string {
+	if strings.TrimSpace(preferred) != "" {
+		return preferred
+	}
+	return fallback
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+	return ansiPattern.ReplaceAllString(s, "")
 }

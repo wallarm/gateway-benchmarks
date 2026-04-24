@@ -438,9 +438,22 @@ if [[ "${BENCH_SKIP_DOCKER_STATS:-0}" != "1" ]] && [[ -x scripts/docker-stats-si
     fi
 fi
 
+# Run the k6 container as the calling host UID/GID so files written
+# into the bind-mounted /out (k6-summary.json, k6-stream.json) end up
+# owned by the operator instead of by the in-image `k6` user (uid
+# 12345). Without this, on Linux hosts the summary write fails with
+# "permission denied" because the host directory is owned by ubuntu
+# (uid 1000) and only group-writable. macOS Docker Desktop hides the
+# uid mismatch via its filesystem shim, so this only manifests on
+# Linux runners (verified empirically on EC2 c6i.2xlarge / Ubuntu
+# 24.04 during the v0.1.0 canonical bring-up).
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+
 docker_run_args=(
     --rm
     --network "${bench_network}"
+    --user "${HOST_UID}:${HOST_GID}"
     -v "${abs_k6}:/k6:ro"
     -v "${abs_output}:/out"
     -e "BENCH_TARGET_URL=http://gateway:9080"

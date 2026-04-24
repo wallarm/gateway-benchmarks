@@ -210,7 +210,11 @@ func TestCollector_WaitsForContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start tolerated missing container poorly: %v", err)
 	}
-	time.Sleep(120 * time.Millisecond)
+	// 3 misses × 500 ms backoff = 1.5 s before the goroutine
+	// resolves the container, then ≥ 2 sample intervals (50 ms
+	// each) to write at least one row. 2.5 s gives comfortable
+	// margin without making the test suite drag.
+	time.Sleep(2500 * time.Millisecond)
 	stop()
 
 	rows := readCSV(t, out)
@@ -219,28 +223,52 @@ func TestCollector_WaitsForContainer(t *testing.T) {
 	}
 }
 
-func TestCollector_FailsIfContainerNeverAppears(t *testing.T) {
+// TestCollector_NoCSVIfContainerNeverAppears verifies the new
+// best-effort contract: when the gwb-<gateway> container never shows
+// up within StartupTimeout, Start STILL returns nil (so the
+// orchestrator can carry on with the cell), but the goroutine quits
+// without ever opening the CSV. This replaces the old behaviour
+// where Start blocked synchronously and returned an error — which
+// caused a 60 s wait BEFORE compose up on AWS during the v0.1.0
+// canonical bring-up.
+func TestCollector_NoCSVIfContainerNeverAppears(t *testing.T) {
 	eng := newFakeEngine(t, "never-there")
 	eng.initialMisses.Store(1_000_000) // permanently 404
 
 	out := filepath.Join(t.TempDir(), "docker-stats.csv")
+	logged := make(chan string, 4)
 	c := &Collector{
 		Container:      "never-there",
 		Output:         out,
 		Interval:       50 * time.Millisecond,
 		Socket:         eng.socket,
 		StartupTimeout: 150 * time.Millisecond,
+		Logger: func(format string, args ...any) {
+			select {
+			case logged <- fmt.Sprintf(format, args...):
+			default:
+			}
+		},
 	}
-	_, err := c.Start(context.Background())
-	if err == nil {
-		t.Fatal("Start should fail when StartupTimeout elapses")
+	stop, err := c.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start should tolerate missing container, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error should mention not-found, got %v", err)
+	defer stop()
+
+	// Wait long enough for waitForContainer to time out.
+	select {
+	case msg := <-logged:
+		if !strings.Contains(msg, "not found") && !strings.Contains(msg, "no docker-stats.csv") {
+			t.Errorf("expected idle-collector log, got %q", msg)
+		}
+	case <-time.After(750 * time.Millisecond):
+		t.Fatal("collector never logged a missing-container warning")
 	}
-	// No CSV should exist — we never opened one if Start errored.
+
+	// CSV must NOT exist — the goroutine never opened it.
 	if _, err := os.Stat(out); err == nil {
-		t.Errorf("unexpected CSV at %s after failed Start", out)
+		t.Errorf("unexpected CSV at %s after idle collector", out)
 	}
 }
 

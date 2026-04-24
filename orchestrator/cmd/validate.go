@@ -53,6 +53,7 @@ reports/<run-id>/raw/<gateway>/<policy>__validate__<scenario>/.`,
 				Target:   target,
 				Backend:  backendPeek,
 				Logger:   cmd.OutOrStderr(),
+				Verbose:  flagVerbose,
 			}
 
 			var pass, fail, fm, errs int

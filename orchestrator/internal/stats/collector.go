@@ -94,15 +94,24 @@ type Collector struct {
 	Logger func(format string, args ...any)
 }
 
-// Start launches the sampling goroutine and blocks only until the
-// initial socket + container probe succeed (or fail permanently).
-// The returned stop func waits for the goroutine to flush its last
-// row and close the CSV file — call it either via defer or after
-// ctx cancel when you need a barrier.
+// Start launches the sampling goroutine and returns immediately after
+// the initial socket probe succeeds. The returned stop func waits
+// for the goroutine to flush its last row and close the CSV file —
+// call it either via defer or after ctx cancel when you need a
+// barrier.
 //
-// If the Docker socket is reachable but the container never shows up
-// within StartupTimeout, Start returns an error; no CSV is written.
-// This mirrors scripts/docker-stats-sidecar.sh's exit-3 path.
+// Container resolution happens INSIDE the goroutine — the collector
+// is started by the orchestrator BEFORE `docker compose up` even
+// runs, so the gwb-<gateway> container does not yet exist when
+// Start is called. The goroutine polls the engine for it until
+// StartupTimeout expires; if the container never appears, no CSV
+// is written but Start itself succeeded — same observable shape as
+// scripts/docker-stats-sidecar.sh's "warn and continue" path.
+//
+// Returning an error from Start now signals only the unrecoverable
+// pre-conditions (no socket, no Output set, etc.) — see also the
+// runner.startStatsCollector helper which logs but never aborts a
+// cell on a stats failure.
 func (c *Collector) Start(ctx context.Context) (stop func(), err error) {
 	if c.Container == "" {
 		return nil, errors.New("stats: Container is required")
@@ -129,30 +138,8 @@ func (c *Collector) Start(ctx context.Context) (stop func(), err error) {
 		return nil, fmt.Errorf("stats: docker engine unreachable on %s: %w", socket, err)
 	}
 
-	containerID, err := waitForContainer(ctx, client, c.Container, startup)
-	if err != nil {
-		return nil, err
-	}
-
 	if err := os.MkdirAll(filepath.Dir(c.Output), 0o755); err != nil {
 		return nil, fmt.Errorf("stats: mkdir %s: %w", filepath.Dir(c.Output), err)
-	}
-
-	// Append mode + write header only when the file is new — lets
-	// concurrent shell and Go collectors share a file safely in the
-	// degenerate case (not a supported flow, but won't clobber).
-	needHeader := !fileExistsNonEmpty(c.Output)
-	f, err := os.OpenFile(c.Output, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("stats: open %s: %w", c.Output, err)
-	}
-	w := csv.NewWriter(f)
-	if needHeader {
-		if err := w.Write(csvHeader); err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("stats: write header: %w", err)
-		}
-		w.Flush()
 	}
 
 	done := make(chan struct{})
@@ -160,10 +147,42 @@ func (c *Collector) Start(ctx context.Context) (stop func(), err error) {
 
 	go func() {
 		defer close(done)
-		defer func() {
+
+		// Wait for gwb-<gateway> to appear on the engine. The
+		// orchestrator starts us BEFORE `docker compose up`, so a
+		// "not yet" window of up to StartupTimeout is expected.
+		containerID, werr := waitForContainer(loopCtx, client, c.Container, startup)
+		if werr != nil {
+			if c.Logger != nil {
+				c.Logger("collector idle (%v) — no docker-stats.csv written", werr)
+			}
+			return
+		}
+
+		// Append mode + write header only when the file is new — lets
+		// concurrent shell and Go collectors share a file safely in the
+		// degenerate case (not a supported flow, but won't clobber).
+		needHeader := !fileExistsNonEmpty(c.Output)
+		f, ferr := os.OpenFile(c.Output, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+		if ferr != nil {
+			if c.Logger != nil {
+				c.Logger("open %s: %v", c.Output, ferr)
+			}
+			return
+		}
+		defer f.Close()
+
+		w := csv.NewWriter(f)
+		if needHeader {
+			if werr := w.Write(csvHeader); werr != nil {
+				if c.Logger != nil {
+					c.Logger("write header: %v", werr)
+				}
+				return
+			}
 			w.Flush()
-			_ = f.Close()
-		}()
+		}
+		defer w.Flush()
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

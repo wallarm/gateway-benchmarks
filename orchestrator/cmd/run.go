@@ -155,12 +155,14 @@ Use --dry-run first to see the planned cell list.`,
 				RetryOnCrash:       retryOnCrash,
 				DisableNativeStats: disableNativeStats,
 				Logger:             cmd.OutOrStderr(),
+				Verbose:            flagVerbose,
 			}
 			parityChk := &parity.Checker{
 				RepoRoot: flagRepoRoot,
 				Target:   gatewayTarget,
 				Backend:  backendPeek,
 				Logger:   cmd.OutOrStderr(),
+				Verbose:  flagVerbose,
 			}
 
 			// -------------------------------------------------- sweep
@@ -168,24 +170,45 @@ Use --dry-run first to see the planned cell list.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "  run-id:    %s\n", runID)
 			fmt.Fprintf(cmd.OutOrStdout(), "  mode:      %s\n", mode)
 			fmt.Fprintf(cmd.OutOrStdout(), "  cells:     %d\n", len(cells))
+			if gatewayTarget != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  target:    %s\n", gatewayTarget)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  reports:   %s/\n", runDir)
 
 			var pass, excluded, failed, crashed, skipped int
 			for i, cell := range cells {
 				idx := fmt.Sprintf("[%d/%d]", i+1, len(cells))
+				if !flagQuiet {
+					fmt.Fprintln(cmd.OutOrStdout(), "")
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", idx, formatCellLabel(cell))
+				}
 				if resume {
 					if v, done := cp.HasDone(cell.ID()); done {
 						skipped++
-						fmt.Fprintf(cmd.OutOrStdout(), "%s SKIP (resume) %s — was %s\n", idx, cell.ID(), v)
+						if flagQuiet {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s SKIP %s — resume (%s)\n", idx, formatCellLabel(cell), v)
+						} else {
+							fmt.Fprintf(cmd.OutOrStdout(), "  resume: skipped — already recorded as %s\n", v)
+						}
 						continue
 					}
 				}
 
 				// ---------- parity gate
 				if !skipParity {
+					if !flagQuiet {
+						fmt.Fprintf(cmd.OutOrStdout(), "  parity:  checking gateway behavior\n")
+					}
 					rep, perr := parityChk.Check(ctx, cell.Gateway, cell.Policy, cell.OutputDir(runID))
 					if perr != nil && rep.Status == "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "%s ERROR (parity) %s: %v\n", idx, cell.ID(), perr)
+						if flagQuiet {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s ERROR %s — parity: %v\n", idx, formatCellLabel(cell), perr)
+						} else {
+							fmt.Fprintf(cmd.OutOrStdout(), "  parity:  ERROR — %v\n", perr)
+						}
+					}
+					if !flagQuiet {
+						fmt.Fprintf(cmd.OutOrStdout(), "  parity:  %s\n", formatParitySummary(rep))
 					}
 					if !parity.Allowed(rep.Status) {
 						verdict := runner.VerdictFail
@@ -204,16 +227,26 @@ Use --dry-run first to see the planned cell list.`,
 							EndedAt:   time.Now().UTC(),
 						}
 						_ = cp.Append(res)
-						fmt.Fprintf(cmd.OutOrStdout(), "%s %s (parity-gate) %s — %s\n",
-							idx, verdict, cell.ID(), rep.Status)
+						if flagQuiet {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s — parity gate (%s)\n",
+								idx, verdict, formatCellLabel(cell), rep.Status)
+						} else {
+							fmt.Fprintf(cmd.OutOrStdout(), "  load:    skipped — blocked by parity gate\n")
+							fmt.Fprintf(cmd.OutOrStdout(), "  file:    %s\n", filepath.Join(cell.OutputDir(runID), "parity.json"))
+						}
 						if stopOnFail && verdict == runner.VerdictFail {
 							return fmt.Errorf("stop-on-fail: cell %s failed parity (%s)", cell.ID(), rep.Status)
 						}
 						continue
 					}
+				} else if !flagQuiet {
+					fmt.Fprintf(cmd.OutOrStdout(), "  parity:  skipped (--skip-parity)\n")
 				}
 
 				// ---------- load
+				if !flagQuiet {
+					fmt.Fprintf(cmd.OutOrStdout(), "  load:    running %s with %s\n", cell.Scenario, cell.Load)
+				}
 				res := runr.Run(ctx, cell)
 				_ = cp.Append(res)
 
@@ -227,12 +260,19 @@ Use --dry-run first to see the planned cell list.`,
 				default:
 					failed++
 				}
-				tries := ""
-				if res.Attempts > 1 {
-					tries = fmt.Sprintf(" [%d attempts]", res.Attempts)
+				if flagQuiet {
+					tries := ""
+					if res.Attempts > 1 {
+						tries = fmt.Sprintf(" [%d attempts]", res.Attempts)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s (%.1fs)%s\n",
+						idx, res.Verdict, formatCellLabel(cell), res.Duration, tries)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "  load:    %s\n", formatRunnerSummary(res))
+					if res.Verdict != runner.VerdictPass {
+						fmt.Fprintf(cmd.OutOrStdout(), "  logs:    %s\n", filepath.Join(cell.OutputDir(runID), "logs"))
+					}
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s (%.1fs)%s\n",
-					idx, res.Verdict, cell.ID(), res.Duration, tries)
 
 				if stopOnFail && (res.Verdict == runner.VerdictFail ||
 					res.Verdict == runner.VerdictCrashed ||
@@ -242,6 +282,10 @@ Use --dry-run first to see the planned cell list.`,
 			}
 
 			// -------------------------------------------------- aggregate
+			if !flagQuiet {
+				fmt.Fprintln(cmd.OutOrStdout(), "")
+				fmt.Fprintln(cmd.OutOrStdout(), "=== aggregate ===")
+			}
 			agg := &aggregate.Aggregator{RepoRoot: flagRepoRoot, RunID: runID}
 			collected, aerr := agg.Collect()
 			if aerr != nil {
@@ -259,6 +303,11 @@ Use --dry-run first to see the planned cell list.`,
 				if err := agg.WriteMarkdown(mdPath, collected); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "md write failed: %v\n", err)
 				}
+				if !flagQuiet {
+					fmt.Fprintf(cmd.OutOrStdout(), "  matrix:   %s\n", filepath.Join(runDir, "matrix.csv"))
+					fmt.Fprintf(cmd.OutOrStdout(), "  cells:    %s\n", filepath.Join(runDir, "cells.jsonl"))
+					fmt.Fprintf(cmd.OutOrStdout(), "  summary:  %s\n", filepath.Join(runDir, "matrix.md"))
+				}
 			}
 
 			mb.Finalize()
@@ -274,7 +323,9 @@ Use --dry-run first to see the planned cell list.`,
 				} else if out, rerr := report.Render(loaded, report.Options{}); rerr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "report skipped: %v\n", rerr)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "  report:   %s\n", out)
+					if !flagQuiet {
+						fmt.Fprintf(cmd.OutOrStdout(), "  report:   %s\n", out)
+					}
 				}
 			}
 
@@ -349,4 +400,46 @@ func resolveSelection(kind, csv string, fallback []string) []string {
 		return matrix.SortStable(kind, alias)
 	}
 	return matrix.SortStable(kind, matrix.ParseCSV(csv))
+}
+
+func formatCellLabel(cell matrix.Cell) string {
+	label := fmt.Sprintf("%s | %s | %s | %s", cell.Gateway, cell.Policy, cell.Scenario, cell.Load)
+	if cell.Repetition > 1 {
+		label += fmt.Sprintf(" | rep %d", cell.Repetition)
+	}
+	return label
+}
+
+func formatParitySummary(rep parity.Report) string {
+	if rep.Status == "" {
+		if rep.Reason != "" {
+			return "ERROR — " + rep.Reason
+		}
+		return "ERROR"
+	}
+	parts := []string{string(rep.Status)}
+	if rep.Probes > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d probes", rep.Passed, rep.Probes))
+	}
+	if rep.Skipped > 0 {
+		parts = append(parts, fmt.Sprintf("skipped %d", rep.Skipped))
+	}
+	if rep.Reason != "" && rep.Status != parity.StatusPass {
+		parts = append(parts, rep.Reason)
+	}
+	return strings.Join(parts, " — ")
+}
+
+func formatRunnerSummary(res runner.Result) string {
+	summary := string(res.Verdict)
+	if res.Duration > 0 {
+		summary += fmt.Sprintf(" in %.1fs", res.Duration)
+	}
+	if res.Attempts > 1 {
+		summary += fmt.Sprintf(" (%d attempts)", res.Attempts)
+	}
+	if res.Error != "" && res.Verdict != runner.VerdictPass {
+		summary += " — " + res.Error
+	}
+	return summary
 }

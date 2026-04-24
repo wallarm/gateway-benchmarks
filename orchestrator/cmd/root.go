@@ -61,9 +61,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagRunID, "run-id", "",
 		"override the timestamp-based run id (e.g. 20260423T120000Z); auto-generated if empty")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false,
-		"verbose orchestrator output (per-cell stdout/stderr is always streamed)")
+		"stream raw parity/load script output in addition to the orchestrator progress log")
 	rootCmd.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false,
-		"only print one summary line per cell")
+		"print one compact verdict line per cell")
 
 	rootCmd.AddCommand(newRunCmd())
 	rootCmd.AddCommand(newValidateCmd())

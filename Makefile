@@ -227,7 +227,7 @@ orchestrator-test: ## go test ./orchestrator/... (race + coverage)
 
 # --- bench (Phase 6) convenience wrappers ----------------------------------
 # Tunable via env vars: BENCH_GATEWAYS, BENCH_POLICIES, BENCH_LOADS, BENCH_TARGET,
-# BENCH_SEED, BENCH_RUN_ID, BENCH_REPS, BENCH_NOTES, BENCH_MODE.
+# BENCH_SEED, BENCH_RUN_ID, BENCH_REPS, BENCH_NOTES, BENCH_MODE, BENCH_VERBOSE, BENCH_QUIET.
 BENCH_GATEWAYS ?= nginx
 BENCH_POLICIES ?= p01-vanilla
 BENCH_LOADS    ?= p1-baseline
@@ -237,9 +237,15 @@ BENCH_RUN_ID   ?= $(RUN_ID)
 BENCH_REPS     ?= 1
 BENCH_NOTES    ?=
 BENCH_MODE     ?= local
+BENCH_VERBOSE  ?= 0
+BENCH_QUIET    ?= 0
+BENCH_VERBOSE_FLAG := $(if $(filter 1 true TRUE yes YES,$(BENCH_VERBOSE)),--verbose,)
+BENCH_QUIET_FLAG   := $(if $(filter 1 true TRUE yes YES,$(BENCH_QUIET)),--quiet,)
 
 bench-run: orchestrator-build ## Run the orchestrator end-to-end (parity → load → aggregate → manifest)
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		$(BENCH_VERBOSE_FLAG) \
+		$(BENCH_QUIET_FLAG) \
 		--gateways "$(BENCH_GATEWAYS)" \
 		--policies "$(BENCH_POLICIES)" \
 		--loads    "$(BENCH_LOADS)" \
@@ -250,7 +256,10 @@ bench-run: orchestrator-build ## Run the orchestrator end-to-end (parity → loa
 		$(if $(BENCH_NOTES),--notes "$(BENCH_NOTES)",)
 
 bench-validate: orchestrator-build ## Run parity-only across BENCH_GATEWAYS × BENCH_POLICIES
-	@$(ORCH_BIN) --repo-root "$(CURDIR)" validate \
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" \
+		$(BENCH_VERBOSE_FLAG) \
+		$(BENCH_QUIET_FLAG) \
+		validate \
 		--gateways "$(BENCH_GATEWAYS)" \
 		--policies "$(BENCH_POLICIES)" \
 		--target   "$(BENCH_TARGET)" \
@@ -348,6 +357,8 @@ perf-local-cycle-smoke: ## End-to-end smoke (s01 over :9080 + s13 over :9443 if 
 
 perf-local-run: orchestrator-build ## Drive the full matrix locally via bench (parity + load + aggregate)
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		$(BENCH_VERBOSE_FLAG) \
+		$(BENCH_QUIET_FLAG) \
 		--gateways "$(BENCH_GATEWAYS)" \
 		--policies "$(BENCH_POLICIES)" \
 		--loads    "$(BENCH_LOADS)" \
@@ -418,6 +429,8 @@ perf-aws-run: orchestrator-build ## Drive the matrix on the AWS cluster via benc
 		exit 2; \
 	fi
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		$(BENCH_VERBOSE_FLAG) \
+		$(BENCH_QUIET_FLAG) \
 		--gateways "$(BENCH_GATEWAYS)" \
 		--policies "$(BENCH_POLICIES)" \
 		--loads    "$(BENCH_LOADS)" \

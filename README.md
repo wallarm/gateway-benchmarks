@@ -3,7 +3,7 @@
 > Reproducible, vendor-neutral performance benchmarks for production API gateways under a **policy × protocol × load** matrix.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Phase 3b matrix complete](https://img.shields.io/badge/status-phase_3b_core_matrix_complete-brightgreen.svg)](./ROADMAP.md)
+[![Status: Phase 8 reproducibility gate](https://img.shields.io/badge/status-phase_8_reproducibility_gate-brightgreen.svg)](./ROADMAP.md)
 
 ---
 
@@ -38,7 +38,7 @@ This project is developed and maintained by **Wallarm, Inc.** — the author of 
 | Traefik                 | Go                 | baseline |
 | Tyk                     | Go                 | baseline |
 
-11 **policy profiles** × 4 **load profiles** × two protocols (HTTP/1.1 plaintext and HTTP/1.1 TLS) — **364 cells per run** (see [TASK.md](./TASK.md)).
+**(11 ranking policy profiles × 4 load profiles) + (2 HTTPS scenarios × 4 load profiles) = 52 cells per gateway × 7 gateways = 364 cells per run** — plus the supplemental `p03-jwks-rs256-basic` capability scenario (parity-only, off-grid). See [TASK.md §7](./TASK.md).
 
 ## Quick Start — Local mode
 
@@ -100,19 +100,28 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 - [TASK.md](./TASK.md) — PRD (mandatory properties of the benchmark)
 - [ROADMAP.md](./ROADMAP.md) — phased implementation plan
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — local/AWS topology and network path
-- [docs/POLICIES.md](./docs/POLICIES.md) — 12 policy profiles and parity requirements
+- [docs/POLICIES.md](./docs/POLICIES.md) — 11 ranking + 1 supplemental policy profiles, parity requirements
 - [docs/LOAD-PROFILES.md](./docs/LOAD-PROFILES.md) — 4 load profiles
 - [docs/GATEWAYS.md](./docs/GATEWAYS.md) — versions, digests, deviations
-- [docs/REPRODUCIBILITY.md](./docs/REPRODUCIBILITY.md) — manifest, seeds, tolerance
+- [docs/REPORT.md](./docs/REPORT.md) — how to read the HTML report
+- [docs/REPRODUCIBILITY.md](./docs/REPRODUCIBILITY.md) — manifest, seeds, tolerance, `bench compare-runs` gate
+- [orchestrator/README.md](./orchestrator/README.md) — `bench` Go binary (Phases 6 + 7 + 8)
 
 ## Current Status
 
-The Phase-7 milestone is in. The full pipeline — `parity → load →
-aggregate → manifest → report` — runs end-to-end through the
-single `bench` Go binary. Local smoke runs and Phase-4 production
-sweeps (248 runs) feed straight into the new HTML renderer; the
-remaining phases (8 — quality gates / docs, 9 — publication / v0.1.0)
-are the wrap-up.
+**Phase 8 — done.** The full pipeline `parity → load → aggregate →
+manifest → report` runs end-to-end through the single `bench` Go
+binary, and the **reproducibility gate** is in: `bench compare-runs`
+diffs any two sweeps against the canonical tolerance table (RPS ±3 %,
+p50/p95/p99 latency ±10 %, mem ±5 %, CPU ±10 %, exact match on 5xx +
+4xx-expected) and confirms top-3 rank stability per (policy, load,
+scenario) column — exit `0 REPRODUCIBLE · 1 SOFT DIFF · 2 NOT
+REPRODUCIBLE`. The Phase-4 production sweeps (248 runs) feed the
+HTML renderer; the canonical reproducibility playbook lives in
+[docs/REPRODUCIBILITY.md § AWS canonical-run playbook](./docs/REPRODUCIBILITY.md).
+Only **Phase 9 — publication / v0.1.0** (execute that playbook,
+attach the HTML report + `compare-runs` verdict to the GitHub Release)
+remains.
 
 - [x] Phase 1 — Skeleton (README, directories, license, lint CI)
 - [x] Phase 2 — Synthetic backend (vendored `mccutchen/go-httpbin@v2.22.1`, static Docker image, smoke-tested)

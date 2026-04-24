@@ -113,7 +113,14 @@ Profiles override these thresholds where relevant.
 
 ## Status
 
-> Stub. Phase 4 in the roadmap.
+> **Phase 4 foundation — done.** All four closed-loop profiles ship
+> under `k6/profiles/` and are wired through `scripts/load-gateway.sh`
+> + the Go orchestrator (`bench run`); the paced-arrivals variants
+> below (`p1c..p4c`) are landed and exercised by Phase 4's 248-run
+> production sweep. HTTPS scenarios (`s13`, `s14`) ride the same
+> profiles. Phase 5–8 plumbing (3-host topology, Go orchestrator,
+> HTML report, reproducibility gate) is also in — see
+> [ROADMAP.md](../ROADMAP.md).
 
 ## Paced-arrivals variants (opt-in)
 

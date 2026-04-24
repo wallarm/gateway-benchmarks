@@ -143,11 +143,15 @@ The orchestrator (Phase 6) reads the private IPs and feeds them into
 
 ## Status
 
-> **Phase 5 — done.** Local 3-host emulation (`infra/local/`) and AWS
-> 3 EC2 cluster (`infra/aws/`) both ship with TLS plumbing, kernel
-> tuning, and Makefile lifecycle targets. End-to-end smoke proven
-> locally (parity 4/4 + s01 + s13, 4.4 M k6 checks, 0 failed).
-> Phase 6 (Go orchestrator) is the next blocker for full-matrix runs
-> on AWS — until it lands, single cells can be exercised on AWS with
-> the same `scripts/load-gateway.sh` that drives Phase 4 locally,
-> via the helpers dropped onto the loadgen host by cloud-init.
+> **Phases 5 → 8 — done.** Local 3-host emulation (`infra/local/`)
+> and AWS 3 EC2 cluster (`infra/aws/`) both ship with TLS plumbing,
+> kernel tuning, and Makefile lifecycle targets. The Go orchestrator
+> `bench` (Phases 6 + 7) drives `parity → load → aggregate →
+> manifest → report.html` end-to-end through this topology, and the
+> Phase 8 reproducibility gate (`bench compare-runs`) confirms two
+> sweeps on the same git SHA agree within tolerance. End-to-end
+> smoke proven locally (parity 4/4 + s01 + s13, 4.4 M k6 checks,
+> 0 failed) and across the 248-run production sweep. **Phase 9 —
+> publication / v0.1.0** is the only remaining milestone (execute
+> the canonical AWS playbook in
+> [REPRODUCIBILITY.md](./REPRODUCIBILITY.md)).

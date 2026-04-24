@@ -40,7 +40,7 @@ A synthetic backend service is included as a **direct-connect baseline** (no gat
 
 ## 4. Policy Profiles
 
-Eleven policy profiles must be tested. Each is a specific configuration of the gateway under test.
+**Eleven canonical ranking policy profiles** must be tested. Each is a specific configuration of the gateway under test. (The repository additionally ships one supplemental capability scenario, `p03-jwks-rs256-basic`, exercised only through parity attestation — see [docs/POLICIES.md § p03-jwks-rs256-basic](./docs/POLICIES.md#p03-jwks-rs256-basic). It is **not** part of the ranking matrix.)
 
 - **Vanilla** — no policies applied; pure proxy.
 - **JWT verification** — tokens validated against a shared secret (or a shared static JWKS if the gateway does not support a static secret).
@@ -86,8 +86,9 @@ Two protocol modes are tested:
 
 ## 7. Test Matrix
 
-Cells per gateway: (12 policy profiles × 4 load profiles) + (2 HTTPS profiles × 4 load profiles) = **52 cells per gateway**.
+Cells per gateway: (11 ranking policy profiles × 4 load profiles) + (2 HTTPS scenarios × 4 load profiles) = **52 cells per gateway**.
 Cells per cycle: 52 × 7 gateways = **364 cells**.
+The supplemental `p03-jwks-rs256-basic` capability scenario (§4) runs through parity attestation only and contributes **0** cells to this 364-cell ranking matrix.
 Plus: one direct-connect backend baseline per (load profile × protocol) combination to power the "overhead" column in every detail table.
 Each cell is executed several times per cycle. The report shows the median across repetitions; variance is shown in the detail table. Any cell whose variance exceeds the framework author's threshold is flagged as unstable.
 
@@ -134,7 +135,7 @@ The output of a cycle is a **single self-contained HTML file** whose layout foll
 - **Executive summary** — ranking table: rank · gateway (coloured badge) · stack (language · version) · average RPS across all cells · max error % · pass ratio (e.g. 46/48) · steady-state memory.
 - **Memory footprint grid** — one chart/chip per gateway.
 - **Overall profile radar** — relative RPS as a percentage of the best gateway in each scenario.
-- **Scenario tabs** — one tab per (policy profile × protocol) combination — 12 tabs in total (11 HTTP + 2 HTTPS).
+- **Scenario tabs** — one tab per (policy profile × protocol) combination — **13 tabs in total** (11 HTTP + 2 HTTPS, mirroring the 13-scenario matrix in §7).
 
 ### Per-tab content
 

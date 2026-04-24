@@ -50,7 +50,7 @@ to apples. The baseline values are:
 | Worker concurrency            | 1 worker per CPU core on gateway host  | [TASK §10](../TASK.md) |
 | Access logging                | off on the hot path                    | log I/O would bias latency |
 | Admin / metrics listeners     | off (separate port, not on the 8080 hot path) | the tested path must not be instrumented |
-| Request timeout               | 10 s                                   | only matters for `p05/p06` where we throttle below the rate |
+| Request timeout               | 10 s                                   | only matters for `p06/p07` where we throttle below the rate |
 | TLS versions                  | TLSv1.2 + TLSv1.3                      | same cipher suite across gateways (pinned in `_reference/tls/`) |
 
 Any gateway that cannot match a row in this table goes into the
@@ -80,6 +80,16 @@ a deliberate `--http2` request must be refused or forcibly downgraded.
 Every objective difference that keeps a cell from being a 100 %
 apples-to-apples comparison is recorded here. Each entry links the
 exact cell (`<gw>, <profile>`), the root cause and the mitigation.
+
+> **Profile numbering note.** The canonical numbering is
+> `p01-vanilla`, `p02-jwt`, `p03-jwks-rs256-basic` (supplemental,
+> off-grid), then ranking profiles `p04-rl-static` … `p12-full-pipeline`.
+> See [`docs/POLICIES.md`](./POLICIES.md) for the full roster. Section
+> headers and the rollup table below use this numbering. Pre-Phase-3b
+> historical narratives (in "Iteration N" subsections at the bottom of
+> this file) may still use the older `p03..p11` ranking numbering that
+> predates the `p03-jwks-rs256-basic` insertion; treat those as
+> chronological log entries.
 
 ### Summary table
 
@@ -246,8 +256,8 @@ What differs
   "${request.headers.x-real-ip}"` — a wallarm context expression
   that resolves at request time. Bucketing happens per unique
   expression value inside a service-scoped namespace. Same
-  `window_type: sliding` choice as p03 (`fixed` + `window: 1` is a
-  no-op against the current build).
+  `window_type: sliding` choice as `p04-rl-static` (`fixed` +
+  `window: 1` is a no-op against the current build).
 
 Root cause
 : Public Admin API shape: `scope` namespaces buckets but does not
@@ -260,10 +270,11 @@ Root cause
 Resolution
 : `setup.sh` on both profiles binds a single `ratelimit` policy on
   the service's `request_flow`. The math works out to the
-  request: for p05 with 10 IPs × 45 req/s-sliding-window,
-  `10 × 2xx + 35 × 429` per IP → cross-IP `100 × 2xx, 350 × 429`
-  (observed `99 × 2xx, 351 × 429`). For p06 saturating a single
-  IP with 500 reqs → `100 × 2xx, 400 × 429` exact.
+  request: for `p06-rl-dynamic-low` with 10 IPs ×
+  45 req/s-sliding-window, `10 × 2xx + 35 × 429` per IP → cross-IP
+  `100 × 2xx, 350 × 429` (observed `99 × 2xx, 351 × 429`). For
+  `p07-rl-dynamic-high` saturating a single IP with 500 reqs →
+  `100 × 2xx, 400 × 429` exact.
 
 Impact on ranking
 : `none` — every gateway in the matrix implements dynamic RL with
@@ -279,8 +290,8 @@ Status
 #### [harness, p=burst-runner-ignores-duration_s]
 
 What differs
-: Rate-limit fixtures (`p03`, `p05`, `p06`) carry a `duration_s`
-  field, but
+: Rate-limit fixtures (`p04-rl-static`, `p06-rl-dynamic-low`,
+  `p07-rl-dynamic-high`) carry a `duration_s` field, but
   [`scripts/parity-attestation.sh::run_burst_probe`](../scripts/parity-attestation.sh)
   fires every request as fast as `curl --parallel` can open
   connections — it does **not** pace them across `duration_s`.
@@ -297,8 +308,8 @@ Resolution
   trickle. A gateway that cannot limit under ASAP bursts would
   fail the parity check, even though it might pass under paced
   load. The same runner now also forwards static `.burst.headers`
-  (for example `Authorization: Bearer ${JWT_VALID}` in `p11`) while
-  keeping the same ASAP scheduling model.
+  (for example `Authorization: Bearer ${JWT_VALID}` in
+  `p12-full-pipeline`) while keeping the same ASAP scheduling model.
 
 Impact on ranking
 : `none` — parity certifies correctness, not RPS. Phase 4 k6 load
@@ -344,8 +355,9 @@ Status
 #### [gw=wallarm, p=p09-resp-headers]
 
 What differs
-: Same base-path-strip workaround as p07, so this profile routes
-  `/response-headers` → `backend:8080/anything/response-headers` and
+: Same base-path-strip workaround as `p08-req-headers`, so this
+  profile routes `/response-headers` →
+  `backend:8080/anything/response-headers` and
   `/get` → `backend:8080/anything/get`. `go-httpbin`'s
   `/anything/*` catch-all does **not** emit a `Server:` header on
   responses; only the first-class `/response-headers` endpoint does,
@@ -367,10 +379,13 @@ Resolution
 
 Impact on ranking
 : `none` for the add side. The drop side was originally intended to
-  be verified transitively via `p12-full-pipeline`, but since `p11`
-  is itself FEATURE-MISSING on this image (cascade from `p02-jwt`),
-  the drop-side check stays structural on wallarm until a public tag
-  ships with either a `preserve_path` knob or `jwt_validation`.
+  be verified transitively via `p12-full-pipeline`, but since
+  `p12-full-pipeline` was itself FEATURE-MISSING on the public image
+  (cascade from `p02-jwt`), the drop-side check stays structural on
+  wallarm until a public tag ships with either a `preserve_path`
+  knob or `jwt_validation`. Both `p02-jwt` and `p12-full-pipeline`
+  are now retired in favour of the from-source `WALLARM_IMAGE`
+  build (Iteration 23).
   Every other gateway in this bench routes `/response-headers`
   straight to `go-httpbin` and exercises the drop for real.
 
@@ -399,10 +414,11 @@ Resolution
 
 Impact on ranking
 : The benchmark measures a Lua-based rewrite path for wallarm on
-  p09/p10; other gateways (envoy Lua filter, openresty ngx_http_lua,
-  apisix serverless Lua) will do the same. A gateway that ships a
-  native body-transform policy will show it against the same
-  fixture and the manifest will mark the mechanism explicitly.
+  `p10-req-body` / `p11-resp-body`; other gateways (envoy Lua
+  filter, openresty ngx_http_lua, apisix serverless Lua) will do
+  the same. A gateway that ships a native body-transform policy
+  will show it against the same fixture and the manifest will mark
+  the mechanism explicitly.
 
 Status
 : `accepted` — mirrored in `gateways/wallarm/p10-req-body/NOTES.md`.
@@ -410,7 +426,7 @@ Status
 #### [gw=wallarm, p=p11-resp-body]
 
 What differs
-: Same `lua_runner` + `cjson.safe` idiom as p09, but on
+: Same `lua_runner` + `cjson.safe` idiom as `p10-req-body`, but on
   `response_flow`. Content-Length is explicitly recomputed
   (`ctx.response.headers["content-length"] = tostring(#body)`),
   otherwise wallarm forwards the rewritten body with the stale
@@ -426,8 +442,8 @@ Resolution
 
 Impact on ranking
 : `none` — the same Lua path is exercised on every wallarm profile
-  that touches bodies, so the numbers are comparable across p09, p10
-  and p11.
+  that touches bodies, so the numbers are comparable across
+  `p10-req-body`, `p11-resp-body` and `p12-full-pipeline`.
 
 Status
 : `accepted` — mirrored in `gateways/wallarm/p11-resp-body/NOTES.md`.
@@ -455,7 +471,7 @@ Status
 
 What differs
 : None today — the cell runs the canonical `1000 rps service-wide,
-  rolling 1-second window` from `POLICIES.md § p03` at full rate.
+  rolling 1-second window` from `POLICIES.md § p04` at full rate.
 
 Historical context
 : An earlier iteration **did** ship a rate deviation (≈200 rps
@@ -497,14 +513,15 @@ Status
 #### [gw=envoy, p=p06-rl-dynamic-low / p07-rl-dynamic-high, infra=enumerated-descriptors]
 
 What differs
-: Canonical `POLICIES.md § p05 / § p06` mandates per-client-IP
-  rate limiting across a pool of 100 (`p05`) / 50 000 (`p06`)
-  distinct IPs. The envoy cells implement per-IP limiting via
-  `envoy.filters.http.local_ratelimit` with `rate_limits.actions`
-  extracting `X-Real-IP` into a `client_ip` descriptor key, but
-  the `descriptors[]` list enumerates only the IPs the fixture
-  exercises (10 for `p05` on `10.0.0.1..10.0.0.10`; 11 for `p06`
-  on `10.5.0.1..10.5.0.10 + 10.5.9.9`).
+: Canonical `POLICIES.md § p06 / § p07` mandates per-client-IP
+  rate limiting across a pool of 100 (`p06-rl-dynamic-low`) /
+  50 000 (`p07-rl-dynamic-high`) distinct IPs. The envoy cells
+  implement per-IP limiting via `envoy.filters.http.local_ratelimit`
+  with `rate_limits.actions` extracting `X-Real-IP` into a
+  `client_ip` descriptor key, but the `descriptors[]` list
+  enumerates only the IPs the fixture exercises
+  (10 for `p06-rl-dynamic-low` on `10.0.0.1..10.0.0.10`;
+  11 for `p07-rl-dynamic-high` on `10.5.0.1..10.5.0.10 + 10.5.9.9`).
 
 Root cause
 : Envoy v1.32's `local_ratelimit` requires **verbatim descriptor
@@ -521,11 +538,13 @@ Resolution
 : Enumerate every IP the fixture touches, one `descriptors[]`
   entry per IP. Each entry gets its own shared-across-workers
   token bucket sized at the canonical per-IP rate
-  (`p05: max_tokens=10, tokens_per_fill=10, fill_interval=1s`;
-  `p06: max_tokens=100, tokens_per_fill=100, fill_interval=1s`).
+  (`p06-rl-dynamic-low: max_tokens=10, tokens_per_fill=10,
+  fill_interval=1s`; `p07-rl-dynamic-high: max_tokens=100,
+  tokens_per_fill=100, fill_interval=1s`).
   `always_consume_default_token_bucket: false` so an enumerated
   match does not also drain the global safety-net bucket. Full
-  parity green under this mechanism: `p05` 2/2, `p06` 3/3.
+  parity green under this mechanism: `p06-rl-dynamic-low` 2/2,
+  `p07-rl-dynamic-high` 3/3.
 
 Impact on ranking
 : `none on the parity verdict` — the filter, descriptor
@@ -619,8 +638,8 @@ Resolution
   exclusive** — setting `--entryPoints.web.forwardedHeaders.
   insecure=true` on the CLI alongside `--configFile=/etc/
   traefik/traefik.yaml` is silently ignored. The knob **must**
-  live inside the YAML file. This tripped up ~2h of p05 debug
-  before the CLI flag was removed from
+  live inside the YAML file. This tripped up ~2h of
+  `p06-rl-dynamic-low` debug before the CLI flag was removed from
   `gateways/traefik/docker-compose.yaml` in favour of per-profile
   YAML. The same cut-corner shows up in
   `jkaninda/goma-gateway-vs-traefik` as a commented-out CLI flag.
@@ -663,8 +682,8 @@ Resolution
   to their native Go types (`bool`, `nil`, `float64`) before
   they reach the JSON encoder. After the fix,
   `{"bench":{"injected":true}}` (unquoted) is what the fixture
-  asserts on, both for p09 (request body seen by backend) and
-  p10 (response body seen by client).
+  asserts on, both for `p10-req-body` (request body seen by backend)
+  and `p11-resp-body` (response body seen by client).
 
 Impact on ranking
 : `none` — the body-rewrite primitive itself (JSON decode →
@@ -677,7 +696,8 @@ Status
 : `accepted` — captured in
   `gateways/traefik/_shared/plugins-local/src/github.com/
   wallarm/body_rewrite/body_rewrite.go` and in the profile
-  NOTES for p09 / p10.
+  NOTES for `p10-req-body` / `p11-resp-body` /
+  `p12-full-pipeline`.
 
 #### [gw=traefik, p=p02-jwt / p12-full-pipeline, infra=yaegi-json-no-method-dispatch]
 
@@ -729,7 +749,8 @@ Status
 : `accepted` — captured in
   `gateways/traefik/_shared/plugins-local/src/github.com/
   wallarm/jwt_hs256/jwt_hs256.go` (inline comment on the
-  decode block) and in the profile NOTES for p02 / p11.
+  decode block) and in the profile NOTES for `p02-jwt` /
+  `p12-full-pipeline`.
 
 #### [gw=apisix, p=p08-req-headers / p12-full-pipeline, infra=nginx-conf-xff-patch]
 
@@ -768,12 +789,13 @@ Resolution
   ```
 
   A `serverless-pre-function` (access phase) can then do
-  `ngx.var.bench_xff = ""` to fully suppress the downstream
+  `ngx.var.bench_xff = ""` to fully suppress   the downstream
   header, including the NGINX-auto-appended portion. The patch
   is idempotent: guarded by a literal-line `grep`, it no-ops if
   APISIX upstream changes the default shape. If that ever
-  happens, `p07` / `p11` fail their respective fixture
-  assertions, which is the intended early-warning signal.
+  happens, `p08-req-headers` / `p12-full-pipeline` fail their
+  respective fixture assertions, which is the intended
+  early-warning signal.
 
 Impact on ranking
 : `none` — the sed patch only targets the header-carrying line
@@ -806,7 +828,7 @@ Root cause
   `Server:` after that pass.
 
 Resolution
-: p08 uses a `serverless-post-function` pinned to
+: `p09-resp-headers` uses a `serverless-post-function` pinned to
   `phase: header_filter` that calls `ngx.header["Server"] = nil`
   — the canonical OpenResty escape hatch that executes during
   nginx's own header filter chain. The shared baseline also sets
@@ -819,22 +841,23 @@ Resolution
   (each serverless plugin resolves exactly one phase per
   instance, see
   `/usr/local/apisix/apisix/plugins/serverless/init.lua`,
-  `call_funcs`), and `p11`'s post-function slot is spent on
-  `phase: body_filter` for response-body rewrite (p10). In p11
-  we rely on `response-rewrite.headers.remove: [Server]` alone
-  — which suffices under the combined conditions of
+  `call_funcs`), and `p12-full-pipeline`'s post-function slot is
+  spent on `phase: body_filter` for response-body rewrite
+  (`p11-resp-body`). In `p12-full-pipeline` we rely on
+  `response-rewrite.headers.remove: [Server]` alone — which
+  suffices under the combined conditions of
   `server_tokens: false` in the baseline, and the fact that
-  go-httpbin's `/anything` endpoint (the only path p11 probes)
-  does not emit a Server header of its own. Empirically
-  verified against `/anything`, `/get`, and
-  `/response-headers?Server=foo` on `p11` — all three return a
-  Server-header-free response.
+  go-httpbin's `/anything` endpoint (the only path
+  `p12-full-pipeline` probes) does not emit a Server header of
+  its own. Empirically verified against `/anything`, `/get`,
+  and `/response-headers?Server=foo` on `p12-full-pipeline` —
+  all three return a Server-header-free response.
 
 Impact on ranking
 : `none` — the external semantic (client never sees a Server
-  header) is identical across p08 and p11; the split is purely a
-  consequence of APISIX's one-instance-per-plugin-per-route
-  rule.
+  header) is identical across `p09-resp-headers` and
+  `p12-full-pipeline`; the split is purely a consequence of
+  APISIX's one-instance-per-plugin-per-route rule.
 
 Status
 : `accepted` — captured in
@@ -916,10 +939,11 @@ What differs
   inside a sandbox derived from
   `kong/tools/kong-lua-sandbox.lua`. The sandbox blocks arbitrary
   `require()` by default ("require 'X' not allowed within
-  sandbox"). p09 / p10 / p11 require
-  `require("body_rewrite")` to pull in the shared
-  JSON-shape-aware editor at `_shared/lualib/body_rewrite.lua` —
-  the same module the nginx and APISIX columns use, byte-for-byte.
+  sandbox"). `p10-req-body` / `p11-resp-body` /
+  `p12-full-pipeline` require `require("body_rewrite")` to pull
+  in the shared JSON-shape-aware editor at
+  `_shared/lualib/body_rewrite.lua` — the same module the nginx
+  and APISIX columns use, byte-for-byte.
 
 Root cause
 : Kong's stock sandbox policy. `pre-function`/`post-function` are
@@ -1019,8 +1043,9 @@ What differs
   under qemu. Activating **any** `lua_runner` policy in that
   configuration aborts with
   `qemu: uncaught target signal 11 (Segmentation fault) - core dumped`.
-  p07, p08 (and future p09..p11) therefore crash the gateway on the
-  first smoke request.
+  Every `lua_runner` profile (`p08-req-headers`, `p09-resp-headers`,
+  `p10-req-body`, `p11-resp-body`, `p12-full-pipeline`) therefore
+  crashes the gateway on the first smoke request.
 
 Root cause
 : qemu's x86-on-arm JIT dies on LuaJIT-style tracing. Not a wallarm
@@ -1045,30 +1070,38 @@ Status
 : `accepted` — documented in
   `gateways/wallarm/p08-req-headers/NOTES.md § Gotcha`.
 
-### Known / expected entries
+### Known / expected entries (historical, all closed by Phase 3b)
 
-> Will be confirmed as each per-gateway config lands. The ones below
-> are the deviations we already anticipate.
+> These were the deviations we anticipated **before** each per-gateway
+> config landed. Every entry below has since been resolved during the
+> Phase 3b rollout — preserved here as a paper trail of how each
+> blocker was closed. The canonical state-of-the-cell rollup is the
+> table at the top of this section; per-cell detail is in the
+> "Landed deviations" entries above.
 
-- **Traefik / p02 jwt, p11 full-pipeline** — traefik OSS has no
-  native HS256 JWT primitive, and no community plugin vetted carries
-  knob-for-knob parity with `POLICIES.md § p02` (HS256-only,
-  `Authorization: Bearer <jwt>`, canonical `401` on every rejection
-  path). Both cells are `FEATURE-MISSING` in the baseline roster;
-  closing paths (custom HS256-only Yaegi plugin under
+- **Traefik / `p02-jwt`, `p12-full-pipeline`** *(closed by
+  Iteration 28).* Traefik OSS ships no native HS256 JWT primitive
+  and no community plugin carries knob-for-knob parity with
+  `POLICIES.md § p02` (HS256-only, `Authorization: Bearer <jwt>`,
+  canonical `401` on every rejection path). Closed via a custom
+  HS256-only Yaegi plugin under
   `gateways/traefik/_shared/plugins-local/src/github.com/wallarm/
-  jwt_hs256/` OR a `forwardAuth` sidecar) are documented in
-  `gateways/traefik/p02-jwt/NOTES.md`.
+  jwt_hs256/`; both cells now `PASS`. The Yaegi-specific
+  `RawMessage` workaround is captured in the landed deviation
+  `[gw=traefik, p=p02-jwt / p12-full-pipeline,
+  infra=yaegi-json-no-method-dispatch]` above.
 
-- **Nginx / p02 jwt, p09 req-body, p10 resp-body** — requires
-  `lua-nginx-module`. We will use the `openresty:<pinned>` image
-  instead of `nginx:<pinned>` for those profiles. The `ngx_http_lua`
-  policy code is committed under `gateways/nginx/lua/`.
+- **Nginx / `p02-jwt`, `p10-req-body`, `p11-resp-body`** *(closed
+  during Phase 3b nginx column).* All three required
+  `lua-nginx-module`; resolved by switching the column to
+  `openresty/openresty:<pinned>`. `ngx_http_lua` policy code lives
+  under `gateways/nginx/_shared/lualib/`.
 
-- **Envoy / p09 req-body, p10 resp-body** — requires a Lua filter.
-  Code committed under `gateways/envoy/lua/`.
+- **Envoy / `p10-req-body`, `p11-resp-body`** *(closed during
+  Phase 3b envoy column).* Implemented via the Lua filter; code
+  under `gateways/envoy/_shared/lua/`.
 
-- **Tyk / p09 req-body, p10 resp-body, p11 full-pipeline** —
+- **Tyk / `p10-req-body`, `p11-resp-body`, `p12-full-pipeline`** —
   **falsified during the Phase 3b rollout.** Tyk Classic OSS DOES
   ship a native body-rewrite primitive that we missed initially:
   `extended_paths.transform` (request body) and
@@ -1080,20 +1113,21 @@ Status
   `set` / `dict` / `hasKey` / `index` / `mustToJson` between them
   give us JSON-aware dotted-path mutation natively — no JSVM,
   no MiniRequestObject (un)marshal, no per-request VM context
-  switch. p09 / p10 / p11 all PASS on this primitive (p09 3/3,
-  p10 3/3, p11 3/4 with the only FAIL being the cosmetic 400/401
-  inherited from `mw_jwt.go`). The JSVM throughput cap that this
-  redirection avoids is documented in
+  switch. `p10-req-body` / `p11-resp-body` / `p12-full-pipeline`
+  all PASS on this primitive (`p10` 3/3, `p11` 3/3, `p12` 3/4
+  with the only FAIL being the cosmetic 400/401 inherited from
+  `mw_jwt.go`). The JSVM throughput cap that this redirection
+  avoids is documented in
   [`gateways/tyk/p12-full-pipeline/NOTES.md`](../gateways/tyk/p12-full-pipeline/NOTES.md).
 
 ## p03-jwks-rs256-basic
 
-p03-jwks-rs256-basic exercise policy axes that sit **outside** the
-12-profile matrix (see
+`p03-jwks-rs256-basic` exercises a policy axis that sits
+**outside** the 11-profile ranking matrix (see
 [`docs/POLICIES.md § p03-jwks-rs256-basic`](./POLICIES.md#p03-jwks-rs256-basic)).
-They are NOT part of `parity-gateway-all` and NOT part of the ranking;
-they document per-gateway capability on a given axis and are invoked
-explicitly via `make parity-gateway
+It is NOT part of `parity-gateway-all` and NOT part of the ranking;
+it documents per-gateway capability on the RS256 + JWKS axis and is
+invoked explicitly via `make parity-gateway
 PARITY_GATEWAY=<gw> PARITY_PROFILE=<slug>`.
 
 ### `p03-jwks-rs256-basic` — capability pass
@@ -1236,7 +1270,8 @@ Per-scenario reference material:
     Canonical per-endpoint RL via single service + two routes
     (`limited` / `free`) and `POST /services/<svc>/routes/limited/flow`
     binding the `ratelimit` policy to ONE route only. Sliding-window
-    deviation inherited from p03. Observed burst: `2xx=98, 429=1102`
+    deviation inherited from `p04-rl-static`. Observed burst:
+    `2xx=98, 429=1102`
     on `/anything/limited`, `2xx=1200, 429=0` on `/anything/free` —
     symmetric with nginx `2xx=107, 429=1093` and envoy
     `2xx=112, 429=1088` within a handful of requests.
@@ -1269,8 +1304,9 @@ Per-scenario reference material:
     the public `0.2.0` image lacks `jwt_validation` and the full
     body-rewrite policy surface, so the benchmark is single-track
     against builds that ship the complete primitive set.
-  - `wallarm / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready**, parity 3/3 green against
+  - `wallarm / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) —
+    **ready**, parity 3/3 green against
     the from-source build. Missing auth → 401, valid RS256 token
     with `kid=bench-rs256-2026` → 200, RS256 token with
     `kid=unknown-kid-2026` (signature mathematically valid against
@@ -1303,7 +1339,8 @@ Per-scenario reference material:
     10-IP / 450-req / 3-second fixture — symmetric to wallarm
     `99/351` within one request).
   - `nginx / p07-rl-dynamic-high` — **ready**, parity 3/3 green.
-    Same mechanism as p05 with `zone=10m rate=100r/s` + `burst=20`.
+    Same mechanism as `p06-rl-dynamic-low` with
+    `zone=10m rate=100r/s` + `burst=20`.
     Zone size follows from POLICIES.md's 50 000-IP pool:
     50 000 keys × ~128 B ≈ 6.4 MB, rounded up to 10 MB for LRU
     slack. Observed shapes: burst #1 (10 IPs × 20 rps) = `200/0`,
@@ -1364,7 +1401,9 @@ Per-scenario reference material:
     bodies pass through untouched — identical behaviour to
     `wallarm / p11-resp-body`.
   - `nginx / p12-full-pipeline` — **ready**, parity 4/4 green on
-    OpenResty. Composes p02+p03+p07+p08+p09+p10 in a single
+    OpenResty. Composes
+    `p02-jwt + p04-rl-static + p08-req-headers + p09-resp-headers +
+    p10-req-body + p11-resp-body` in a single
     request flow, relying on nginx phase ordering
     (`PREACCESS → ACCESS → CONTENT → header_filter → body_filter`)
     to encode "rate-limit first, then JWT, then req-body rewrite,
@@ -1374,15 +1413,20 @@ Per-scenario reference material:
     — the 945×429 confirms rate-limit fires **before** Lua auth
     (the expected order, matching the fixture's tolerance of
     `status_429_min=150 ± 50`). First gateway in the bench with a
-    complete green `p11`: wallarm's cell is still
-    `FEATURE-MISSING` because the Wallarm API Gateway lacks a
-    `jwt_validation` policy, cascading the gap into p11.
+    complete green `p12-full-pipeline`: at that point wallarm's
+    cell was still `FEATURE-MISSING` because the public Wallarm
+    API Gateway image lacked a `jwt_validation` policy, cascading
+    the gap into the full-pipeline composition. Both wallarm
+    `p02-jwt` and `p12-full-pipeline` are now retired in favour
+    of the from-source `WALLARM_IMAGE` build (Iteration 23).
   - nginx roster on `1.27.3-alpine` + `openresty:1.27.1.2-alpine`:
     **12 PASS, 0 FAIL, 39/39 probes** across all 12 canonical
     profiles (including the new `p05-rl-endpoint` per-endpoint
     RL axis).
-  - `envoy / p01, p03, p04, p05, p06` — **ready**, parity 15/15
-    green on `envoyproxy/envoy:distroless-v1.32.6@sha256:569ad5b2…acf56`.
+  - `envoy / p01-vanilla, p04-rl-static, p05-rl-endpoint,
+    p06-rl-dynamic-low, p07-rl-dynamic-high` — **ready**, parity
+    15/15 green on
+    `envoyproxy/envoy:distroless-v1.32.6@sha256:569ad5b2…acf56`.
     * `p01-vanilla` — static bootstrap (listener + HCM + router),
       `codec_type: HTTP1`, `reuse_port`,
       `common_http_protocol_options.idle_timeout: 60s`,
@@ -1418,9 +1462,11 @@ Per-scenario reference material:
       limiting via `local_ratelimit` with `rate_limits.actions`
       extracting `X-Real-IP` into a `client_ip` descriptor key and
       enumerated `descriptors[]` entries (one per fixture IP, 10
-      for `p05` on `10.0.0.1..10.0.0.10`, 11 for `p06` on
-      `10.5.0.1..10.5.0.10 + 10.5.9.9`). Per-entry token buckets
-      at the canonical rate (`p05: 10 rps, p06: 100 rps`) with
+      for `p06-rl-dynamic-low` on `10.0.0.1..10.0.0.10`, 11 for
+      `p07-rl-dynamic-high` on `10.5.0.1..10.5.0.10 + 10.5.9.9`).
+      Per-entry token buckets at the canonical rate
+      (`p06-rl-dynamic-low: 10 rps, p07-rl-dynamic-high: 100 rps`)
+      with
       `always_consume_default_token_bucket: false` to isolate
       IPs. **Enumerated-descriptors deviation** documented in
       § Deviations: v1.32 requires verbatim descriptor matches;
@@ -1443,8 +1489,9 @@ Per-scenario reference material:
       thought we were seeing. An Apple-Silicon-specific VirtioFS
       cache gotcha (rare) is documented in § Deviations and
       `gateways/envoy/README.md § Config ingestion`.
-  - `envoy / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready**, parity 3/3 green on
+  - `envoy / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) —
+    **ready**, parity 3/3 green on
     `envoyproxy/envoy:distroless-v1.32.6`. Native primitive
     `envoy.filters.http.jwt_authn` at HCM level with a single
     `JwtProvider` (`issuer: gateway-benchmarks`, `forward: true`,
@@ -1489,7 +1536,7 @@ Per-scenario reference material:
     rejects `alg: none`, non-HS256 algorithms, missing/expired
     `exp`, and forged signatures (constant-time HMAC compare). See
     [`gateways/envoy/p02-jwt/NOTES.md`](../gateways/envoy/p02-jwt/NOTES.md).
-  - `envoy / p07 req-headers` — **ready**, parity 3/3 green.
+  - `envoy / p08-req-headers` — **ready**, parity 3/3 green.
     Native primitive: `request_headers_to_add` (with
     `append_action: OVERWRITE_IF_EXISTS_OR_ADD`) +
     `request_headers_to_remove` at the virtual-host level on the
@@ -1498,7 +1545,7 @@ Per-scenario reference material:
     Header-key matching is case-insensitive on the envoy side, and
     wire-canonical form (`X-Bench-In`) is what the backend
     observes in `go-httpbin`'s `.headers` echo.
-  - `envoy / p08 resp-headers` — **ready**, parity 2/2 green.
+  - `envoy / p09-resp-headers` — **ready**, parity 2/2 green.
     Combines three knobs to fully suppress the `Server` header:
     HCM-level `server_header_transformation: PASS_THROUGH`
     prevents envoy from restamping `Server: envoy` after our
@@ -1511,7 +1558,7 @@ Per-scenario reference material:
     `Server: envoy` over whatever the upstream sent, so the
     subsequent removal still leaves an envoy-stamped header; we
     verified empirically that all three must be set together.
-  - `envoy / p09 req-body` — **ready**, parity 3/3 green.
+  - `envoy / p10-req-body` — **ready**, parity 3/3 green.
     Two-filter chain: `envoy.filters.http.buffer` (with
     `max_request_bytes: 1048576`) pre-buffers the full request
     body so `request_handle:body()` returns a non-nil buffer in
@@ -1525,12 +1572,12 @@ Per-scenario reference material:
     Method guard: only `POST`/`PUT`/`PATCH` get rewritten —
     `setBytes` on `GET`/`HEAD`/`DELETE` fabricates HTTP/1.1
     framing that corrupts the keep-alive pool.
-  - `envoy / p10 resp-body` — **ready**, parity 3/3 green.
+  - `envoy / p11-resp-body` — **ready**, parity 3/3 green.
     Single Lua filter, no buffer filter needed — calling
     `response_handle:body()` in `envoy_on_response` installs the
     internal buffer as a side effect, which is a deliberate
-    asymmetry versus `p09` (where `request_handle:body()` returns
-    nil without an explicit `buffer` filter). Uses
+    asymmetry versus `p10-req-body` (where `request_handle:body()`
+    returns nil without an explicit `buffer` filter). Uses
     `body_rewrite.rewrite_response_if_json` so non-JSON upstream
     bodies (HTML error pages, streamed binary) pass through
     unchanged; only well-formed JSON objects get
@@ -1539,11 +1586,12 @@ Per-scenario reference material:
     `body_filter_by_lua_block` two-phase collector, just with
     envoy's synchronous `body()` API collapsing the whole
     thing into one callback.
-  - `envoy / p11 full-pipeline` — **ready**, parity 4/4 green.
-    Composition of p02 + p03 + p07 + p08 + p09 + p10 in a single
+  - `envoy / p12-full-pipeline` — **ready**, parity 4/4 green.
+    Composition of `p02-jwt` + `p04-rl-static` + `p08-req-headers` +
+    `p09-resp-headers` + `p10-req-body` + `p11-resp-body` in a single
     filter chain: `local_ratelimit` (at position 1, so a
     valid-JWT flood gets shed before any HMAC work) → `buffer`
-    (request-body prerequisite for p09) → single Lua filter
+    (request-body prerequisite for `p10-req-body`) → single Lua filter
     carrying both phase callbacks (`envoy_on_request` = JWT
     verify + request-body rewrite; `envoy_on_response` =
     response-body rewrite) → `router`. Header mutations live on
@@ -1558,8 +1606,8 @@ Per-scenario reference material:
     profiles, matching the nginx column PASS-count verbatim.
     Second gateway column in the bench with a complete green
     matrix.
-  - `tyk / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready with documented deviation**,
+  - `tyk / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) — **ready with documented deviation**,
     parity 1/3 on `tykio/tyk-gateway:v5.11.1`. 4-container topology
     (`gwb-tyk-backend`, `gwb-tyk-redis`, `gwb-tyk-jwks-server`,
     `gwb-tyk`) on a private `bench-net`. Native primitive: Tyk
@@ -1600,8 +1648,8 @@ Per-scenario reference material:
     `http.StatusForbidden` returns and are not overridable in
     Classic OSS. See
     [`gateways/tyk/p03-jwks-rs256-basic/NOTES.md`](../gateways/tyk/p03-jwks-rs256-basic/NOTES.md).
-  - `apisix / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready**, parity 3/3 on
+  - `apisix / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) — **ready**, parity 3/3 on
     `apache/apisix:3.15.0-debian`. 3-container topology
     (`gwb-apisix-backend`, `gwb-apisix-oidc-server`, `gwb-apisix`)
     on a private `bench-net`, APISIX deployed in **standalone mode**
@@ -1642,8 +1690,9 @@ Per-scenario reference material:
     `{traefik.yaml,dynamic.yaml,setup.sh}`). Two locally-vendored
     Yaegi plugins live under
     `_shared/plugins-local/src/github.com/wallarm/`:
-    `body_rewrite/` (used by p09/p10/p11) and `jwt_hs256/` (used
-    by p02/p11).
+    `body_rewrite/` (used by `p10-req-body` / `p11-resp-body` /
+    `p12-full-pipeline`) and `jwt_hs256/` (used by `p02-jwt` /
+    `p12-full-pipeline`).
     * `p01-vanilla` — single `routers.bench` on
       `PathPrefix("/")`, one service on `http://backend:8080`.
       Zero middleware. 4/4 PASS.
@@ -1662,7 +1711,7 @@ Per-scenario reference material:
       10/100 rps respectively. Requires
       `entryPoints.web.forwardedHeaders.insecure: true` in each
       profile's `traefik.yaml` (see deviation
-      [`[gw=traefik, p=p05/p06, infra=forwardedHeaders-insecure]`](#gwtraefik-pp06-rl-dynamic-low--p07-rl-dynamic-high-infraforwardedheaders-insecure));
+      [`[gw=traefik, p=p06/p07, infra=forwardedHeaders-insecure]`](#gwtraefik-pp06-rl-dynamic-low--p07-rl-dynamic-high-infraforwardedheaders-insecure));
       without it, traefik's implicit forwarded-header layer
       strips `X-Real-IP` before rate-limit sees it. 2/2 + 3/3
       PASS.
@@ -1691,7 +1740,7 @@ Per-scenario reference material:
       `strconv`) is entirely within Yaegi's whitelist.
       `coerceJSONLiteral` in `New()` coerces YAML-stringified
       scalars back to native Go types (see deviation
-      [`[gw=traefik, p=p09/p10, infra=yaegi-json-literal-coercion]`](#gwtraefik-pp10-req-body--p11-resp-body--p12-full-pipeline-infrayaegi-json-literal-coercion)).
+      [`[gw=traefik, p=p10/p11/p12, infra=yaegi-json-literal-coercion]`](#gwtraefik-pp10-req-body--p11-resp-body--p12-full-pipeline-infrayaegi-json-literal-coercion)).
       3/3 + 3/3 PASS.
     * `p02-jwt` — local Yaegi plugin `jwt_hs256` under
       `_shared/plugins-local/src/github.com/wallarm/jwt_hs256/`,
@@ -1821,28 +1870,31 @@ Per-scenario reference material:
       resolves exactly one phase per instance (see
       `/usr/local/apisix/apisix/plugins/serverless/init.lua`,
       `call_funcs`). Layering:
-      `limit-count` (p03, rewrite phase, priority 1002 fires before
-      any Lua work)
-      → `serverless-pre-function.phase: access` — JWT verify (p02)
-      + request-body rewrite (p09) + `ngx.var.bench_xff = ""` (p07
-      XFF drop)
-      → `proxy-rewrite.headers.set.X-Bench-In: "1"` (p07 inject)
+      `limit-count` (`p04-rl-static`, rewrite phase, priority 1002
+      fires before any Lua work)
+      → `serverless-pre-function.phase: access` — JWT verify
+      (`p02-jwt`) + request-body rewrite (`p10-req-body`) +
+      `ngx.var.bench_xff = ""` (`p08-req-headers` XFF drop)
+      → `proxy-rewrite.headers.set.X-Bench-In: "1"`
+      (`p08-req-headers` inject)
       → `proxy_pass` to `backend:8080`
       → `response-rewrite.headers.set.X-Bench-Out: "1"` +
-      `headers.remove: [Server, Content-Length]` (p08 inject + Server
-      drop prep)
-      → `serverless-post-function.phase: body_filter` (p10 response
-      body rewrite).
+      `headers.remove: [Server, Content-Length]`
+      (`p09-resp-headers` inject + Server drop prep)
+      → `serverless-post-function.phase: body_filter`
+      (`p11-resp-body` response body rewrite).
       Server drop in this profile relies on
       `response-rewrite.headers.remove: [Server]` alone rather than
-      the `ngx.header["Server"] = nil` hook used in `p08`, because
-      the `header_filter` phase is already "taken" by the single
-      `serverless-post-function` slot (spent on body_filter). With
-      `apisix.server_tokens: false` in the shared baseline and
-      `/anything` not carrying a go-httpbin-sourced Server header,
-      the plain `headers.remove` is sufficient in practice — empirically
+      the `ngx.header["Server"] = nil` hook used in
+      `p09-resp-headers`, because the `header_filter` phase is
+      already "taken" by the single `serverless-post-function`
+      slot (spent on body_filter). With `apisix.server_tokens:
+      false` in the shared baseline and `/anything` not carrying
+      a go-httpbin-sourced Server header, the plain
+      `headers.remove` is sufficient in practice — empirically
       verified against `/anything`, `/get`, and
-      `/response-headers?Server=foo` on p11. 4/4 PASS.
+      `/response-headers?Server=foo` on `p12-full-pipeline`.
+      4/4 PASS.
   - apisix roster on `apache/apisix:3.15.0-debian`: **12 PASS,
     0 FAIL, 0 other, 39/39 probes** across all profiles.
     Fourth full-green column (after nginx 12/12, envoy 12/12,
@@ -1906,7 +1958,7 @@ Per-scenario reference material:
       against the upstream's Server is sufficient — no
       `header_filter` Lua hook needed (unlike APISIX, where
       OpenResty's late stamp requires a `serverless-post-function`
-      hook in p08). 2/2 PASS.
+      hook in `p09-resp-headers`). 2/2 PASS.
     * `p10-req-body` — `pre-function` (access phase) +
       `require("body_rewrite")`. Reads the request body via
       `ngx.req.read_body()` / `ngx.req.get_body_data()`, applies
@@ -1935,17 +1987,17 @@ Per-scenario reference material:
       falls back to `Transfer-Encoding: chunked`, identical to
       apisix and nginx columns. 3/3 PASS.
     * `p12-full-pipeline` — composite route stacking every
-      primitive: `jwt` (p02) →
-      `rate-limiting` (p03, `second: 1000`) →
-      `request-transformer.add.headers: [X-Bench-In:1]` (p07
-      inject) →
+      primitive: `jwt` (`p02-jwt`) →
+      `rate-limiting` (`p04-rl-static`, `second: 1000`) →
+      `request-transformer.add.headers: [X-Bench-In:1]`
+      (`p08-req-headers` inject) →
       `response-transformer.add.headers: [X-Bench-Out:1]` +
-      `remove.headers: [Server]` (p08) →
+      `remove.headers: [Server]` (`p09-resp-headers`) →
       `pre-function.access` fused for `ngx.var.bench_xff = ""`
-      (p07 XFF drop) + conditional request-body rewrite on
-      POST/PUT/PATCH (p09) →
+      (`p08-req-headers` XFF drop) + conditional request-body
+      rewrite on POST/PUT/PATCH (`p10-req-body`) →
       `post-function` with `header_filter` (Content-Length drop)
-      + `body_filter` (response body rewrite, p10).
+      + `body_filter` (response body rewrite, `p11-resp-body`).
       Kong's plugin priority ordering (`jwt > rate-limiting >
       request-transformer > response-transformer > pre-function
       > post-function`) lines up with the canonical pipeline
@@ -1956,8 +2008,8 @@ Per-scenario reference material:
     0 other, 39/39 probes** across all profiles. Fifth
     full-green column (after nginx 12/12, envoy 12/12,
     wallarm 12/12, apisix 12/12).
-  - `kong / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready**, parity 3/3 green on
+  - `kong / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) — **ready**, parity 3/3 green on
     `kong/kong:3.9.1`. Native primitive: the built-in `jwt`
     plugin with `key_claim_name: kid` plus one `jwt_secret`
     credential on the `bench` consumer carrying
@@ -1982,19 +2034,21 @@ Per-scenario reference material:
     `_shared/plugins-local/src/github.com/wallarm/jwt_hs256/`
     (~250 LoC of stdlib-only Go: `crypto/hmac`,
     `crypto/sha256`, `encoding/base64`, `encoding/json`,
-    `time`, `net/http`, `strings`, `context`). p02 closes
-    cleanly 6/6, p11 composes the new JWT step on top of the
-    already-green p03 + p07 + p09 + p08 + p10 chain in
-    canonical order and lands 4/4 including the burst
-    (2xx=270, 429=930, well past `status_429_min: 150`).
-    Falsifies the earlier Phase 3b assumption that traefik
-    p02 / p11 were architecturally FM on the OSS baseline:
-    Yaegi's stdlib allowlist exposes everything an HMAC-SHA-256
-    verifier needs, the gap was just an unwillingness to vendor
-    a community plugin we couldn't audit. Sixth full-green core
-    column (after nginx, envoy, wallarm, apisix, kong).
-  - `nginx / p03-jwks-rs256-basic` (p03 — RS256 JWT via JWKS axis,
-    12-profile matrix) — **ready**, parity 3/3 green on
+    `time`, `net/http`, `strings`, `context`). `p02-jwt` closes
+    cleanly 6/6; `p12-full-pipeline` composes the new JWT step
+    on top of the already-green
+    `p04-rl-static + p08-req-headers + p10-req-body +
+    p09-resp-headers + p11-resp-body` chain in canonical order
+    and lands 4/4 including the burst (2xx=270, 429=930, well
+    past `status_429_min: 150`). Falsifies the earlier Phase 3b
+    assumption that traefik `p02-jwt` / `p12-full-pipeline` were
+    architecturally FM on the OSS baseline: Yaegi's stdlib
+    allowlist exposes everything an HMAC-SHA-256 verifier needs,
+    the gap was just an unwillingness to vendor a community
+    plugin we couldn't audit. Sixth full-green core column
+    (after nginx, envoy, wallarm, apisix, kong).
+  - `nginx / p03-jwks-rs256-basic` (supplemental — RS256 JWT via
+    JWKS axis, sits outside the 11-profile ranking matrix) — **ready**, parity 3/3 green on
     `openresty/openresty:1.27.1.2-alpine`. Native primitive
     doesn't exist (vanilla nginx has no JWT module); we ship a
     two-layer pure-LuaJIT-FFI verifier against the
@@ -2018,8 +2072,9 @@ Per-scenario reference material:
     [`gateways/nginx/p03-jwks-rs256-basic/NOTES.md`](../gateways/nginx/p03-jwks-rs256-basic/NOTES.md)
     and
     [`docs/POLICIES.md § p03-jwks-rs256-basic`](./POLICIES.md#p03-jwks-rs256-basic).
-  - `traefik / p03-jwks-rs256-basic` (p03 — RS256 JWT via
-    JWKS axis, 12-profile matrix) — **ready**, parity 3/3 green on
+  - `traefik / p03-jwks-rs256-basic` (supplemental — RS256 JWT
+    via JWKS axis, sits outside the 11-profile ranking matrix) —
+    **ready**, parity 3/3 green on
     `traefik:v3.3.4`. Native primitive: the `forwardAuth`
     middleware pointed at an OpenResty sidecar that reuses the
     nginx-column Lua modules verbatim (column-local copies under
@@ -2040,28 +2095,33 @@ Per-scenario reference material:
     [`gateways/traefik/p03-jwks-rs256-basic/NOTES.md`](../gateways/traefik/p03-jwks-rs256-basic/NOTES.md)
     and
     [`docs/POLICIES.md § p03-jwks-rs256-basic`](./POLICIES.md#p03-jwks-rs256-basic).
-  - `tyk` (core p01–p11) — **landed**. **9 PASS, 2 PARTIAL PASS,
-    27/32 probes** on `tykio/tyk-gateway:v5.11.1` in standalone
-    (file-based apps + policies) mode. p01 / p03 / p04 / p05 / p06
-    / p07 / p08 / p09 / p10 land cleanly on native Tyk Classic
+  - `tyk` (11 ranking profiles `p01–p02 + p04–p12`) —
+    **landed**. **9 PASS, 2 PARTIAL PASS, 27/32 probes** on
+    `tykio/tyk-gateway:v5.11.1` in standalone (file-based apps +
+    policies) mode. `p01-vanilla` + `p04-rl-static` +
+    `p05-rl-endpoint` + `p06-rl-dynamic-low` + `p07-rl-dynamic-high` +
+    `p08-req-headers` + `p09-resp-headers` + `p10-req-body` +
+    `p11-resp-body` land cleanly on native Tyk Classic
     primitives (`global_rate_limit`, `extended_paths.rate_limit`,
-    JSVM `pre` per-IP session synth for p05 / p06,
-    `transform_headers` / `transform_response_headers`, native
-    `transform` / `transform_response` + Sprig templates for the
-    body axes); p02-jwt and p12-full-pipeline are PARTIAL PASS,
-    each tripping on the same hard-coded literal in
+    JSVM `pre` per-IP session synth for `p06-rl-dynamic-low` /
+    `p07-rl-dynamic-high`, `transform_headers` /
+    `transform_response_headers`, native `transform` /
+    `transform_response` + Sprig templates for the body axes);
+    `p02-jwt` and `p12-full-pipeline` are PARTIAL PASS, each
+    tripping on the same hard-coded literal in
     `gateway/mw_jwt.go` v5.11.1 (`http.StatusBadRequest` for
     missing-`Authorization`, `http.StatusForbidden` for any other
     rejection — neither overridable in OSS without a custom build).
     The JWT capability itself is fully native and works on every
-    signed token. Architectural note: p09 / p11 use Tyk's NATIVE
-    `transform` middleware (Go template + Sprig) NOT the JSVM
-    `pre` middleware Tyk's docs reach for first — the JSVM caps
-    Tyk at ~830 rps via per-request `MiniRequestObject` (un)marshal
-    + VM context switch, below the 1000 rps `global_rate_limit`
-    threshold, so p11's burst probe could never trigger any 429s
-    with the JSVM in the chain. Native template lands the canonical
-    `2xx≈999, 429≈201` split. Full investigation in
+    signed token. Architectural note: `p10-req-body` /
+    `p12-full-pipeline` use Tyk's NATIVE `transform` middleware
+    (Go template + Sprig) NOT the JSVM `pre` middleware Tyk's
+    docs reach for first — the JSVM caps Tyk at ~830 rps via
+    per-request `MiniRequestObject` (un)marshal + VM context
+    switch, below the 1000 rps `global_rate_limit` threshold,
+    so `p12-full-pipeline`'s burst probe could never trigger any
+    429s with the JSVM in the chain. Native template lands the
+    canonical `2xx≈999, 429≈201` split. Full investigation in
     [`gateways/tyk/p12-full-pipeline/NOTES.md`](../gateways/tyk/p12-full-pipeline/NOTES.md).
   - **Engineer rosters:** nginx **12/12** + envoy **12/12** +
     wallarm **12/12** + apisix **12/12** + kong **12/12** +
@@ -2071,7 +2131,8 @@ Per-scenario reference material:
     Yaegi plugin), with tyk's honest 9+2 baseline as the lone
     PARTIAL — every cosmetic FAIL traced to one fixed `mw_jwt.go`
     literal that no config knob in Tyk Classic OSS can override.
-- Burst parity runner (p03/p05/p06) — **ready**, now uses
+- Burst parity runner (`p04-rl-static` / `p06-rl-dynamic-low` /
+  `p07-rl-dynamic-high`) — **ready**, now uses
   `curl --parallel --parallel-max N -K <config>` so a 1200-rps burst
   actually fits inside its 1 s window. Validated end-to-end against
   `wallarm / p04-rl-static` → `2xx=998, 429=202, 5xx=0`.

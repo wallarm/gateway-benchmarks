@@ -143,7 +143,7 @@ services:
       - ./_shared/templates:/opt/tyk-gateway/middleware/bench-templates:ro
       - ./${GATEWAY_PROFILE:-p01-vanilla}/apis:/opt/tyk-gateway/apps:ro
     ports:
-      - "9080:8080"  # data plane (parity-gateway target → Tyk listens :8080 internally)
+      - "9080:9080"  # data plane (parity-gateway target). Tyk listens on :9080 internally — see tyk.standalone.conf "listen_port". Aligning the internal port matters because k6 runs inside bench-net and dials http://gateway:9080 directly: docker port-mapping does not apply to container-to-container traffic, so a mismatched internal port silently produced 100% TCP refused under load even though parity (which goes through the host port-map) passed.
     # Tyk handles SIGTERM gracefully; 5 s is plenty for `docker
     # compose down` between parity runs.
     stop_grace_period: 5s

@@ -54,7 +54,6 @@ make prereqs-check
 ```
 .
 ├── TASK.md                     # PRD — what the benchmark measures
-├── ROADMAP.md                  # phased implementation plan
 ├── CHANGELOG.md                # versioned release notes
 ├── Makefile                    # single entry point
 ├── backend/                    # vendored go-httpbin upstream
@@ -149,7 +148,8 @@ reproducible:
   must still exit `0 REPRODUCIBLE` or `1 SOFT DIFF` after the change.
 - If the change intentionally shifts a metric (new gateway version,
   new kernel tuning, etc.), call that out in the PR description and
-  bump `ROADMAP.md § Status` so the diff is visible in the next tag.
+  add an entry to the `[Unreleased]` section of `CHANGELOG.md` so
+  the diff is visible in the next tag.
 
 ## Release process
 

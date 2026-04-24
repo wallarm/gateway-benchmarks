@@ -30,7 +30,6 @@ Walk through these before touching `git tag`:
 - [ ] `README.md` status badge reflects the tag being cut.
 - [ ] `docs/REPRODUCIBILITY.md § Status` matches the new tag's phase
       state.
-- [ ] `ROADMAP.md § Status` matches.
 - [ ] No `TODO(vX.Y.Z)` markers remain for this version.
 - [ ] `scripts/prereqs-check.sh` passes on a freshly cloned checkout
       (no implicit local-state dependency).
@@ -128,8 +127,7 @@ entry plus a link to the reproducibility gate verdict. Keep it under
 ## 5. Post-release
 
 - [ ] Open `[Unreleased]` section in `CHANGELOG.md`.
-- [ ] Bump the README status badge if the next milestone is already
-      scoped in `ROADMAP.md`.
+- [ ] Bump the README status badge for the next milestone if needed.
 - [ ] Announce on the discussions tab — the README announcement
       template is `docs/release-notes/v0.1.0.md § Announcement
       snippet`.

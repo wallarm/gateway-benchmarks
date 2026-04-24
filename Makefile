@@ -49,9 +49,6 @@ BACKEND_PORT     ?= 8080
 BACKEND_PLATFORM ?=
 BUILD_DATE       := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Placeholder until a phase delivers the real implementation.
-PHASE_TODO = @echo "$(YELLOW)[TODO] $@ — see ROADMAP.md; will be implemented in the relevant phase.$(NC)"
-
 # ---------------------------------------------------------------------------
 # help
 # ---------------------------------------------------------------------------
@@ -116,7 +113,7 @@ help: ## Show this help
 	@echo "  $(GREEN)load-report$(NC)               Render Chart.js HTML report from a combined CSV (LOAD_REPORT_INPUT=, LOAD_REPORT_OUTPUT=)"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
-	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · ROADMAP.md"
+	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · CHANGELOG.md"
 
 # ---------------------------------------------------------------------------
 # prereqs

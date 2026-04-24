@@ -3,7 +3,6 @@
 > Reproducible, vendor-neutral performance benchmarks for production API gateways under a **policy × protocol × load** matrix.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Phase 9 release staging](https://img.shields.io/badge/status-phase_9_release_staging-yellow.svg)](./ROADMAP.md)
 
 <!-- v0.1.0 ANNOUNCEMENT — replace once the canonical AWS run is captured. Source: docs/release-notes/v0.1.0.md § Announcement snippet -->
 
@@ -97,7 +96,6 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 ```
 .
 ├── TASK.md           # PRD — what we measure and why
-├── ROADMAP.md        # phased implementation plan
 ├── Makefile          # single entry point
 ├── backend/          # forked go-httpbin — a predictable upstream
 ├── gateways/         # per-gateway configs × policy profile
@@ -114,7 +112,6 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 ## Documentation
 
 - [TASK.md](./TASK.md) — PRD (mandatory properties of the benchmark)
-- [ROADMAP.md](./ROADMAP.md) — phased implementation plan
 - [CHANGELOG.md](./CHANGELOG.md) — versioned release notes
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — how to submit tuning PRs, what we review
 - [SECURITY.md](./SECURITY.md) — security policy + what is and isn't a secret in this tree

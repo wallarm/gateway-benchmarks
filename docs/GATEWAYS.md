@@ -2141,4 +2141,3 @@ Per-scenario reference material:
 - Quality gate that exercises this table — `bench compare-runs`
   (Phase 8 DONE, see [docs/REPRODUCIBILITY.md §
   bench compare-runs](./REPRODUCIBILITY.md#verifying-reproducibility--bench-compare-runs)).
-- Full status by phase: [ROADMAP.md § Phase 3](../ROADMAP.md#phase-3-parity-framework-3-5-days--core-work).

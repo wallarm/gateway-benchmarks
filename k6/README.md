@@ -11,17 +11,16 @@ two HTTPS variants from `docs/POLICIES.md § p01-tls / p12-tls`.
 
 > **Phase 4 — Iteration 32: path-A breadth + scale sweeps complete.**
 > All 7 gateways swept on `p1-baseline` (80/84 PASS + 3 EXCLUDED +
-> 1 FAIL, see `ROADMAP.md § Phase 4` for the breakdown), plus
-> `nginx × 12 × p2-sustained` (12/12 PASS after a targeted repair).
-> Paced-arrivals twin profiles and HTTPS scenarios landed as
-> init-guarded shells (dead until Phase 5 TLS plumbing). Cross-run
-> aggregator (`scripts/aggregate-multi-csv.sh` + `make load-combine`)
-> rolls N runs into one wide CSV: see `reports/combined-pathA-
-> p1-baseline/matrix.csv` (83 cells × 27 columns) and `reports/
-> combined-pathA-nginx-p2/matrix.csv` (12 cells × 27 columns).
-> Iteration 31 landed the 12 HTTP scenarios + matrix harness +
-> hot-path access-log silence sweep. See `ROADMAP.md` and
-> `.notes/PROGRESS.md` for the running journal.
+> 1 FAIL), plus `nginx × 12 × p2-sustained` (12/12 PASS after a
+> targeted repair). Paced-arrivals twin profiles and HTTPS scenarios
+> landed as init-guarded shells (dead until Phase 5 TLS plumbing).
+> Cross-run aggregator (`scripts/aggregate-multi-csv.sh` +
+> `make load-combine`) rolls N runs into one wide CSV: see
+> `reports/combined-pathA-p1-baseline/matrix.csv`
+> (83 cells × 27 columns) and
+> `reports/combined-pathA-nginx-p2/matrix.csv`
+> (12 cells × 27 columns). Iteration 31 landed the 12 HTTP scenarios
+> + matrix harness + hot-path access-log silence sweep.
 
 | Component                                      | Status  | Notes                                                                          |
 |------------------------------------------------|---------|--------------------------------------------------------------------------------|

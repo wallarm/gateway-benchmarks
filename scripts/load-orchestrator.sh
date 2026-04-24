@@ -6,11 +6,12 @@
 # invoking scripts/load-gateway.sh once per cell and accumulating
 # the per-cell outputs under a single reports/<RUN_ID>/ tree.
 #
-# This is the minimal orchestrator called out in ROADMAP.md § Phase 4
-# "Путь A". Phase 6's full Go orchestrator will subsume it with
-# proper parallelism, retry, and cross-gateway fan-out, but this
-# shell version is enough to produce first publishable load numbers
-# on a developer machine.
+# This is the minimal Phase-4 bash orchestrator — it produced the
+# first publishable load numbers on a developer machine. It is kept
+# as a tiny, auditable reference; the production entrypoint is the
+# Go binary under orchestrator/ (invoked via `make perf-local-run`
+# / `bench run`) which subsumes it with proper parallelism, retry,
+# and cross-gateway fan-out.
 #
 # Lifecycle (per cell):
 #

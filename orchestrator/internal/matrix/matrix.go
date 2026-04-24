@@ -59,12 +59,13 @@ var CanonicalLoads = []string{
 // AllowedLoads is the union of closed-loop and paced-arrivals
 // profiles accepted by load-gateway.sh.
 var AllowedLoads = map[string]struct{}{
-	"p1-baseline":  {}, "p2-sustained": {}, "p3-ramp": {}, "p4-stress": {},
+	"p1-baseline": {}, "p2-sustained": {}, "p3-ramp": {}, "p4-stress": {},
 	"p1c-paced": {}, "p2c-paced": {}, "p3c-paced": {}, "p4c-paced": {},
 }
 
 // HTTPSScenarios are tied to specific policies — only p01 and p12
-// have :9443 listeners on every gateway (see ROADMAP.md § Phase 5).
+// have :9443 listeners on every gateway (TLS scaffolding landed in
+// Phase 5, see docs/POLICIES.md § HTTPS scenarios).
 var HTTPSScenarios = map[string]string{
 	"p01-vanilla":       "s13-vanilla-https",
 	"p12-full-pipeline": "s14-full-pipeline-https",

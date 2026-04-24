@@ -119,8 +119,7 @@ Profiles override these thresholds where relevant.
 > below (`p1c..p4c`) are landed and exercised by Phase 4's 248-run
 > production sweep. HTTPS scenarios (`s13`, `s14`) ride the same
 > profiles. Phase 5–8 plumbing (3-host topology, Go orchestrator,
-> HTML report, reproducibility gate) is also in — see
-> [ROADMAP.md](../ROADMAP.md).
+> HTML report, reproducibility gate) is also in.
 
 ## Paced-arrivals variants (opt-in)
 

@@ -621,9 +621,10 @@ mistake — gets a clear, actionable error message pointing at the
 missing plumbing. Until Phase 5, the orchestrator leaves
 `BENCH_TARGET_URL_HTTPS` unset and the scenarios are never invoked.
 
-Phase 5's cert and TLS-config work is tracked in
-[ROADMAP.md § Phase 5](../ROADMAP.md#phase-5-infrastructure-2-days);
-the scenarios themselves are already landed and dormant.
+Phase 5's cert and TLS-config work ships in `infra/local/` (Docker
+Compose stack with PKI) and `infra/aws/` (Terraform module for the
+3-host cluster); the scenarios themselves are already landed and
+dormant until the TLS plumbing lights them up.
 
 ## Status
 

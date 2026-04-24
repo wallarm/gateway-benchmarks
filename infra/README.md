@@ -110,7 +110,7 @@ make perf-aws-init                        # one-time per checkout
 make perf-aws-up                          # tofu apply (~3 min including bootstrap)
 make perf-aws-summary                     # print IPs + ready-to-paste SSH commands
 make perf-aws-ssh-loadgen                 # SSH into loadgen
-# … run the matrix (Phase 6 — see ROADMAP.md) …
+# … run the matrix …
 make perf-aws-destroy                     # tear down everything
 ```
 
@@ -128,4 +128,3 @@ reviewers on any platform get bit-identical provider behaviour.
 - [docs/POLICIES.md](../docs/POLICIES.md) § HTTPS scenarios — how
   s13 / s14 consume the TLS scaffolding
 - [docs/REPORT.md](../docs/REPORT.md) — output directory layout
-- [ROADMAP.md](../ROADMAP.md) — Phase 5 status + open follow-ups

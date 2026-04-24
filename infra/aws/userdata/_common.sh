@@ -9,7 +9,7 @@
 #   - documents the canonical bootstrap shape in one readable place;
 #   - serves as a baseline for reviewing the 3 inline copies for
 #     drift (a CI lint could diff each role's inline copy against
-#     this — see the open follow-up in ROADMAP.md Phase 5);
+#     this — open follow-up);
 #   - lets the operator manually `bash _common.sh` on a freshly
 #     spawned host if they're recreating the bootstrap by hand.
 #

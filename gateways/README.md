@@ -64,9 +64,6 @@ make parity-gateway-all PARITY_GATEWAY=wallarm
 make parity-check-all  PARITY_GATEWAY=wallarm PARITY_TARGET=http://localhost:9080
 ```
 
-See [ROADMAP.md](../ROADMAP.md) for the per-phase implementation
-status across the matrix.
-
 ## Status
 
 | Phase | Scope                                                        | State |

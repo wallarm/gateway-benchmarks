@@ -371,7 +371,7 @@ for v0.1.0 live in
 one-row-per-cell deviations rollup lives in
 [`docs/GATEWAYS.md`](../docs/GATEWAYS.md#summary-table).
 
-📌 Outstanding (post-Phase-8 polish, all tracked in `ROADMAP.md`):
+📌 Outstanding (post-Phase-8 polish):
 
 - Native memory + bandwidth collectors that don't rely on the
   `docker stats` sidecar (so AWS runs can drop the sidecar on the

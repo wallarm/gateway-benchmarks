@@ -1,5 +1,5 @@
-// bench is the Phase 6 orchestrator described in ROADMAP.md. It
-// drives the (gateway × policy × scenario × load) matrix, stamping
+// bench is the orchestrator described in orchestrator/README.md.
+// It drives the (gateway × policy × scenario × load) matrix, stamping
 // every run with a manifest.json that pins source SHA, image
 // digests, k6 version and host info, then aggregates per-cell
 // artefacts into a wide CSV / JSONL / markdown rollup.

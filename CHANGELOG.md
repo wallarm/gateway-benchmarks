@@ -60,7 +60,7 @@ sweep; Phase 9 is the release cut itself.
 - **Vendored backend** — `mccutchen/go-httpbin@v2.22.1` pinned into
   `backend/upstream/httpbin/`; static single-image build for
   reproducible upstream behaviour.
-- **Documentation** — `TASK.md` (PRD), `ROADMAP.md`,
+- **Documentation** — `TASK.md` (PRD),
   `docs/ARCHITECTURE.md`, `docs/POLICIES.md`, `docs/LOAD-PROFILES.md`,
   `docs/GATEWAYS.md` (including a one-row-per-cell deviations rollup),
   `docs/REPORT.md`, `docs/REPRODUCIBILITY.md` (manifest schema, CLI

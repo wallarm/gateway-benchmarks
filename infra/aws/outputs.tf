@@ -53,7 +53,7 @@ output "ssh_backend" {
 
 output "summary" {
   description = "Human-readable summary of the cluster — printed after `tofu apply` to remind the operator of the topology and ready-to-use SSH commands."
-  value = <<-EOT
+  value       = <<-EOT
     Cluster: ${var.name_prefix}-cluster (placement_group=cluster, az=${var.availability_zone})
     Region:  ${var.aws_region}
 

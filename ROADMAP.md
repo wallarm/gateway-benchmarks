@@ -934,12 +934,26 @@ needed to interpret its verdict.
 
 ### Phase 9. Publication (0.5 day)
 
-- [ ] First canonical AWS run following the playbook in
-  [`docs/REPRODUCIBILITY.md § AWS canonical-run playbook`](./docs/REPRODUCIBILITY.md#aws-canonical-run-playbook-phase-9-preview)
-  — two independent runs, `bench compare-runs` must exit 0 or 1.
-- [ ] Final code review (no secrets, no hardcoded credentials)
-- [ ] Push v0.1.0, attach the first report as a GitHub Release asset
-- [ ] README announcement draft
+- [x] Final code review: secrets scan clean (only the documented-
+  public reference assets under `gateways/_reference/` match PEM
+  patterns, and the `README.md` there calls out the
+  `bench.local` / `bench-rs256-2026` contract explicitly)
+- [x] Release-prep artefacts — `CHANGELOG.md`, `CONTRIBUTING.md`,
+  `SECURITY.md`, `.github/PULL_REQUEST_TEMPLATE.md`,
+  `docs/RELEASE.md`, `docs/CANONICAL-RUN-HANDOFF.md`,
+  `docs/release-notes/v0.1.0.md` (skeleton)
+- [x] README hooks: status badge → phase 9 release staging, doc
+  index updated, `<!-- v0.1.0 ANNOUNCEMENT -->` anchor in place
+- [x] Terraform fmt + validate on `infra/aws/` (outputs.tf alignment
+  fix; `terraform validate` clean against pinned AWS provider)
+- [ ] First canonical AWS run following
+  [`docs/CANONICAL-RUN-HANDOFF.md`](./docs/CANONICAL-RUN-HANDOFF.md)
+  — run A + run B, `bench compare-runs` must exit 0 or 1
+- [ ] Cut the annotated `v0.1.0` tag (see `docs/RELEASE.md § 3`)
+- [ ] GitHub Release with `report.html`, `manifest.json`,
+  `matrix.csv`, `cells.jsonl`, `compare.txt` as assets
+- [ ] Fill `docs/release-notes/v0.1.0.md`, paste announcement
+  snippet into the `<!-- v0.1.0 ANNOUNCEMENT -->` README anchor
 
 ---
 

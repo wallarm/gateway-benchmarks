@@ -3,7 +3,9 @@
 > Reproducible, vendor-neutral performance benchmarks for production API gateways under a **policy × protocol × load** matrix.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Status: Phase 8 reproducibility gate](https://img.shields.io/badge/status-phase_8_reproducibility_gate-brightgreen.svg)](./ROADMAP.md)
+[![Status: Phase 9 release staging](https://img.shields.io/badge/status-phase_9_release_staging-yellow.svg)](./ROADMAP.md)
+
+<!-- v0.1.0 ANNOUNCEMENT — replace once the canonical AWS run is captured. Source: docs/release-notes/v0.1.0.md § Announcement snippet -->
 
 ---
 
@@ -22,7 +24,7 @@ This project is developed and maintained by **Wallarm, Inc.** — the author of 
 
 - All gateway configs, k6 scenarios, and infrastructure are **open and frozen at report release** (the git SHA is pinned in `manifest.json`).
 - **Parity attestation** runs before every cell: the same request, the same JWT seed, the same rate-limit window — gateways either behave identically, or the cell is marked as a `deviation` and excluded from the aggregate.
-- Reasonable external tuning of a competing gateway is accepted as a PR — see the [template](./.github/PULL_REQUEST_TEMPLATE.md) *(landing alongside v0.1.0)*.
+- Reasonable external tuning of a competing gateway is accepted as a PR — see [`CONTRIBUTING.md § Gateway-tuning PRs`](./CONTRIBUTING.md#gateway-tuning-prs) and the [PR template](./.github/PULL_REQUEST_TEMPLATE.md).
 - All deviations are documented in [docs/GATEWAYS.md](./docs/GATEWAYS.md) with a reason and an upstream reference.
 
 ## Gateways Under Test
@@ -99,29 +101,34 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 
 - [TASK.md](./TASK.md) — PRD (mandatory properties of the benchmark)
 - [ROADMAP.md](./ROADMAP.md) — phased implementation plan
+- [CHANGELOG.md](./CHANGELOG.md) — versioned release notes
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — how to submit tuning PRs, what we review
+- [SECURITY.md](./SECURITY.md) — security policy + what is and isn't a secret in this tree
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — local/AWS topology and network path
 - [docs/POLICIES.md](./docs/POLICIES.md) — 11 ranking + 1 supplemental policy profiles, parity requirements
 - [docs/LOAD-PROFILES.md](./docs/LOAD-PROFILES.md) — 4 load profiles
 - [docs/GATEWAYS.md](./docs/GATEWAYS.md) — versions, digests, deviations
 - [docs/REPORT.md](./docs/REPORT.md) — how to read the HTML report
 - [docs/REPRODUCIBILITY.md](./docs/REPRODUCIBILITY.md) — manifest, seeds, tolerance, `bench compare-runs` gate
+- [docs/CANONICAL-RUN-HANDOFF.md](./docs/CANONICAL-RUN-HANDOFF.md) — executable playbook for the AWS canonical sweep
+- [docs/RELEASE.md](./docs/RELEASE.md) — maintainer release process
 - [orchestrator/README.md](./orchestrator/README.md) — `bench` Go binary (Phases 6 + 7 + 8)
 
 ## Current Status
 
-**Phase 8 — done.** The full pipeline `parity → load → aggregate →
-manifest → report` runs end-to-end through the single `bench` Go
-binary, and the **reproducibility gate** is in: `bench compare-runs`
-diffs any two sweeps against the canonical tolerance table (RPS ±3 %,
-p50/p95/p99 latency ±10 %, mem ±5 %, CPU ±10 %, exact match on 5xx +
-4xx-expected) and confirms top-3 rank stability per (policy, load,
-scenario) column — exit `0 REPRODUCIBLE · 1 SOFT DIFF · 2 NOT
-REPRODUCIBLE`. The Phase-4 production sweeps (248 runs) feed the
-HTML renderer; the canonical reproducibility playbook lives in
-[docs/REPRODUCIBILITY.md § AWS canonical-run playbook](./docs/REPRODUCIBILITY.md).
-Only **Phase 9 — publication / v0.1.0** (execute that playbook,
-attach the HTML report + `compare-runs` verdict to the GitHub Release)
-remains.
+**Phase 9 — release staging.** All framework work through Phase 8 is
+shipped; the post-Phase-8 tech-debt sweep (native stats collector,
+crash watchdog, CI actions bump) is landed and green. Release-prep
+artefacts (`CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`.github/PULL_REQUEST_TEMPLATE.md`, `docs/RELEASE.md`,
+`docs/CANONICAL-RUN-HANDOFF.md`) are in place. The final remaining
+step before `v0.1.0` is the **AWS canonical run** — two independent
+sweeps on `3 × c6i.2xlarge` that must exit `REPRODUCIBLE` (or
+`SOFT DIFF`) through `bench compare-runs`. The playbook is scripted
+to the Makefile target level; see
+[docs/CANONICAL-RUN-HANDOFF.md](./docs/CANONICAL-RUN-HANDOFF.md) for
+the step-by-step and [docs/REPRODUCIBILITY.md § AWS canonical-run
+playbook](./docs/REPRODUCIBILITY.md) for the underlying mechanics.
 
 - [x] Phase 1 — Skeleton (README, directories, license, lint CI)
 - [x] Phase 2 — Synthetic backend (vendored `mccutchen/go-httpbin@v2.22.1`, static Docker image, smoke-tested)
@@ -469,9 +476,13 @@ remains.
   `docs/REPRODUCIBILITY.md` finalised with manifest schema, CLI
   reference, tolerance table and AWS canonical-run playbook;
   `docs/GATEWAYS.md` ships a one-row-per-cell deviations rollup)
-- [ ] Phase 9 — Publication / v0.1.0 (execute the AWS canonical-run
-  playbook, attach HTML report + `compare-runs` verdict to the
-  GitHub Release)
+- [~] Phase 9 — Publication / v0.1.0. Release-prep artefacts shipped
+  (`CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, PR template,
+  `docs/RELEASE.md`, `docs/CANONICAL-RUN-HANDOFF.md`); tag-readiness
+  checklist complete. Remaining: execute the AWS canonical-run
+  playbook (run A + B, `bench compare-runs` must exit 0 or 1), cut
+  the `v0.1.0` annotated tag, attach `report.html` +
+  `compare-runs` verdict to the GitHub Release.
 
 See [ROADMAP.md](./ROADMAP.md) for details.
 

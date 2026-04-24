@@ -50,12 +50,15 @@ cd gateway-benchmarks
 
 make prereqs-check          # verify the environment
 make perf-local-up          # bring loadgen + gateway + backend up in separate namespaces
-make perf-local-run         # run the full matrix (~45 min)
-make perf-local-report      # produce HTML + CSV in reports/<timestamp>/
+make perf-local-run         # run the full matrix (parity → load → aggregate → manifest → report)
+make perf-local-report      # re-render reports/<run-id>/report.html if you want
 make perf-local-down
 ```
 
-Result: `reports/<timestamp>_<sha>/report.html`.
+Result: `reports/<run-id>/report.html` (`bench run` calls
+`bench report` automatically; `make bench-report
+BENCH_RUN_ID=<run-id>` and `make bench-report
+BENCH_REPORT_COMBINE=run-a,run-b` are also available).
 
 ## Quick Start — AWS mode
 
@@ -69,7 +72,7 @@ tofu init && tofu apply -auto-approve
 cd ../..
 make perf-aws-deploy        # provision the stack on all 3 EC2 hosts
 make perf-aws-run           # run the matrix (same orchestrator)
-make perf-aws-report        # pull raw data and render the report
+make perf-aws-report        # render reports/<run-id>/report.html (bench report)
 make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 ```
 
@@ -104,7 +107,12 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 
 ## Current Status
 
-The project is in early phases. No benchmark runs yet — we are building the foundation.
+The Phase-7 milestone is in. The full pipeline — `parity → load →
+aggregate → manifest → report` — runs end-to-end through the
+single `bench` Go binary. Local smoke runs and Phase-4 production
+sweeps (248 runs) feed straight into the new HTML renderer; the
+remaining phases (8 — quality gates / docs, 9 — publication / v0.1.0)
+are the wrap-up.
 
 - [x] Phase 1 — Skeleton (README, directories, license, lint CI)
 - [x] Phase 2 — Synthetic backend (vendored `mccutchen/go-httpbin@v2.22.1`, static Docker image, smoke-tested)
@@ -436,10 +444,18 @@ The project is in early phases. No benchmark runs yet — we are building the fo
   config); HTTPS variants land alongside Phase 5 (TLS infrastructure
   is a prerequisite). See
   [.notes/PROGRESS.md § Iteration 29](./.notes/PROGRESS.md).
-- [ ] Phase 5 — Infra (local + AWS 3-EC2)
-- [ ] Phase 6 — Go orchestrator
-- [ ] Phase 7 — Report generator
-- [ ] Phase 8 — Quality gates + docs
+- [x] Phase 5 — Infra (local Docker Compose 3-host stack + AWS
+  OpenTofu cluster placement-group module, both smoke-verified)
+- [x] Phase 6 — Go orchestrator (`bench` binary drives `parity →
+  load → aggregate → manifest`, with manifest pinning, atomic
+  checkpoint, watchdog, typed `cells.jsonl`)
+- [x] Phase 7 — Report generator (`bench report` renders the
+  canonical self-contained HTML straight from `cells.jsonl` +
+  `manifest.json`; `bench run` calls it automatically; the
+  Python prototype `scripts/render-html-report.py` is deprecated)
+- [ ] Phase 8 — Quality gates + docs (repro test, rank invariance
+  test, finalised `docs/REPRODUCIBILITY.md`, deviations table in
+  `docs/GATEWAYS.md`, first canonical AWS run)
 - [ ] Phase 9 — Publication / v0.1.0
 
 See [ROADMAP.md](./ROADMAP.md) for details.

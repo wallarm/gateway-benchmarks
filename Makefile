@@ -1,7 +1,8 @@
 .DEFAULT_GOAL := help
 .PHONY: help prereqs-check lint \
 	backend-build backend-build-amd64 backend-run backend-smoke \
-	orchestrator-build orchestrator-test \
+	orchestrator-build orchestrator-test orchestrator-vet \
+	bench-run bench-validate bench-aggregate bench-manifest bench-version bench-report \
 	perf-local-up perf-local-parity perf-local-cycle-smoke \
 	perf-local-run perf-local-report perf-local-down perf-local-clean \
 	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report \
@@ -69,7 +70,14 @@ help: ## Show this help
 	@echo ""
 	@echo "$(YELLOW)Orchestrator (Phase 6):$(NC)"
 	@echo "  $(GREEN)orchestrator-build$(NC)    go build -> $(ORCH_BIN)"
-	@echo "  $(GREEN)orchestrator-test$(NC)     go test ./orchestrator/..."
+	@echo "  $(GREEN)orchestrator-vet$(NC)      go vet ./orchestrator/..."
+	@echo "  $(GREEN)orchestrator-test$(NC)     go test -race ./orchestrator/..."
+	@echo "  $(GREEN)bench-run$(NC)             End-to-end (parity → load → aggregate → manifest)"
+	@echo "  $(GREEN)bench-validate$(NC)        Parity-only sweep across BENCH_GATEWAYS × BENCH_POLICIES"
+	@echo "  $(GREEN)bench-aggregate$(NC)       Re-aggregate reports/\$$(BENCH_RUN_ID)/raw → matrix.csv + cells.jsonl + matrix.md"
+	@echo "  $(GREEN)bench-manifest$(NC)        Print manifest.json of the latest (or specific) run"
+	@echo "  $(GREEN)bench-version$(NC)         Print bench binary version + build metadata"
+	@echo "  $(GREEN)bench-report$(NC)          Render reports/\$$(BENCH_RUN_ID)/report.html (Phase 7)"
 	@echo ""
 	@echo "$(YELLOW)Local mode (Phase 5):$(NC)"
 	@echo "  $(GREEN)perf-local-up$(NC)             Bring up loadgen+gateway+backend on 2 isolated bridge networks"
@@ -77,8 +85,8 @@ help: ## Show this help
 	@echo "  $(GREEN)perf-local-cycle-smoke$(NC)    End-to-end smoke: s01 on :9080 + s13 on :9443 (if profile serves TLS)"
 	@echo "  $(GREEN)perf-local-down$(NC)           Stop and remove the local stack"
 	@echo "  $(GREEN)perf-local-clean$(NC)          Delete the reports/local-smoke/ scratch directory"
-	@echo "  $(GREEN)perf-local-run$(NC)            Run the full matrix locally [stub — Phase 6]"
-	@echo "  $(GREEN)perf-local-report$(NC)         Produce HTML+CSV [stub — use \`make load-report\` for now]"
+	@echo "  $(GREEN)perf-local-run$(NC)            Drive the full matrix locally via bench (BENCH_GATEWAYS, BENCH_POLICIES, BENCH_LOADS)"
+	@echo "  $(GREEN)perf-local-report$(NC)         Render HTML report for the latest local run (BENCH_RUN_ID overrides --latest)"
 	@echo ""
 	@echo "$(YELLOW)AWS mode (Phase 5 — 3 EC2 c6i.2xlarge in cluster PG):$(NC)"
 	@echo "  $(GREEN)perf-aws-init$(NC)             $(TOFU_BIN) init in $(AWS_TOFU_DIR)/ (one-time per checkout)"
@@ -88,8 +96,8 @@ help: ## Show this help
 	@echo "  $(GREEN)perf-aws-ssh-gateway$(NC)      SSH into the gateway host"
 	@echo "  $(GREEN)perf-aws-ssh-backend$(NC)      SSH into the backend host"
 	@echo "  $(GREEN)perf-aws-destroy$(NC)          $(TOFU_BIN) destroy — terminate everything"
-	@echo "  $(GREEN)perf-aws-run$(NC)              Run the matrix on AWS [stub — Phase 6]"
-	@echo "  $(GREEN)perf-aws-report$(NC)           Pull raw data and render HTML [stub — Phase 7]"
+	@echo "  $(GREEN)perf-aws-run$(NC)              Drive the AWS matrix via bench (set BENCH_TARGET_AWS=http://<gateway-ip>:9080)"
+	@echo "  $(GREEN)perf-aws-report$(NC)           Render HTML report for the AWS run (BENCH_RUN_ID overrides --latest)"
 	@echo ""
 	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
 	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile against a live target"
@@ -187,18 +195,102 @@ backend-smoke: ## Smoke-test a running backend (expects :$(BACKEND_PORT) reachab
 # ---------------------------------------------------------------------------
 # Orchestrator (Phase 6)
 # ---------------------------------------------------------------------------
-orchestrator-build: ## Build the Go orchestrator
-	@echo "$(YELLOW)Building orchestrator...$(NC)"
+ORCH_VERSION   ?= dev
+ORCH_BUILDTIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+ORCH_GIT_SHA   := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+ORCH_GIT_DIRTY := $(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo true || echo false)
+ORCH_PKG       := github.com/wallarm/gateway-benchmarks/orchestrator/internal/version
+ORCH_LDFLAGS   := -s -w \
+	-X $(ORCH_PKG).Version=$(ORCH_VERSION) \
+	-X $(ORCH_PKG).GitSHA=$(ORCH_GIT_SHA) \
+	-X $(ORCH_PKG).GitDirty=$(ORCH_GIT_DIRTY) \
+	-X $(ORCH_PKG).BuildTime=$(ORCH_BUILDTIME)
+
+orchestrator-build: ## Build the Go orchestrator into $(ORCH_BIN)
+	@echo "$(YELLOW)Building orchestrator (version=$(ORCH_VERSION) sha=$(ORCH_GIT_SHA))$(NC)"
 	@if [ ! -f orchestrator/go.mod ]; then \
-		echo "$(YELLOW)… orchestrator is not initialised yet (Phase 6)$(NC)"; \
-		exit 0; \
+		echo "$(RED)… orchestrator/go.mod missing$(NC)"; \
+		exit 1; \
 	fi
 	@mkdir -p $(dir $(ORCH_BIN))
-	@cd orchestrator && go build -trimpath -ldflags="-s -w" -o ../$(ORCH_BIN) ./cmd/bench
+	@cd orchestrator && go build -trimpath -ldflags="$(ORCH_LDFLAGS)" -o ../$(ORCH_BIN) .
 	@echo "$(GREEN)✓ orchestrator built: $(ORCH_BIN)$(NC)"
 
-orchestrator-test:
-	$(PHASE_TODO)
+orchestrator-vet: ## go vet ./orchestrator/...
+	@cd orchestrator && go vet ./...
+	@echo "$(GREEN)✓ go vet clean$(NC)"
+
+orchestrator-test: ## go test ./orchestrator/... (race + coverage)
+	@cd orchestrator && go test -race -count=1 ./...
+	@echo "$(GREEN)✓ go test ok$(NC)"
+
+# --- bench (Phase 6) convenience wrappers ----------------------------------
+# Tunable via env vars: BENCH_GATEWAYS, BENCH_POLICIES, BENCH_LOADS, BENCH_TARGET,
+# BENCH_SEED, BENCH_RUN_ID, BENCH_REPS, BENCH_NOTES, BENCH_MODE.
+BENCH_GATEWAYS ?= nginx
+BENCH_POLICIES ?= p01-vanilla
+BENCH_LOADS    ?= p1-baseline
+BENCH_TARGET   ?= http://localhost:9080
+BENCH_SEED     ?= 42
+BENCH_RUN_ID   ?= $(RUN_ID)
+BENCH_REPS     ?= 1
+BENCH_NOTES    ?=
+BENCH_MODE     ?= local
+
+bench-run: orchestrator-build ## Run the orchestrator end-to-end (parity → load → aggregate → manifest)
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		--gateways "$(BENCH_GATEWAYS)" \
+		--policies "$(BENCH_POLICIES)" \
+		--loads    "$(BENCH_LOADS)" \
+		--seed     $(BENCH_SEED) \
+		--reps     $(BENCH_REPS) \
+		--mode     $(BENCH_MODE) \
+		--target   "$(BENCH_TARGET)" \
+		$(if $(BENCH_NOTES),--notes "$(BENCH_NOTES)",)
+
+bench-validate: orchestrator-build ## Run parity-only across BENCH_GATEWAYS × BENCH_POLICIES
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" validate \
+		--gateways "$(BENCH_GATEWAYS)" \
+		--policies "$(BENCH_POLICIES)" \
+		--target   "$(BENCH_TARGET)" \
+		--run-id   $(BENCH_RUN_ID)
+
+bench-aggregate: orchestrator-build ## Re-aggregate reports/$(BENCH_RUN_ID)/raw/ into matrix.csv + cells.jsonl + matrix.md
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" aggregate --run-id $(BENCH_RUN_ID)
+
+bench-manifest: orchestrator-build ## Print manifest.json of the latest run (or BENCH_RUN_ID if set)
+	@if [ -n "$(BENCH_RUN_ID)" ] && [ -d reports/$(BENCH_RUN_ID) ]; then \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" manifest --run-id $(BENCH_RUN_ID); \
+	else \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" manifest; \
+	fi
+
+bench-version: orchestrator-build ## Print the bench binary version + build metadata
+	@$(ORCH_BIN) version
+
+# Render the canonical HTML report from cells.jsonl + manifest.json.
+# Combine multiple runs by passing BENCH_REPORT_COMBINE="run-a,run-b,run-c".
+# Optional knobs:
+#   BENCH_REPORT_TITLE  — page title (defaults to "API Gateway Benchmark — <run-id>")
+#   BENCH_REPORT_ENV    — single-line environment annotation under the hero
+BENCH_REPORT_COMBINE ?=
+BENCH_REPORT_TITLE   ?=
+BENCH_REPORT_ENV     ?=
+bench-report: orchestrator-build ## Render reports/$(BENCH_RUN_ID)/report.html (Phase 7)
+	@if [ -n "$(BENCH_REPORT_COMBINE)" ]; then \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report \
+			--combined "$(BENCH_REPORT_COMBINE)" \
+			$(if $(BENCH_REPORT_TITLE),--title "$(BENCH_REPORT_TITLE)",) \
+			$(if $(BENCH_REPORT_ENV),--env "$(BENCH_REPORT_ENV)",); \
+	elif [ -n "$(BENCH_RUN_ID)" ] && [ -d reports/$(BENCH_RUN_ID) ]; then \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --run-id $(BENCH_RUN_ID) \
+			$(if $(BENCH_REPORT_TITLE),--title "$(BENCH_REPORT_TITLE)",) \
+			$(if $(BENCH_REPORT_ENV),--env "$(BENCH_REPORT_ENV)",); \
+	else \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --latest \
+			$(if $(BENCH_REPORT_TITLE),--title "$(BENCH_REPORT_TITLE)",) \
+			$(if $(BENCH_REPORT_ENV),--env "$(BENCH_REPORT_ENV)",); \
+	fi
 
 # ---------------------------------------------------------------------------
 # Local mode (Phase 5 + 6)
@@ -237,11 +329,23 @@ perf-local-cycle-smoke: ## End-to-end smoke (s01 over :9080 + s13 over :9443 if 
 	@GATEWAY_PROFILE=$(GATEWAY_PROFILE) GATEWAY_NAME=$(LOCAL_GATEWAY) \
 		bash scripts/perf-local-cycle-smoke.sh
 
-perf-local-run: ## Run the full matrix locally (Phase 6 — pending the Go orchestrator)
-	$(PHASE_TODO)
+perf-local-run: orchestrator-build ## Drive the full matrix locally via bench (parity + load + aggregate)
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		--gateways "$(BENCH_GATEWAYS)" \
+		--policies "$(BENCH_POLICIES)" \
+		--loads    "$(BENCH_LOADS)" \
+		--seed     $(BENCH_SEED) \
+		--reps     $(BENCH_REPS) \
+		--mode     local \
+		--target   "$(BENCH_TARGET)" \
+		$(if $(BENCH_NOTES),--notes "$(BENCH_NOTES)",)
 
-perf-local-report: ## Produce HTML+CSV (use `make load-report` for now; Phase 7 wires this up)
-	$(PHASE_TODO)
+perf-local-report: orchestrator-build ## Render HTML report for the most recent local run (BENCH_RUN_ID overrides)
+	@if [ -n "$(BENCH_RUN_ID)" ] && [ -d reports/$(BENCH_RUN_ID) ]; then \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --run-id $(BENCH_RUN_ID); \
+	else \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --latest; \
+	fi
 
 perf-local-down: ## Stop and remove the local stack (containers, networks, volumes)
 	@echo "$(YELLOW)perf-local-down: tearing down local stack$(NC)"
@@ -291,11 +395,27 @@ perf-aws-ssh-gateway: ## SSH into the gateway host
 perf-aws-ssh-backend: ## SSH into the backend host
 	@cd $(AWS_TOFU_DIR) && $$($(TOFU_BIN) output -raw ssh_backend)
 
-perf-aws-run: ## Run the matrix on AWS [stub — Phase 6 wires this up via the Go orchestrator]
-	$(PHASE_TODO)
+perf-aws-run: orchestrator-build ## Drive the matrix on the AWS cluster via bench (parity + load + aggregate)
+	@if [ -z "$(BENCH_TARGET_AWS)" ]; then \
+		echo "$(RED)BENCH_TARGET_AWS is required (e.g. http://10.0.1.20:9080 — the gateway's private IP)$(NC)"; \
+		exit 2; \
+	fi
+	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
+		--gateways "$(BENCH_GATEWAYS)" \
+		--policies "$(BENCH_POLICIES)" \
+		--loads    "$(BENCH_LOADS)" \
+		--seed     $(BENCH_SEED) \
+		--reps     $(BENCH_REPS) \
+		--mode     aws \
+		--target   "$(BENCH_TARGET_AWS)" \
+		$(if $(BENCH_NOTES),--notes "$(BENCH_NOTES)",)
 
-perf-aws-report: ## Pull raw data and render the report [stub — Phase 7]
-	$(PHASE_TODO)
+perf-aws-report: orchestrator-build ## Render the canonical HTML report for an AWS run (BENCH_RUN_ID overrides --latest)
+	@if [ -n "$(BENCH_RUN_ID)" ] && [ -d reports/$(BENCH_RUN_ID) ]; then \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --run-id $(BENCH_RUN_ID); \
+	else \
+		$(ORCH_BIN) --repo-root "$(CURDIR)" report --latest; \
+	fi
 
 perf-aws-destroy: ## tofu destroy — terminate the 3 EC2 hosts and free all resources
 	@echo "$(YELLOW)perf-aws-destroy: $(TOFU_BIN) destroy in $(AWS_TOFU_DIR)/$(NC)"

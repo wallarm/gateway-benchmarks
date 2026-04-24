@@ -49,11 +49,21 @@ jobs:
         with:
           go-version-file: orchestrator/go.mod
           cache-dependency-path: orchestrator/go.sum
-        continue-on-error: true
       - name: go vet
+        run: cd orchestrator && go vet ./...
+
+  go-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+      - name: go test (race)
+        run: cd orchestrator && go test -race -count=1 ./...
+      - name: go build (sanity)
         run: |
-          if [ -f orchestrator/go.mod ]; then
-            cd orchestrator && go vet ./...
-          else
-            echo "orchestrator/go.mod absent yet — skipping"
-          fi
+          cd orchestrator && go build -trimpath -o /tmp/bench .
+          /tmp/bench --help
+          /tmp/bench version

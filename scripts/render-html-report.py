@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
 """
+DEPRECATED — superseded by `bench report` (orchestrator/cmd/report.go).
+
+The Phase-7 Go orchestrator now renders the canonical HTML report
+directly from `cells.jsonl` + `manifest.json`:
+
+    make orchestrator-build
+    bench report --run-id <run-id>
+    bench report --combined run-a,run-b,run-c
+
+Use the Go binary for every new report — it consumes the typed
+`cells.jsonl` produced by `bench run` / `bench aggregate`, has the
+same hero / executive-summary / memory-grid / radar / per-policy
+layout, and emits a self-contained HTML page (no Python toolchain
+required).
+
+This Python script is kept in-tree for one cycle so historical
+reports built off legacy CSVs (pre-`cells.jsonl` runs in
+`reports/combined-pathA-*`) remain re-renderable, but no new
+features or fixes will land here. Do not extend it.
+
+──────────────────────────────────────────────────────────────────
 Render a Chart.js-driven HTML benchmark report from a combined matrix CSV
 produced by `scripts/aggregate-multi-csv.sh`.
 
@@ -776,6 +797,12 @@ def render(rows: list[dict], title: str, env_line: str, source_csv: str) -> str:
 
 
 def main() -> int:
+    print(
+        "[deprecated] scripts/render-html-report.py — use `bench report` "
+        "(see orchestrator/README.md). This Python prototype is kept only "
+        "for legacy CSV-only runs and will be removed in a future cycle.",
+        file=sys.stderr,
+    )
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input",  required=True, help="combined matrix CSV")
     ap.add_argument("--output", required=True, help="output HTML path")

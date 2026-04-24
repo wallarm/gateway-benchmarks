@@ -1,0 +1,4 @@
+bin/
+*.test
+*.prof
+coverage.out

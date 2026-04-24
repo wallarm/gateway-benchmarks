@@ -6,38 +6,76 @@
 
 ### 1. Manifest per run
 
-File `reports/<run>/manifest.json`:
+The Phase 6 `bench` orchestrator writes `reports/<run-id>/manifest.json`
+(schema v1) at the start of every sweep and finalises it (with
+`finished_at` + `duration_sec`) at the end. Schema:
 
-```json
+```jsonc
 {
-  "run_id": "20260422T090000Z_abc12345",
-  "started_at": "2026-04-22T09:00:00Z",
-  "finished_at": "2026-04-22T10:15:23Z",
-  "git_sha": "abc12345...",
-  "mode": "aws | local",
-  "seed": 4242424242,
-  "orchestrator_version": "0.1.0",
-  "k6_version": "1.7.1",
-  "k6_digest": "sha256:...",
-  "hosts": {
-    "loadgen": { "ip": "10.0.1.10", "instance_type": "c6i.2xlarge", "kernel": "6.8.0-45-generic", "docker": "27.3.1" },
-    "gateway": { ... },
-    "backend": { ... }
+  "schema_version": "1",
+  "run_id":         "20260424T062930Z",
+  "mode":           "local",                 // or "aws"
+  "started_at":     "2026-04-24T06:29:30Z",
+  "finished_at":    "2026-04-24T06:30:43Z",
+  "duration_sec":   69.93,
+
+  "bench": {                                 // the orchestrator binary itself
+    "version":    "dev",                     // -X .../version.Version
+    "git_sha":    "142744e37ca4135d142cd0e58e337cc10568aa2b",
+    "git_dirty":  true,
+    "build_time": "2026-04-24T06:33:51Z",
+    "go_version": "go1.26.2"
   },
-  "gateways": {
-    "wallarm":  { "image": "wallarm/api-gateway:v0.2.x",        "digest": "sha256:..." },
-    "nginx":    { "image": "nginx:1.27.3-alpine",               "digest": "sha256:..." },
-    "...":       "..."
+
+  "git": {                                   // the source tree at run time
+    "sha":     "142744e37ca4135d142cd0e58e337cc10568aa2b",
+    "dirty":   true,
+    "branch":  "main",
+    "remote":  "git@github.com:wallarm/gateway-benchmarks.git",
+    "has_git": true
   },
-  "backend": { "image": "ghcr.io/wallarm/gb-backend:abc12345",   "digest": "sha256:..." },
-  "matrix": {
-    "policy_profiles": ["p01", "p02", "...", "p12"],
-    "load_profiles":   ["p1-baseline", "p2-sustained", "p3-ramp", "p4-stress"],
-    "scenarios":       ["s01-bypass-http", "s02-bypass-https", "..."],
-    "repetitions": 1
+
+  "host": {                                  // loadgen host (operator's box / AWS loadgen EC2)
+    "os":       "darwin", "arch": "arm64",
+    "num_cpu":  14,
+    "hostname": "...",
+    "kernel":   "Darwin 25.4.0 arm64"
   },
-  "deviations": [ ]
+
+  "k6": {                                    // pinned by digest in scripts/load-gateway.sh
+    "image":  "grafana/k6:1.7.1@sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f",
+    "digest": "sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f"
+  },
+
+  "gateways": [                              // one entry per gateway in the sweep
+    {
+      "name":         "nginx",
+      "image":        "nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4",
+      "digest":       "sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4",
+      "source":       "registry",            // "registry" | "compose-resolved-or-built-from-src"
+      "compose_path": ".../gateways/nginx/docker-compose.yaml"
+    }
+  ],
+
+  "seed":         42,                        // forwarded to k6 as BENCH_RUN_SEED
+  "repetitions":  1,
+  "stop_on_fail": false,
+  "selected_rows": [                         // one entry per (gateway, policy, load, scenario[, rep])
+    "nginx/p01-vanilla/p1-baseline/s01-vanilla-http"
+  ],
+
+  "notes": "Phase 6 MVP smoke"               // from --notes flag (free-form)
 }
+```
+
+Inspect any past run with:
+
+```bash
+make bench-manifest                         # latest run
+make bench-manifest BENCH_RUN_ID=<id>       # specific run
+# or directly:
+orchestrator/bin/bench manifest --latest
+orchestrator/bin/bench manifest --run-id <id>
 ```
 
 ### 2. Deterministic inputs

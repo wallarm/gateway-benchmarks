@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ .Title | esc }}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>{{ .CSS | cssSafe }}</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-titles">
+      <h1>{{ .Title | esc }}</h1>
+      <p class="meta">
+        Generated {{ .GeneratedAt | esc }}
+        &nbsp;&bull;&nbsp; {{ .EnvLine | esc }}
+      </p>
+      {{- with .Manifest }}
+      <p class="meta meta-mono">
+        run-id <code>{{ .RunID | esc }}</code>
+        &nbsp;·&nbsp; mode <code>{{ default .Mode "—" | esc }}</code>
+        &nbsp;·&nbsp; bench {{ default .Bench.Version "dev" | esc }}
+        ({{ shortSHA .Bench.GitSHA | esc }}{{ if .Bench.GitDirty }}-dirty{{ end }})
+        &nbsp;·&nbsp; source {{ shortSHA .Git.SHA | esc }}{{ if .Git.Dirty }}-dirty{{ end }}
+        &nbsp;·&nbsp; k6 <code>{{ shortDigest .K6.Digest | esc }}</code>
+      </p>
+      {{- end }}
+    </div>
+    <div class="hero-downloads">
+      {{- with .Downloads.Manifest }}<a class="dl" href="{{ . | esc }}" download>manifest.json</a>{{ end }}
+      {{- with .Downloads.CSV      }}<a class="dl" href="{{ . | esc }}" download>matrix.csv</a>{{ end }}
+      {{- with .Downloads.JSONL    }}<a class="dl" href="{{ . | esc }}" download>cells.jsonl</a>{{ end }}
+      {{- with .Downloads.Markdown }}<a class="dl" href="{{ . | esc }}" download>matrix.md</a>{{ end }}
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+{{- if .HowToRead }}
+<div class="note-card">
+  <strong>How to read this report.</strong>
+  {{ .HowToRead | safe }}
+  {{- with .HeroNote }}<br><br>{{ . | safe }}{{ end }}
+</div>
+{{- end }}
+
+<h2 class="section-title">Executive Summary</h2>
+<div class="card" style="margin-bottom:1rem">
+  <table class="ranking-table">
+    <thead><tr>
+      <th style="text-align:center">Rank</th>
+      <th>Gateway</th>
+      <th>Stack</th>
+      <th style="text-align:right">Avg RPS</th>
+      <th>Max errors</th>
+      <th>Coverage</th>
+      <th>Peak RSS</th>
+      <th>Steady RSS</th>
+    </tr></thead>
+    <tbody>
+    {{- range $i, $row := .Summary }}
+      <tr>
+        <td class="rank-cell">{{ rank $i }}</td>
+        <td><span class="badge" style="background:{{ color $row.Gateway | esc }}">{{ $row.Gateway | esc }}</span></td>
+        <td class="meta-cell">{{ index $row.Stack 0 | esc }} · {{ index $row.Stack 1 | esc }}</td>
+        <td class="num">{{ fmtFloat $row.AvgRPS 1 }}</td>
+        <td class="{{ if gt $row.MaxErrPct 0.5 }}error-cell{{ end }}">{{ fmtFloat $row.MaxErrPct 1 }}%</td>
+        <td>{{ $row.Coverage | esc }}</td>
+        <td class="meta-cell">~{{ fmtFloat $row.PeakRSSMB 0 }} MB</td>
+        <td class="meta-cell">~{{ fmtFloat $row.SteadyRSSMB 0 }} MB</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+</div>
+
+{{- if gt (len .MemoryChips) 0 }}
+<h2 class="section-title">Memory Footprint (peak RSS)</h2>
+<div class="card"><div class="mem-grid">
+  {{- range .MemoryChips }}
+  <div class="mem-chip">
+    <div class="num-big" style="color:{{ .Color | esc }}">~{{ fmtFloat .PeakRSSMB 0 }} MB</div>
+    <div class="label">{{ .Gateway | esc }}</div>
+  </div>
+  {{- end }}
+</div></div>
+{{- end }}
+
+{{- if gt (len .RadarLabels) 0 }}
+<h2 class="section-title">Overall Profile</h2>
+<div class="card"><div class="radar-wrap"><canvas id="radarChart"></canvas></div></div>
+{{- end }}
+
+<h2 class="section-title">Policy Details</h2>
+<div class="tabs">
+{{- range $i, $tab := .Tabs }}
+  <button class="tab-btn{{ if eq $i 0 }} active{{ end }}" data-tab="tab-{{ $tab.Policy | esc }}">{{ $tab.Meta.Label | esc }}</button>
+{{- end }}
+</div>
+
+{{- range $i, $tab := .Tabs }}
+<div class="tab-panel{{ if eq $i 0 }} active{{ end }}" id="tab-{{ $tab.Policy | esc }}">
+  <div class="scenario-header">
+    <h3>{{ $tab.Meta.Label | esc }}</h3>
+    <span class="parity-line">{{ $tab.ParityLine | esc }}</span>
+    {{- if $tab.HasUnstable }}
+    <span class="unstable-tag" title="At least one cell shows multi-rep RPS spread > 5%">unstable cells</span>
+    {{- end }}
+  </div>
+
+  <div class="policy-meta">
+    <div><strong>Tested:</strong> {{ $tab.Meta.Tested | esc }}</div>
+    <div><strong>Profile:</strong> {{ $tab.Meta.Profile | esc }}</div>
+    <div><strong>Expected signal:</strong> {{ $tab.Meta.Signal | esc }}</div>
+  </div>
+
+  {{- range $tab.Loads }}
+  <div class="load-section">
+    <div class="load-header">
+      <h4>{{ .Meta.Label | esc }}</h4>
+      <span class="load-shape">{{ .Meta.Shape | esc }}</span>
+    </div>
+    <p class="load-purpose">{{ .Meta.Purpose | esc }}</p>
+
+    {{- if gt (len .Cells) 0 }}
+    <div class="chart-row">
+      <div class="chart-box"><canvas id="chart-rps-{{ $tab.Policy | esc }}-{{ .Load | esc }}"></canvas></div>
+      <div class="chart-box"><canvas id="chart-lat-{{ $tab.Policy | esc }}-{{ .Load | esc }}"></canvas></div>
+    </div>
+    {{- end }}
+
+    <table>
+      <thead><tr>
+        <th>Gateway</th>
+        <th>RPS ↓</th>
+        <th>p50 (ms)</th>
+        <th>p95 (ms)</th>
+        <th>Max (ms)</th>
+        <th>Avg iter (ms)</th>
+        <th>Total reqs</th>
+        <th>5xx</th>
+        <th>4xx-exp</th>
+        <th>4xx-uxp</th>
+        <th>RSS peak</th>
+        <th>RSS steady</th>
+        <th>Δ p50 vs latency winner</th>
+      </tr></thead>
+      <tbody>
+      {{- $ref := .LatWinner }}
+      {{- $rpsW := .RPSWinner }}
+      {{- range .Cells }}
+        <tr class="{{ if and $rpsW (eq .Gateway $rpsW.Gateway) }}winner-row{{ end }}{{ if .Unstable }} unstable-row{{ end }}">
+          <td>
+            <span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span>
+            {{- if and $rpsW (eq .Gateway $rpsW.Gateway) }} 🏆{{ end }}
+            {{- if and $ref (eq .Gateway $ref.Gateway) }} ⏱️{{ end }}
+            {{- if .Unstable }} <span class="unstable-tag" title="multi-rep RPS spread > 5%">unstable</span>{{ end }}
+          </td>
+          <td class="num">{{ fmtFloat .HTTPReqRate 1 }}</td>
+          <td class="num">{{ if .TimingBroken }}<span class="meta-cell" title="k6 timing instrumentation returned zeros">N/A ⚠️</span>{{ else }}{{ fmtFloat .HTTPReqDurationP50 3 }}{{ end }}</td>
+          <td class="num">{{ if .TimingBroken }}<span class="meta-cell" title="k6 timing instrumentation returned zeros">N/A ⚠️</span>{{ else }}{{ fmtFloat .HTTPReqDurationP95 3 }}{{ end }}</td>
+          <td class="num">{{ if .TimingBroken }}<span class="meta-cell">N/A</span>{{ else }}{{ fmtFloat .HTTPReqDurationMax 3 }}{{ end }}</td>
+          <td class="num">{{ if .TimingBroken }}<span class="meta-cell">N/A</span>{{ else }}{{ fmtFloat .IterDurationAvgMs 3 }}{{ end }}</td>
+          <td class="num">{{ fmtInt .HTTPReqs }}</td>
+          <td class="num {{ if gt .Policy5xxUnexpected 0 }}error-cell{{ end }}">{{ fmtInt .Policy5xxUnexpected }}</td>
+          <td class="num">{{ fmtInt .Policy4xxExpected }}</td>
+          <td class="num {{ if gt .Policy4xxUnexpected 0 }}error-cell{{ end }}">{{ fmtInt .Policy4xxUnexpected }}</td>
+          <td class="num meta-cell">{{ fmtBytes .MemRSSPeakBytes }}</td>
+          <td class="num meta-cell">{{ fmtBytes .MemRSSSteadyBytes }}</td>
+          <td class="num"><span class="ovh">{{ deltaP50 . $ref }}</span></td>
+        </tr>
+      {{- end }}
+      {{- range .Excluded }}
+        <tr class="excluded-row">
+          <td><span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span></td>
+          <td colspan="12" class="excluded-cell">FEATURE-MISSING — {{ default .ParityStatus "see docs/POLICIES.md for the gateway's deviation table" | esc }}</td>
+        </tr>
+      {{- end }}
+      </tbody>
+    </table>
+  </div>
+  {{- end }}
+</div>
+{{- end }}
+
+<footer>
+  <div>
+    {{ .Footer.PassCount }} PASS
+    · {{ .Footer.ExcludedCount }} EXCLUDED
+    · {{ .Footer.FailCount }} FAIL
+    {{- if gt .Footer.OtherCount 0 }} · {{ .Footer.OtherCount }} OTHER{{ end }}
+    across {{ len .Footer.RunIDs }} run(s).
+  </div>
+  <div class="meta-cell">
+    Rendered by <code>bench report</code>
+    {{- with .Manifest }} (bench {{ default .Bench.Version "dev" | esc }} · source {{ shortSHA .Git.SHA | esc }}{{ if .Git.Dirty }}-dirty{{ end }}){{ end }}.
+  </div>
+</footer>
+
+</div>
+
+<script>{{ .ScriptJS | jsSafe }}</script>
+<script>
+(function () {
+  const POLICIES = {{ .PoliciesJSON | jsSafe }};
+  const CHART_DATA = {{ .ChartDataJSON | jsSafe }};
+  const RADAR_LABELS = {{ .RadarLabelsJSON | jsSafe }};
+  const RADAR_DATASETS = {{ .RadarSeriesJSON | jsSafe }};
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = document.getElementById(btn.dataset.tab);
+      if (tab) tab.classList.add('active');
+      // Chart.js needs a tick to size to a freshly-visible canvas.
+      window.dispatchEvent(new Event('resize'));
+    });
+  });
+
+  Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  Chart.defaults.font.size = 12;
+  Chart.defaults.plugins.legend.display = false;
+
+  POLICIES.forEach(policy => {
+    const byLoad = CHART_DATA[policy] || {};
+    Object.keys(byLoad).forEach(load => {
+      const d = byLoad[load];
+      if (!d) return;
+
+      const rpsCanvas = document.getElementById('chart-rps-' + policy + '-' + load);
+      if (rpsCanvas) {
+        new Chart(rpsCanvas, {
+          type: 'bar',
+          data: { labels: d.labels, datasets: [{ data: d.rps, backgroundColor: d.colors, borderRadius: 4 }] },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: 'Requests/sec (higher is better)', font: { size: 13, weight: '600' }, padding: { bottom: 12 } }
+            },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#f0f1f3' } },
+              y: { grid: { display: false }, ticks: { font: { weight: '600' } } }
+            }
+          }
+        });
+      }
+
+      const latCanvas = document.getElementById('chart-lat-' + policy + '-' + load);
+      if (latCanvas) {
+        new Chart(latCanvas, {
+          type: 'bar',
+          data: {
+            labels: d.labels,
+            datasets: [
+              { label: 'p50', data: d.p50, backgroundColor: '#60a5fa', borderRadius: 4 },
+              { label: 'p95', data: d.p95, backgroundColor: '#f87171', borderRadius: 4 }
+            ]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: { display: true, text: 'Latency ms (lower is better)', font: { size: 13, weight: '600' }, padding: { bottom: 12 } },
+              legend: { display: true, position: 'bottom', labels: { boxWidth: 12 } }
+            },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#f0f1f3' } },
+              y: { grid: { display: false }, ticks: { font: { weight: '600' } } }
+            }
+          }
+        });
+      }
+    });
+  });
+
+  if (RADAR_DATASETS && RADAR_DATASETS.length > 0) {
+    const radar = document.getElementById('radarChart');
+    if (radar) {
+      new Chart(radar, {
+        type: 'radar',
+        data: {
+          labels: RADAR_LABELS,
+          datasets: RADAR_DATASETS.map(ds => Object.assign({}, ds, { borderWidth: 2, pointRadius: 3, fill: true }))
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: true, position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
+            title: { display: true, text: 'Relative RPS by policy (% of best)', font: { size: 14, weight: '600' }, padding: { bottom: 8 } }
+          },
+          scales: {
+            r: {
+              beginAtZero: true, max: 100,
+              ticks: { stepSize: 25, font: { size: 10 }, backdropColor: 'transparent' },
+              grid: { color: '#e5e7eb' },
+              pointLabels: { font: { size: 11, weight: '500' } }
+            }
+          }
+        }
+      });
+    }
+  }
+})();
+</script>
+</body>
+</html>

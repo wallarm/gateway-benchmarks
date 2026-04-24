@@ -46,21 +46,35 @@ This project is developed and maintained by **Wallarm, Inc.** — the author of 
 
 > Requirements: Linux/macOS host, Docker ≥ 24, 8+ physical cores, 16 GB RAM, `make`, `go ≥ 1.23`.
 
+Two independent scenarios. Pick one — don't mix them. The Makefile has a
+preflight check that refuses to boot a second stack while another one is up
+and tells you exactly which command clears it.
+
+**Run the full matrix** (the default workflow):
+
 ```bash
 git clone https://github.com/wallarm/gateway-benchmarks
 cd gateway-benchmarks
 
 make prereqs-check          # verify the environment
-make perf-local-up          # bring loadgen + gateway + backend up in separate namespaces
-make perf-local-run         # run the full matrix (parity → load → aggregate → manifest → report)
-make perf-local-report      # re-render reports/<run-id>/report.html if you want
-make perf-local-down
+make perf-local-run         # parity → load → aggregate → manifest → report
 ```
 
-Result: `reports/<run-id>/report.html` (`bench run` calls
-`bench report` automatically; `make bench-report
+The orchestrator brings per-cell stacks up and down by itself — no separate
+`perf-local-up` is needed. Result: `reports/<run-id>/report.html`
+(`bench run` calls `bench report` automatically; `make bench-report
 BENCH_RUN_ID=<run-id>` and `make bench-report
 BENCH_REPORT_COMBINE=run-a,run-b` are also available).
+
+**Long-running smoke stack** (only when you want to poke a live gateway
+by hand — parity, curl, logs):
+
+```bash
+make perf-local-up          # bring loadgen + gateway + backend up in separate namespaces
+make perf-local-parity      # parity-check against localhost:9080
+make perf-local-cycle-smoke # HTTP + HTTPS round-trip through the stack
+make perf-local-down        # tear down (also cleans up any orphan gwb-<gw>* per-cell stacks)
+```
 
 ## Quick Start — AWS mode
 
@@ -114,22 +128,7 @@ make perf-aws-down          # tear down EC2 (edits tfvars and runs apply)
 - [docs/RELEASE.md](./docs/RELEASE.md) — maintainer release process
 - [orchestrator/README.md](./orchestrator/README.md) — `bench` Go binary (Phases 6 + 7 + 8)
 
-## Current Status
-
-**Phase 9 — release staging.** All framework work through Phase 8 is
-shipped; the post-Phase-8 tech-debt sweep (native stats collector,
-crash watchdog, CI actions bump) is landed and green. Release-prep
-artefacts (`CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
-`.github/PULL_REQUEST_TEMPLATE.md`, `docs/RELEASE.md`,
-`docs/CANONICAL-RUN-HANDOFF.md`) are in place. The final remaining
-step before `v0.1.0` is the **AWS canonical run** — two independent
-sweeps on `3 × c6i.2xlarge` that must exit `REPRODUCIBLE` (or
-`SOFT DIFF`) through `bench compare-runs`. The playbook is scripted
-to the Makefile target level; see
-[docs/CANONICAL-RUN-HANDOFF.md](./docs/CANONICAL-RUN-HANDOFF.md) for
-the step-by-step and [docs/REPRODUCIBILITY.md § AWS canonical-run
-playbook](./docs/REPRODUCIBILITY.md) for the underlying mechanics.
-
+<!--CUT_PHASES_BEGIN-->
 - [x] Phase 1 — Skeleton (README, directories, license, lint CI)
 - [x] Phase 2 — Synthetic backend (vendored `mccutchen/go-httpbin@v2.22.1`, static Docker image, smoke-tested)
 - [x] Phase 3a — Parity foundation (canonical values, reference assets, fixtures, `make parity-check[-all]`)
@@ -483,8 +482,7 @@ playbook](./docs/REPRODUCIBILITY.md) for the underlying mechanics.
   playbook (run A + B, `bench compare-runs` must exit 0 or 1), cut
   the `v0.1.0` annotated tag, attach `report.html` +
   `compare-runs` verdict to the GitHub Release.
-
-See [ROADMAP.md](./ROADMAP.md) for details.
+<!--CUT_PHASES_END-->
 
 ## License
 

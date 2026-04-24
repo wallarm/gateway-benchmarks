@@ -9,7 +9,8 @@
 	perf-aws-up perf-aws-destroy perf-aws-ssh-loadgen perf-aws-ssh-gateway perf-aws-ssh-backend \
 	perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
-	load-gateway load-gateway-load-sweep load-sweep load-aggregate load-combine load-report
+	load-gateway load-gateway-load-sweep load-sweep load-aggregate load-combine load-report \
+	.bench-ports-free
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -120,6 +121,18 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 # prereqs
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Hidden preflight: refuse to boot a second bench stack when one is already
+# running. Every target that invokes `docker compose up` on either
+# infra/local/ or gateways/<gw>/ takes this as a prerequisite, so the
+# operator gets an actionable message ("run `make perf-local-down`") instead
+# of the raw `Bind for 0.0.0.0:9080 failed: port is already allocated`.
+# Override per-invocation with BENCH_SKIP_PORTS_CHECK=1 (useful for CI paths
+# that already know the host is clean).
+# ---------------------------------------------------------------------------
+.bench-ports-free:
+	@bash scripts/bench-ports-free.sh
+
 prereqs-check: ## Verify the local environment
 	@echo "$(YELLOW)Checking prerequisites...$(NC)"
 	@command -v docker  >/dev/null 2>&1 || { echo "$(RED)✗ docker not found$(NC)";  exit 2; }
@@ -242,7 +255,7 @@ BENCH_QUIET    ?= 0
 BENCH_VERBOSE_FLAG := $(if $(filter 1 true TRUE yes YES,$(BENCH_VERBOSE)),--verbose,)
 BENCH_QUIET_FLAG   := $(if $(filter 1 true TRUE yes YES,$(BENCH_QUIET)),--quiet,)
 
-bench-run: orchestrator-build ## Run the orchestrator end-to-end (parity → load → aggregate → manifest)
+bench-run: .bench-ports-free orchestrator-build ## Run the orchestrator end-to-end (parity → load → aggregate → manifest)
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
 		$(BENCH_VERBOSE_FLAG) \
 		$(BENCH_QUIET_FLAG) \
@@ -255,7 +268,7 @@ bench-run: orchestrator-build ## Run the orchestrator end-to-end (parity → loa
 		--target   "$(BENCH_TARGET)" \
 		$(if $(BENCH_NOTES),--notes "$(BENCH_NOTES)",)
 
-bench-validate: orchestrator-build ## Run parity-only across BENCH_GATEWAYS × BENCH_POLICIES
+bench-validate: .bench-ports-free orchestrator-build ## Run parity-only across BENCH_GATEWAYS × BENCH_POLICIES
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" \
 		$(BENCH_VERBOSE_FLAG) \
 		$(BENCH_QUIET_FLAG) \
@@ -321,7 +334,7 @@ bench-compare-runs: orchestrator-build ## Diff two runs (BENCH_COMPARE_A / BENCH
 # ---------------------------------------------------------------------------
 # Local mode (Phase 5 + 6)
 # ---------------------------------------------------------------------------
-perf-local-up: ## Bring up the local 3-host stack (loadgen+gateway+backend on 2 isolated nets)
+perf-local-up: .bench-ports-free ## Bring up the local 3-host stack (loadgen+gateway+backend on 2 isolated nets)
 	@echo "$(YELLOW)perf-local-up: starting 3-host topology$(NC)"
 	@echo "  compose : $(LOCAL_COMPOSE)"
 	@echo "  env-file: $(LOCAL_ENV_FILE)"
@@ -355,7 +368,7 @@ perf-local-cycle-smoke: ## End-to-end smoke (s01 over :9080 + s13 over :9443 if 
 	@GATEWAY_PROFILE=$(GATEWAY_PROFILE) GATEWAY_NAME=$(LOCAL_GATEWAY) \
 		bash scripts/perf-local-cycle-smoke.sh
 
-perf-local-run: orchestrator-build ## Drive the full matrix locally via bench (parity + load + aggregate)
+perf-local-run: .bench-ports-free orchestrator-build ## Drive the full matrix locally via bench (parity + load + aggregate)
 	@$(ORCH_BIN) --repo-root "$(CURDIR)" --run-id $(BENCH_RUN_ID) run \
 		$(BENCH_VERBOSE_FLAG) \
 		$(BENCH_QUIET_FLAG) \
@@ -375,9 +388,10 @@ perf-local-report: orchestrator-build ## Render HTML report for the most recent 
 		$(ORCH_BIN) --repo-root "$(CURDIR)" report --latest; \
 	fi
 
-perf-local-down: ## Stop and remove the local stack (containers, networks, volumes)
+perf-local-down: ## Stop and remove the smoke stack + any orphan per-cell stacks (gwb-*)
 	@echo "$(YELLOW)perf-local-down: tearing down local stack$(NC)"
 	@docker compose -f $(LOCAL_COMPOSE) --env-file $(LOCAL_ENV_FILE) down --remove-orphans -v
+	@bash scripts/bench-down-orphans.sh
 	@echo "$(GREEN)✓ stack down$(NC)"
 
 perf-local-clean: ## Delete the local-smoke output directory (reports/local-smoke/)
@@ -512,14 +526,14 @@ parity-check-all: ## Run parity across every profile p01..p12 against PARITY_TAR
 # ---------------------------------------------------------------------------
 PARITY_RUN_ID ?= $(RUN_ID)
 
-parity-gateway: ## Bring up <PARITY_GATEWAY>, run <PARITY_PROFILE>, tear down
+parity-gateway: .bench-ports-free ## Bring up <PARITY_GATEWAY>, run <PARITY_PROFILE>, tear down
 	@RUN_ID=$(PARITY_RUN_ID) bash scripts/parity-gateway.sh \
 		--gateway $(PARITY_GATEWAY) \
 		--profile $(PARITY_PROFILE) \
 		--output  reports/$(PARITY_RUN_ID)/parity/$(PARITY_GATEWAY)-$(PARITY_PROFILE).json \
 		--verbose
 
-parity-gateway-all: ## Run every profile p01..p12 end-to-end against <PARITY_GATEWAY>
+parity-gateway-all: .bench-ports-free ## Run every profile p01..p12 end-to-end against <PARITY_GATEWAY>
 	@echo "$(YELLOW)parity-gateway: sweeping p01..p12 against $(PARITY_GATEWAY)$(NC)"
 	@mkdir -p reports/$(PARITY_RUN_ID)/parity
 	@passed=0; failed=0; missing=0; \
@@ -573,7 +587,7 @@ LOAD_PROFILE   ?= p1-baseline
 LOAD_SEED      ?= 42
 LOAD_OPTS      ?=
 
-load-gateway: ## Single load cell end-to-end (k6 against one gateway × policy × scenario × load profile)
+load-gateway: .bench-ports-free ## Single load cell end-to-end (k6 against one gateway × policy × scenario × load profile)
 	@RUN_ID=$(LOAD_RUN_ID) bash scripts/load-gateway.sh \
 		--gateway  $(LOAD_GATEWAY) \
 		--policy   $(LOAD_POLICY) \
@@ -582,7 +596,7 @@ load-gateway: ## Single load cell end-to-end (k6 against one gateway × policy �
 		--seed     $(LOAD_SEED) \
 		$(LOAD_OPTS)
 
-load-gateway-load-sweep: ## Sweep all 4 load profiles for one (LOAD_GATEWAY, LOAD_POLICY, LOAD_SCENARIO)
+load-gateway-load-sweep: .bench-ports-free ## Sweep all 4 load profiles for one (LOAD_GATEWAY, LOAD_POLICY, LOAD_SCENARIO)
 	@echo "$(YELLOW)load-gateway-load-sweep: $(LOAD_GATEWAY) / $(LOAD_POLICY) / $(LOAD_SCENARIO) × {p1-baseline,p2-sustained,p3-ramp,p4-stress}$(NC)"
 	@passed=0; excluded=0; failed=0; \
 	 for lp in p1-baseline p2-sustained p3-ramp p4-stress; do \
@@ -621,7 +635,7 @@ LOAD_POLICIES  ?=
 LOAD_LOADS     ?= p1-baseline
 LOAD_STOP_ON_FAIL ?= 0
 
-load-sweep: ## Full matrix sweep: LOAD_GATEWAY × LOAD_POLICIES (default=all 12) × LOAD_LOADS (default=p1-baseline)
+load-sweep: .bench-ports-free ## Full matrix sweep: LOAD_GATEWAY × LOAD_POLICIES (default=all 12) × LOAD_LOADS (default=p1-baseline)
 	@orch_args="--gateway $(LOAD_GATEWAY) --loads $(LOAD_LOADS) --seed $(LOAD_SEED)"; \
 	 if [ -n "$(LOAD_POLICIES)" ]; then orch_args="$$orch_args --policies $(LOAD_POLICIES)"; fi; \
 	 if [ "$(LOAD_STOP_ON_FAIL)" = "1" ]; then orch_args="$$orch_args --stop-on-fail"; fi; \

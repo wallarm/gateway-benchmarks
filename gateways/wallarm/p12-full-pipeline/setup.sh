@@ -42,7 +42,7 @@ feature_missing() {
 
 [[ -f "${JWT_SECRET_FILE}" ]] || fail "JWT secret file not found: ${JWT_SECRET_FILE}"
 [[ -x "${JWT_GEN_SCRIPT}" ]] || fail "JWT generator not executable: ${JWT_GEN_SCRIPT}"
-JWT_SECRET="$(tr -d '\n' < "${JWT_SECRET_FILE}")"
+JWT_SECRET="$(tr -d '\r\n' < "${JWT_SECRET_FILE}")"
 
 # -----------------------------------------------------------------------------
 # 1. Wait for the Admin API

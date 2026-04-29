@@ -77,7 +77,7 @@ done
 #    of drift (forgotten paste-refresh after a rotation) by
 #    construction — but we still sanity-check the reference itself.
 # -----------------------------------------------------------------------------
-REFERENCE_KID=$(tr -d '\n' < "${KID_FILE}")
+REFERENCE_KID=$(tr -d '\r\n' < "${KID_FILE}")
 JWKS_KID=$(jq -r '.keys[0].kid' "${JWKS_FILE}")
 
 [[ -n "${REFERENCE_KID}" && "${REFERENCE_KID}" != "null" ]] \

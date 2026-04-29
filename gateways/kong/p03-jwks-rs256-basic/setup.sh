@@ -84,7 +84,7 @@ done
 #    "no credential found" — which matches probe 3 by accident but
 #    would silently break probe 2 (valid-kid RS256 → 200).
 # -----------------------------------------------------------------------------
-REFERENCE_KID=$(tr -d '\n' < "${REFERENCE_KID_FILE}")
+REFERENCE_KID=$(tr -d '\r\n' < "${REFERENCE_KID_FILE}")
 [[ -n "${REFERENCE_KID}" ]] || fail "reference kid file is empty: ${REFERENCE_KID_FILE}"
 
 # Pull out any second line of the reference PEM body — it is a

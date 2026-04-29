@@ -25,7 +25,7 @@ REF="${REPO_ROOT}/gateways/_reference"
 SECRET_FILE="${REF}/jwt/secret.txt"
 PAYLOAD_FILE="${REF}/jwt/payload-template.json"
 
-: "${JWT_EXPIRY_S:=3600}"
+: "${JWT_EXPIRY_S:=86400}"
 : "${JWT_KID:=bench-hs256-2026}"
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,7 @@ esac
 [[ -f "${SECRET_FILE}"  ]] || die "secret not found at ${SECRET_FILE}"
 [[ -f "${PAYLOAD_FILE}" ]] || die "payload template not found at ${PAYLOAD_FILE}"
 
-SECRET="$(tr -d '\n' < "${SECRET_FILE}")"
+SECRET="$(tr -d '\r\n' < "${SECRET_FILE}")"
 [[ -n "${SECRET}" ]] || die "secret file is empty"
 
 # -----------------------------------------------------------------------------

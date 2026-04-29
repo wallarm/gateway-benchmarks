@@ -190,6 +190,29 @@ fi
 
 PHASE="k6-image"
 docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
+
+# -----------------------------------------------------------------------------
+# Warmup phase: 5 seconds of traffic to prime JIT and connection pools.
+# This prevents the 'UNSTABLE' flag caused by cold-start latency jitter
+# in the first few seconds of a fresh container run.
+# -----------------------------------------------------------------------------
+PHASE="k6-warmup"
+echo "Starting 5s warmup for ${GATEWAY}/${POLICY}..." >&2
+docker run --rm \
+	-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \
+	-e "BENCH_TARGET_URL_HTTPS=${GATEWAY_TARGET_HTTPS}" \
+	-e "BENCH_JWT_VALID=${BENCH_JWT_VALID}" \
+	-e "BENCH_JWT_VALID_RS256=${BENCH_JWT_VALID_RS256}" \
+	"${K6_IMAGE}" run - <<EOF >/dev/null 2>&1 || true
+import http from 'k6/http';
+export const options = { vus: 10, duration: '5s' };
+export default function() {
+    const headers = {};
+    if (__ENV.BENCH_JWT_VALID) { headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID; }
+    http.get(__ENV.BENCH_TARGET_URL + '/anything', { headers });
+}
+EOF
+
 PHASE="k6-run"
 docker run --rm \
 	--user "$(id -u):$(id -g)" \

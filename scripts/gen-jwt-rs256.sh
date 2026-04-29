@@ -38,7 +38,7 @@ PRIVATE_KEY_FILE="${PRIVATE_KEY_FILE:-${REF}/jwks-rs256/private.pem}"
 KID_FILE="${KID_FILE:-${REF}/jwks-rs256/kid.txt}"
 PAYLOAD_FILE="${PAYLOAD_FILE:-${REF}/jwt/payload-template.json}"
 
-: "${JWT_EXPIRY_S:=3600}"
+: "${JWT_EXPIRY_S:=86400}"
 : "${JWT_UNKNOWN_KID_VALUE:=unknown-kid-2026}"
 
 # -----------------------------------------------------------------------------
@@ -77,7 +77,7 @@ esac
 [[ -f "${KID_FILE}"         ]] || die "kid file not found at ${KID_FILE}"
 [[ -f "${PAYLOAD_FILE}"     ]] || die "payload template not found at ${PAYLOAD_FILE}"
 
-CANONICAL_KID="$(tr -d '\n' < "${KID_FILE}")"
+CANONICAL_KID="$(tr -d '\r\n' < "${KID_FILE}")"
 [[ -n "${CANONICAL_KID}" ]] || die "kid file is empty"
 
 # -----------------------------------------------------------------------------

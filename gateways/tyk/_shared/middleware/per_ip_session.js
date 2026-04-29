@@ -92,9 +92,10 @@ per_ip_session.NewProcessRequest(function (request, session, config) {
             }
         };
 
-        // Synchronous round-trip to the local Tyk admin API. The
-        // admin API listens on the same :8080 socket as the data
-        // plane (Classic mode) and is gated by X-Tyk-Authorization.
+        // Synchronous round-trip to the local Tyk admin API. In this
+        // harness the admin API shares the same :9080 listener as the
+        // data plane (Classic mode) and is gated by
+        // X-Tyk-Authorization.
         // Notes on the request shape:
         //   * the helper is `TykMakeHttpRequest` (lowercase 'ttp')
         //     — the all-caps spelling that the public docs sometimes
@@ -105,7 +106,7 @@ per_ip_session.NewProcessRequest(function (request, session, config) {
         //     gateway listener.
         var resp = TykMakeHttpRequest(JSON.stringify({
             Method:   "POST",
-            Domain:   "http://127.0.0.1:8080",
+            Domain:   "http://127.0.0.1:9080",
             Resource: "/tyk/keys/" + key,
             Body:     JSON.stringify(sess),
             Headers: {

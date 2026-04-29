@@ -73,7 +73,7 @@ say "  ✓ drift guard: column-local lualib (jwt_rs256_verify + jwt_rs256_jwks) 
 # 2. Drift guard B: reference JWKS / PEM / kid bundle internally
 #    consistent. Same check as the nginx column.
 # -----------------------------------------------------------------------------
-REFERENCE_KID=$(tr -d '\n' < "${KID_FILE}")
+REFERENCE_KID=$(tr -d '\r\n' < "${KID_FILE}")
 JWKS_KID=$(jq -r '.keys[0].kid' "${JWKS_FILE}")
 
 [[ -n "${REFERENCE_KID}" && "${REFERENCE_KID}" != "null" ]] \

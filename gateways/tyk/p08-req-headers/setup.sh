@@ -23,7 +23,7 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e 'any(.[]; .api_id == "bench" and (.version_data.versions.Default.extended_paths.transform_headers | length) == 1)' \
@@ -32,12 +32,12 @@ printf '%s' "${api_list}" \
 say "  ✓ /tyk/apis registers api_id=bench with one transform_headers entry"
 
 say "smoke: GET /headers, expect upstream to see X-Bench-In=1"
-saw=$(curl -sS "${DATA_URL}/headers" | jq -r '.headers["X-Bench-In"][0] // empty' || true)
+saw=$(curl --max-time 5 -sS "${DATA_URL}/headers" | jq -r '.headers["X-Bench-In"][0] // empty' || true)
 [[ "${saw}" == "1" ]] || fail "upstream did not see X-Bench-In=1 (saw: '${saw}')"
 say "  ✓ upstream sees X-Bench-In=1"
 
 say "smoke: check X-Forwarded-For handling (Tyk's reverse proxy unconditionally re-stamps it)"
-xff=$(curl -sS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers" \
+xff=$(curl --max-time 5 -sS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers" \
         | jq -r '.headers["X-Forwarded-For"] // empty' || true)
 say "  observed XFF on backend: ${xff}"
 

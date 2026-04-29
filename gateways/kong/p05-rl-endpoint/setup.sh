@@ -15,7 +15,7 @@ for _ in $(seq 1 30); do
 done
 
 for p in /anything/free /anything/limited; do
-    code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}${p}")
+    code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}${p}")
     [[ "${code}" == "200" ]] || fail "expected 200 on ${p}, got ${code}"
 done
 

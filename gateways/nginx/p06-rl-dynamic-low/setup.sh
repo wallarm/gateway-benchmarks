@@ -8,7 +8,7 @@
 #
 # The real per-IP RL attestation is delivered by
 # scripts/parity-attestation.sh::run_burst_probe with
-# `curl --parallel -K <config>` (see NOTES.md for why a
+# `curl --max-time 5 --parallel -K <config>` (see NOTES.md for why a
 # setup-time xargs-based sanity is unreliable here).
 #
 # Environment:
@@ -31,8 +31,8 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET ${DATA_URL}/anything (X-Real-IP: 10.0.0.1, below limit)"
-body=$(curl -fsS -H 'X-Real-IP: 10.0.0.1' "${DATA_URL}/anything") \
-    || fail "smoke /anything: curl failed"
+body=$(curl --max-time 5 -fsS -H 'X-Real-IP: 10.0.0.1' "${DATA_URL}/anything") \
+    || fail "smoke /anything: curl --max-time 5 failed"
 jq -e '.method == "GET"' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke /anything: .method not GET"; }
 

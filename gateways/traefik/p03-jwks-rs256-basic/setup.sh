@@ -115,7 +115,7 @@ done
 #    (fixtures/p03-jwks-rs256-basic.jsonl).
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything without Authorization -> expect 401"
-missing_code=$(curl -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
+missing_code=$(curl --max-time 5 -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
     "${DATA_URL}/anything" || true)
 [[ "${missing_code}" == "401" ]] \
     || { cat /tmp/traefik-jwks.out >&2
@@ -123,7 +123,7 @@ missing_code=$(curl -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
 
 valid_token="$("${RS256_GEN_SCRIPT}" valid)"
 say "smoke: GET ${DATA_URL}/anything with valid RS256 token (kid=${REFERENCE_KID}) -> expect 200"
-valid_code=$(curl -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
+valid_code=$(curl --max-time 5 -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${valid_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${valid_code}" == "200" ]] \
@@ -132,7 +132,7 @@ valid_code=$(curl -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
 
 unknown_token="$("${RS256_GEN_SCRIPT}" unknown-kid)"
 say "smoke: GET ${DATA_URL}/anything with RS256 token carrying unknown kid -> expect 401"
-unknown_code=$(curl -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
+unknown_code=$(curl --max-time 5 -s -o /tmp/traefik-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${unknown_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${unknown_code}" == "401" ]] \

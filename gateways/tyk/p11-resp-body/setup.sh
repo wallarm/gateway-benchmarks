@@ -28,7 +28,7 @@ say "  ✓ /hello reports status=pass"
 # template file. The path-list assertion is intentionally tight — if
 # Tyk silently dropped one of the entries (e.g. via path-pattern
 # rejection), the count check below catches it.
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e '
@@ -45,7 +45,7 @@ printf '%s' "${api_list}" \
 say "  ✓ /tyk/apis registers bench with transform_response on GET+POST -> shared template"
 
 say "smoke: GET /anything -> upstream JSON gets bench.injected and loses origin"
-out=$(curl -sS "${DATA_URL}/anything" || true)
+out=$(curl --max-time 5 -sS "${DATA_URL}/anything" || true)
 saw_inj=$(printf '%s' "${out}" | jq -r '.bench.injected // empty')
 saw_org=$(printf '%s' "${out}" | jq -r '.origin // empty')
 [[ "${saw_inj}" == "true" ]] || fail "GET response did not have bench.injected=true (saw: '${saw_inj}')"
@@ -53,7 +53,7 @@ saw_org=$(printf '%s' "${out}" | jq -r '.origin // empty')
 say "  ✓ GET /anything: bench.injected=true present, origin absent"
 
 say "smoke: POST /anything -> response also rewritten"
-out=$(curl -sS -H 'Content-Type: application/json' \
+out=$(curl --max-time 5 -sS -H 'Content-Type: application/json' \
             --data '{"msg":"smoke"}' \
             "${DATA_URL}/anything" || true)
 saw_inj=$(printf '%s' "${out}" | jq -r '.bench.injected // empty')

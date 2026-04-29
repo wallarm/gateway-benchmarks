@@ -28,8 +28,8 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET ${DATA_URL}/headers with X-Forwarded-For: 198.51.100.7"
-body=$(curl -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
-    || fail "smoke: curl failed"
+body=$(curl --max-time 5 -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
+    || fail "smoke: curl --max-time 5 failed"
 
 # go-httpbin echoes headers as {"headers": {"X-Foo": ["v", "v"]}}.
 # A single-hop nginx forward gives us arrays of length 1.

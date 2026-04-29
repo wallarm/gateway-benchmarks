@@ -29,13 +29,13 @@ fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 # -----------------------------------------------------------------------------
 say "wallarm/p01-vanilla: bootstrap via ${ADMIN_URL}"
 for _ in $(seq 1 60); do
-    if curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
+    if curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
         say "admin API ready"
         break
     fi
     sleep 1
 done
-curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
+curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
     || fail "admin API did not come up at ${ADMIN_URL}"
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,7 @@ create_service() {
         '{name:$name, base_path:$bp, target:{endpoint:{url:$backend}}}')
 
     local http_code
-    http_code=$(curl -sS -o /tmp/wallarm-setup.out -w '%{http_code}' \
+    http_code=$(curl --max-time 5 -sS -o /tmp/wallarm-setup.out -w '%{http_code}' \
         -X POST "${ADMIN_URL}/services" \
         -H "Content-Type: application/json" \
         -d "${body}" || true)
@@ -74,7 +74,7 @@ create_service() {
 
     # Attach a catch-all route so that /<prefix>/<suffix> passes through.
     local route_code
-    route_code=$(curl -sS -o /tmp/wallarm-setup.out -w '%{http_code}' \
+    route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-setup.out -w '%{http_code}' \
         -X POST "${ADMIN_URL}/services/${name}/routes" \
         -H "Content-Type: application/json" \
         -d '{"id":"catchall","condition":{"path":["/**"]}}' || true)
@@ -97,7 +97,7 @@ create_service "bench-response-headers" "/response-headers"
 # 3. Smoke — confirm the data plane proxies at least one endpoint.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything"
-smoke=$(curl -fsS "${DATA_URL}/anything" 2>&1) || {
+smoke=$(curl --max-time 5 -fsS "${DATA_URL}/anything" 2>&1) || {
     printf '%s\n' "${smoke}" >&2
     fail "smoke request failed"
 }

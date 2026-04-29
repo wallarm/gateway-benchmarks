@@ -29,8 +29,8 @@ done
 # the Lua filter, client sees bench.injected=true and no origin.
 # -----------------------------------------------------------------------------
 say "smoke A: GET /anything -> expect bench.injected=true + origin absent"
-body=$(curl -fsS "${DATA_URL}/anything") \
-    || fail "curl /anything failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/anything") \
+    || fail "curl --max-time 5 /anything failed"
 
 jq -e '.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "bench.injected: expected true, missing"; }
@@ -44,9 +44,9 @@ jq -e '.origin == null' <<<"${body}" >/dev/null \
 # origin must still be dropped and bench.injected still added.
 # -----------------------------------------------------------------------------
 say "smoke B: POST /anything {msg:bench} -> expect bench.injected + origin absent + json.msg=bench"
-body=$(curl -fsS -H 'Content-Type: application/json' \
+body=$(curl --max-time 5 -fsS -H 'Content-Type: application/json' \
     -d '{"msg":"bench"}' "${DATA_URL}/anything") \
-    || fail "curl POST /anything failed"
+    || fail "curl --max-time 5 POST /anything failed"
 
 jq -e '.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "bench.injected (POST): missing"; }

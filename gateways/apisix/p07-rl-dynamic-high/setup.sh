@@ -17,7 +17,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET /anything with a fresh X-Real-IP below 100 rps -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
     -H 'X-Real-IP: 10.5.0.254' \
     "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] || fail "single per-IP below-limit request: expected 200, got ${code}"

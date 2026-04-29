@@ -52,7 +52,7 @@ done
 # 2. Smoke A — no Authorization header should be rejected 401.
 # -----------------------------------------------------------------------------
 say "smoke A: GET /anything without Authorization -> expect 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 [[ "${code}" == "401" ]] || fail "expected 401 with no Authorization, got ${code}"
 
 # -----------------------------------------------------------------------------
@@ -63,7 +63,7 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 # -----------------------------------------------------------------------------
 say "smoke B: GET /anything with a fresh valid token -> expect 200"
 token=$("${REPO_ROOT}/scripts/gen-jwt.sh" valid)
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer ${token}" \
     "${DATA_URL}/anything")
 [[ "${code}" == "200" ]] || fail "expected 200 with valid token, got ${code}"

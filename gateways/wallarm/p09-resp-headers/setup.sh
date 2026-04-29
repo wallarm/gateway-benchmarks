@@ -35,13 +35,13 @@ fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 # -----------------------------------------------------------------------------
 say "wallarm/p09-resp-headers: bootstrap via ${ADMIN_URL}"
 for _ in $(seq 1 60); do
-    if curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
+    if curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
         say "admin API ready"
         break
     fi
     sleep 1
 done
-curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
+curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
     || fail "admin API did not come up at ${ADMIN_URL}"
 
 # -----------------------------------------------------------------------------
@@ -69,7 +69,7 @@ create_service_with_lua_resp() {
         '{name:$name, base_path:$bp, target:{endpoint:{url:$backend}}}')
 
     local svc_code
-    svc_code=$(curl -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
+    svc_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
         -X POST "${ADMIN_URL}/services" \
         -H "Content-Type: application/json" \
         -d "${svc_body}" || true)
@@ -81,7 +81,7 @@ create_service_with_lua_resp() {
     esac
 
     local route_code
-    route_code=$(curl -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
+    route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
         -X POST "${ADMIN_URL}/services/${name}/routes" \
         -H "Content-Type: application/json" \
         -d '{"id":"catchall","condition":{"path":["/**"]}}' || true)
@@ -104,7 +104,7 @@ create_service_with_lua_resp() {
         }')
 
     local flow_code
-    flow_code=$(curl -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
+    flow_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p08.out -w '%{http_code}' \
         -X POST "${ADMIN_URL}/services/${name}/flow" \
         -H "Content-Type: application/json" \
         -d "${flow_body}" || true)
@@ -136,12 +136,12 @@ create_service_with_lua_resp \
 # 5. Smoke — confirm the response-flow policy fired on both paths
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/get"
-hdr=$(curl -sS -o /dev/null -D - "${DATA_URL}/get" | tr -d '\r')
+hdr=$(curl --max-time 5 -sS -o /dev/null -D - "${DATA_URL}/get" | tr -d '\r')
 grep -qi '^x-bench-out: 1' <<< "${hdr}" \
     || { printf '%s\n' "${hdr}" >&2; fail "smoke: X-Bench-Out not found on /get"; }
 
 say "smoke: GET ${DATA_URL}/response-headers?Server=dropme"
-hdr=$(curl -sS -o /dev/null -D - "${DATA_URL}/response-headers?Server=dropme" | tr -d '\r')
+hdr=$(curl --max-time 5 -sS -o /dev/null -D - "${DATA_URL}/response-headers?Server=dropme" | tr -d '\r')
 grep -qi '^x-bench-out: 1' <<< "${hdr}" \
     || { printf '%s\n' "${hdr}" >&2; fail "smoke: X-Bench-Out not found on /response-headers"; }
 grep -qi '^server:'        <<< "${hdr}" \

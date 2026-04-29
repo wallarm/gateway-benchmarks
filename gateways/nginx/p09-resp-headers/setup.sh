@@ -29,8 +29,8 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: HEAD ${DATA_URL}/get — checking response headers"
-headers=$(curl -sSI "${DATA_URL}/get") \
-    || fail "smoke: curl failed"
+headers=$(curl --max-time 5 -sSI "${DATA_URL}/get") \
+    || fail "smoke: curl --max-time 5 failed"
 
 grep -qi '^x-bench-out:\s*1' <<<"${headers}" \
     || { printf '%s\n' "${headers}" >&2; fail "smoke: X-Bench-Out not seen in response"; }

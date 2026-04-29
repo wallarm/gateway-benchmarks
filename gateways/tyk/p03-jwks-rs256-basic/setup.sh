@@ -83,7 +83,7 @@ say "  ✓ /hello reports status=pass"
 #    it is silently skipped (error only in stderr). The admin API
 #    is the authoritative way to confirm the definition made it in.
 # -----------------------------------------------------------------------------
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 
 if ! printf '%s' "${api_list}" \
@@ -162,13 +162,13 @@ assert_4xx() {
 }
 
 say "smoke: GET ${DATA_URL}/anything without Authorization"
-missing_code=$(curl -s -o "${SMOKE_OUT}" -w '%{http_code}' \
+missing_code=$(curl --max-time 5 -s -o "${SMOKE_OUT}" -w '%{http_code}' \
     "${DATA_URL}/anything" || true)
 assert_4xx "${missing_code}" "no-auth"
 
 valid_token="$("${RS256_GEN_SCRIPT}" valid)"
 say "smoke: GET ${DATA_URL}/anything with valid RS256 token (kid=${reference_kid})"
-valid_code=$(curl -s -o "${SMOKE_OUT}" -w '%{http_code}' \
+valid_code=$(curl --max-time 5 -s -o "${SMOKE_OUT}" -w '%{http_code}' \
     -H "Authorization: Bearer ${valid_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${valid_code}" == "200" ]] \
@@ -177,7 +177,7 @@ valid_code=$(curl -s -o "${SMOKE_OUT}" -w '%{http_code}' \
 
 unknown_token="$("${RS256_GEN_SCRIPT}" unknown-kid)"
 say "smoke: GET ${DATA_URL}/anything with RS256 token carrying unknown kid"
-unknown_code=$(curl -s -o "${SMOKE_OUT}" -w '%{http_code}' \
+unknown_code=$(curl --max-time 5 -s -o "${SMOKE_OUT}" -w '%{http_code}' \
     -H "Authorization: Bearer ${unknown_token}" \
     "${DATA_URL}/anything" || true)
 assert_4xx "${unknown_code}" "unknown-kid"

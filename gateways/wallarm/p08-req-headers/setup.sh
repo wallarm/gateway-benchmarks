@@ -55,13 +55,13 @@ fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 # -----------------------------------------------------------------------------
 say "wallarm/p08-req-headers: bootstrap via ${ADMIN_URL}"
 for _ in $(seq 1 60); do
-    if curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
+    if curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
         say "admin API ready"
         break
     fi
     sleep 1
 done
-curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
+curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
     || fail "admin API did not come up at ${ADMIN_URL}"
 
 # -----------------------------------------------------------------------------
@@ -73,7 +73,7 @@ service_body=$(jq -cn \
     --arg backend "${SERVICE_TARGET_URL}" \
     '{name:$name, base_path:$bp, target:{endpoint:{url:$backend}}}')
 
-http_code=$(curl -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
+http_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services" \
     -H "Content-Type: application/json" \
     -d "${service_body}" || true)
@@ -85,7 +85,7 @@ case "${http_code}" in
              fail "service create returned ${http_code}";;
 esac
 
-route_code=$(curl -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
+route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/routes" \
     -H "Content-Type: application/json" \
     -d '{"id":"catchall","condition":{"path":["/**"]}}' || true)
@@ -116,7 +116,7 @@ flow_body=$(jq -cn \
         }]
     }')
 
-flow_code=$(curl -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
+flow_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p07.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/flow" \
     -H "Content-Type: application/json" \
     -d "${flow_body}" || true)
@@ -130,7 +130,7 @@ esac
 # 4. Smoke — confirm the policy actually took effect
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/headers  (with X-Forwarded-For: 1.2.3.4)"
-smoke=$(curl -sS -H 'X-Forwarded-For: 1.2.3.4' "${DATA_URL}/headers")
+smoke=$(curl --max-time 5 -sS -H 'X-Forwarded-For: 1.2.3.4' "${DATA_URL}/headers")
 jq -c '{smoke:"ok", bench_in:.headers."X-Bench-In", xff:.headers."X-Forwarded-For"}' <<< "${smoke}" >&2 || {
     printf '%s\n' "${smoke}" >&2
     fail "smoke: echo did not parse as JSON"

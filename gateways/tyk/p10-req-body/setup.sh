@@ -34,7 +34,7 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e '
@@ -47,7 +47,7 @@ printf '%s' "${api_list}" \
 say "  ✓ /tyk/apis registers api_id=bench with native request-body transform (POST only)"
 
 say "smoke: POST /anything with secret -> upstream sees bench.injected and no secret"
-out=$(curl -sS -H 'Content-Type: application/json' \
+out=$(curl --max-time 5 -sS -H 'Content-Type: application/json' \
             --data '{"msg":"smoke","secret":"x"}' \
             "${DATA_URL}/anything" || true)
 saw_inj=$(printf '%s' "${out}" | jq -r '.json.bench.injected // empty')

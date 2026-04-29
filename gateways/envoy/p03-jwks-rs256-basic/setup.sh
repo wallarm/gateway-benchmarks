@@ -93,14 +93,14 @@ say "  ✓ drift guard: inline JWKS is in sync with ${JWKS_FILE##*/} (kid=${REFE
 #    decoupled.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything without Authorization"
-missing_code=$(curl -s -o /tmp/envoy-jwks.out -w '%{http_code}' "${DATA_URL}/anything" || true)
+missing_code=$(curl --max-time 5 -s -o /tmp/envoy-jwks.out -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${missing_code}" == "401" ]] \
     || { cat /tmp/envoy-jwks.out >&2
          fail "smoke: expected 401 without token, got ${missing_code}"; }
 
 valid_token="$("${RS256_GEN_SCRIPT}" valid)"
 say "smoke: GET ${DATA_URL}/anything with valid RS256 token (kid=${REFERENCE_KID})"
-valid_code=$(curl -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
+valid_code=$(curl --max-time 5 -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${valid_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${valid_code}" == "200" ]] \
@@ -109,7 +109,7 @@ valid_code=$(curl -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
 
 unknown_token="$("${RS256_GEN_SCRIPT}" unknown-kid)"
 say "smoke: GET ${DATA_URL}/anything with RS256 token carrying unknown kid"
-unknown_code=$(curl -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
+unknown_code=$(curl --max-time 5 -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${unknown_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${unknown_code}" == "401" ]] \
@@ -119,7 +119,7 @@ unknown_code=$(curl -s -o /tmp/envoy-jwks.out -w '%{http_code}' \
 # envoy exposes JWT counters on its admin port; dump the two we
 # care about so operators eyeballing the run log get a compact
 # indicator that the filter actually fired.
-jwt_stats=$(curl -fsS "${ADMIN_URL}/stats?filter=jwt_authn" 2>/dev/null | head -20 || true)
+jwt_stats=$(curl --max-time 5 -fsS "${ADMIN_URL}/stats?filter=jwt_authn" 2>/dev/null | head -20 || true)
 if [[ -n "${jwt_stats}" ]]; then
     say "jwt_authn stats snapshot:"
     printf '%s\n' "${jwt_stats}" | sed 's/^/    /' >&2

@@ -24,7 +24,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: POST with secret -> expect injected=true, secret dropped"
-body=$(curl -sS -X POST \
+body=$(curl --max-time 5 -sS -X POST \
     -H 'Content-Type: application/json' \
     -d '{"msg":"hello","secret":"please-drop-me"}' \
     "${DATA_URL}/anything")

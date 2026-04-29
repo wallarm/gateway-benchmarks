@@ -32,13 +32,13 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" | jq -e 'any(.[]; .api_id == "bench" and .enable_jwt == true)' >/dev/null 2>&1 \
     || fail "API definition 'bench' missing or JWT not enabled — check docker logs gwb-tyk for JSON parse errors"
 say "  ✓ /tyk/apis registers api_id=bench with enable_jwt=true"
 
-policy_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+policy_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                   "${DATA_URL}/tyk/policies" 2>/dev/null || true)
 printf '%s' "${policy_list}" | jq -e '.[] | select(.id == "bench-default-policy") | .access_rights.bench != null' >/dev/null 2>&1 \
     || fail "bench-default-policy is missing 'bench' in access_rights — check _policies/policies.json"

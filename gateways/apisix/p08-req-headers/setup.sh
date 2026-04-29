@@ -17,12 +17,12 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke A: backend should see X-Bench-In: 1 on /headers"
-body=$(curl -sS "${DATA_URL}/headers" || true)
+body=$(curl --max-time 5 -sS "${DATA_URL}/headers" || true)
 printf '%s' "${body}" | grep -q '"X-Bench-In"' \
     || fail "backend did not receive X-Bench-In header; got:\n${body}"
 
 say "smoke B: backend should NOT see X-Forwarded-For even if the client sent one"
-body=$(curl -sS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers" || true)
+body=$(curl --max-time 5 -sS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers" || true)
 printf '%s' "${body}" | grep -q '"X-Forwarded-For"' \
     && fail "backend unexpectedly saw X-Forwarded-For; got:\n${body}" \
     || true

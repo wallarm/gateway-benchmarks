@@ -39,7 +39,7 @@ tmp_body=$(mktemp)
 tmp_hdr=$(mktemp)
 trap 'rm -f "${tmp_body}" "${tmp_hdr}"' EXIT
 
-code=$(curl -sS -o "${tmp_body}" -D "${tmp_hdr}" -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o "${tmp_body}" -D "${tmp_hdr}" -w '%{http_code}' \
     -X POST \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \

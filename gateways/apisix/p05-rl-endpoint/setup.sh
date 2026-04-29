@@ -23,11 +23,11 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET /anything/free -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/free" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/free" || true)
 [[ "${code}" == "200" ]] || fail "single free request: expected 200, got ${code}"
 
 say "smoke: GET /anything/limited (below 100 rps) -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
 [[ "${code}" == "200" ]] || fail "single limited-below-limit request: expected 200, got ${code}"
 
 say "apisix/p05-rl-endpoint ready"

@@ -23,7 +23,7 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e 'any(.[]; .api_id == "bench" and (.version_data.versions.Default.extended_paths.transform_response_headers | length) == 1)' \
@@ -32,7 +32,7 @@ printf '%s' "${api_list}" \
 say "  ✓ /tyk/apis registers api_id=bench with one transform_response_headers entry"
 
 say "smoke: GET /get expects X-Bench-Out=1 and no Server header"
-hdrs=$(curl -sS -D - -o /dev/null "${DATA_URL}/get" || true)
+hdrs=$(curl --max-time 5 -sS -D - -o /dev/null "${DATA_URL}/get" || true)
 echo "${hdrs}" | grep -i '^X-Bench-Out:' >/dev/null \
     || fail "client did not see X-Bench-Out header"
 echo "${hdrs}" | grep -i '^Server:' >/dev/null \

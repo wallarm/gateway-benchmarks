@@ -41,8 +41,8 @@ done
 #    probe.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything"
-body=$(curl -fsS "${DATA_URL}/anything") \
-    || fail "smoke /anything: curl failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/anything") \
+    || fail "smoke /anything: curl --max-time 5 failed"
 
 jq -e '.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke: \$.bench.injected missing or != true"; }

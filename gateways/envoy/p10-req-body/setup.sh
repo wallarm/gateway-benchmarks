@@ -29,10 +29,10 @@ done
 # added and secret stripped in what the backend echoes.
 # -----------------------------------------------------------------------------
 say "smoke A: POST /anything {msg, secret, bench.from_client} -> expect bench.injected + secret absent"
-body=$(curl -fsS -H 'Content-Type: application/json' \
+body=$(curl --max-time 5 -fsS -H 'Content-Type: application/json' \
     -d '{"msg":"hello","secret":"please-drop-me","bench":{"from_client":true}}' \
     "${DATA_URL}/anything") \
-    || fail "curl POST /anything failed"
+    || fail "curl --max-time 5 POST /anything failed"
 
 jq -e '.json.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "bench.injected: expected true, missing"; }
@@ -47,10 +47,10 @@ jq -e '.json.secret == null' <<<"${body}" >/dev/null \
 # Smoke B: POST with empty body {} — still gets bench.injected.
 # -----------------------------------------------------------------------------
 say "smoke B: POST /anything '{}' -> expect bench.injected added"
-body=$(curl -fsS -H 'Content-Type: application/json' \
+body=$(curl --max-time 5 -fsS -H 'Content-Type: application/json' \
     -d '{}' \
     "${DATA_URL}/anything") \
-    || fail "curl POST /anything (empty body) failed"
+    || fail "curl --max-time 5 POST /anything (empty body) failed"
 
 jq -e '.json.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "empty-body bench.injected: missing"; }

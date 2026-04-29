@@ -32,7 +32,7 @@ done
 # 2. Smoke — one below-limit GET must succeed.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything (below 1000 rps limit)"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] \
     || fail "smoke /anything: expected 200, got ${code}"
 

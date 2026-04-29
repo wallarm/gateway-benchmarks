@@ -36,14 +36,14 @@ done
 # 2. Smoke: /anything/limited (below limit) and /anything/free (unrestricted)
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything/limited (below 100 rps)"
-body=$(curl -fsS "${DATA_URL}/anything/limited") \
-    || fail "smoke /anything/limited: curl failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/anything/limited") \
+    || fail "smoke /anything/limited: curl --max-time 5 failed"
 jq -e '.method == "GET"' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke /anything/limited: .method not GET"; }
 
 say "smoke: GET ${DATA_URL}/anything/free (unrestricted)"
-body=$(curl -fsS "${DATA_URL}/anything/free") \
-    || fail "smoke /anything/free: curl failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/anything/free") \
+    || fail "smoke /anything/free: curl --max-time 5 failed"
 jq -e '.method == "GET"' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke /anything/free: .method not GET"; }
 

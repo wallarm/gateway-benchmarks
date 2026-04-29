@@ -255,7 +255,11 @@ for i in $(seq 0 $((runner_count - 1))); do
 	backend_private_ip="$(printf '%s' "${clusters_json}" | jq -r ".[$i].backend_private_ip")"
 	shard_id="$(printf '%02d' "${i}")"
 	shard_run_id="${RUN_ID}-shard-${shard_id}"
-	remote_cmd="cd /opt/gateway-benchmarks && chmod +x ${REMOTE_BIN} scripts/aws-clean-cell.sh && BENCH_CELL_RUNNER=scripts/aws-clean-cell.sh AWS_GATEWAY_SSH='ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=120 ubuntu@${gateway_private_ip}' AWS_GATEWAY_PRIVATE_IP='${gateway_private_ip}' AWS_BACKEND_PRIVATE_IP='${backend_private_ip}' ./${REMOTE_BIN} --repo-root /opt/gateway-benchmarks --run-id ${shard_run_id} run --matrix canonical --gateways '${GATEWAYS}' --loads '${LOADS}' --seed '${SEED}' --reps '${REPS}' --mode aws --shard-index ${i} --shard-count ${runner_count} --parallel '${PARALLEL}' --skip-parity --disable-native-stats --progress --progress-interval '${PROGRESS_INTERVAL}' --allow-failed-cells --notes \"${NOTES} shard $((i + 1))/${runner_count}\""
+	remote_env=""
+	if [[ -n "${WALLARM_IMAGE:-}" ]]; then remote_env+="WALLARM_IMAGE='${WALLARM_IMAGE}' "; fi
+	if [[ -n "${GATEWAY_IMAGE:-}" ]]; then remote_env+="GATEWAY_IMAGE='${GATEWAY_IMAGE}' "; fi
+	
+	remote_cmd="cd /opt/gateway-benchmarks && chmod +x ${REMOTE_BIN} scripts/aws-clean-cell.sh && ${remote_env}BENCH_CELL_RUNNER=scripts/aws-clean-cell.sh AWS_GATEWAY_SSH='ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=120 ubuntu@${gateway_private_ip}' AWS_GATEWAY_PRIVATE_IP='${gateway_private_ip}' AWS_BACKEND_PRIVATE_IP='${backend_private_ip}' ./${REMOTE_BIN} --repo-root /opt/gateway-benchmarks --run-id ${shard_run_id} run --matrix canonical --gateways '${GATEWAYS}' --loads '${LOADS}' --seed '${SEED}' --reps '${REPS}' --mode aws --shard-index ${i} --shard-count ${runner_count} --parallel '${PARALLEL}' --skip-parity --disable-native-stats --progress --progress-interval '${PROGRESS_INTERVAL}' --allow-failed-cells --notes \"${NOTES} shard $((i + 1))/${runner_count}\""
 	(
 		rc=0
 		for attempt in 1 2; do

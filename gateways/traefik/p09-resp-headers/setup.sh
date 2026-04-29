@@ -38,8 +38,8 @@ done
 #    in via /response-headers?Server=...).
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/response-headers?Server=should-be-dropped"
-headers_dump=$(curl -sSI "${DATA_URL}/response-headers?Server=should-be-dropped" \
-    || fail "smoke /response-headers: curl failed")
+headers_dump=$(curl --max-time 5 -sSI "${DATA_URL}/response-headers?Server=should-be-dropped" \
+    || fail "smoke /response-headers: curl --max-time 5 failed")
 
 grep -qi '^X-Bench-Out:' <<<"${headers_dump}" \
     || { printf '%s\n' "${headers_dump}" >&2; fail "smoke: X-Bench-Out missing"; }

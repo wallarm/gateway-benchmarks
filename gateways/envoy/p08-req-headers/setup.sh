@@ -31,8 +31,8 @@ done
 # as JSON under `.headers`; we look for our marker there.
 # -----------------------------------------------------------------------------
 say "smoke A: GET /headers — expect X-Bench-In=1 at backend"
-body=$(curl -fsS "${DATA_URL}/headers") \
-    || fail "curl /headers failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/headers") \
+    || fail "curl --max-time 5 /headers failed"
 # go-httpbin's /headers endpoint echoes each header as a JSON array
 # (one element per repeat occurrence), e.g. `{"X-Bench-In":["1"]}`.
 # We therefore index `[0]` after the name lookup. The lowercase
@@ -47,8 +47,8 @@ val=$(jq -r '(.headers["X-Bench-In"] // .headers["x-bench-in"] // [])[0] // empt
 # see it.
 # -----------------------------------------------------------------------------
 say "smoke B: GET /headers with X-Forwarded-For — expect drop at backend"
-body=$(curl -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
-    || fail "curl /headers (with xff) failed"
+body=$(curl --max-time 5 -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
+    || fail "curl --max-time 5 /headers (with xff) failed"
 val=$(jq -r '(.headers["X-Forwarded-For"] // .headers["x-forwarded-for"] // [])[0] // empty' <<<"${body}")
 [[ -z "${val}" ]] \
     || { printf '%s\n' "${body}" >&2; fail "X-Forwarded-For: expected absent, got '${val}'"; }

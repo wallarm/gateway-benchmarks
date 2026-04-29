@@ -20,12 +20,12 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke A: client should see X-Bench-Out on /get"
-hdrs=$(curl -sS -D - -o /dev/null "${DATA_URL}/get" || true)
+hdrs=$(curl --max-time 5 -sS -D - -o /dev/null "${DATA_URL}/get" || true)
 printf '%s' "${hdrs}" | grep -qi '^X-Bench-Out:' \
     || fail "client did not see X-Bench-Out; headers dump:\n${hdrs}"
 
 say "smoke B: client must NOT see Server header"
-hdrs=$(curl -sS -D - -o /dev/null "${DATA_URL}/get" || true)
+hdrs=$(curl --max-time 5 -sS -D - -o /dev/null "${DATA_URL}/get" || true)
 if printf '%s' "${hdrs}" | grep -qi '^Server:'; then
     fail "client unexpectedly saw a Server header; headers dump:\n${hdrs}"
 fi

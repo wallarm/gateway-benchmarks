@@ -16,7 +16,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: client sees injected JSON, $.origin stripped"
-body=$(curl -sS "${DATA_URL}/anything")
+body=$(curl --max-time 5 -sS "${DATA_URL}/anything")
 echo "${body}" | grep -qE '"injected":[[:space:]]*true' \
     || fail "missing injected:true: ${body}"
 if echo "${body}" | grep -q '"origin"'; then

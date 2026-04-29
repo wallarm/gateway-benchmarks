@@ -38,7 +38,7 @@ token=$("${REPO_ROOT}/scripts/gen-jwt.sh" valid)
 
 say "smoke: full chain through /anything with valid JWT + POST body"
 hdrs_file=$(mktemp)
-body=$(curl -sS -D "${hdrs_file}" -o - \
+body=$(curl --max-time 5 -sS -D "${hdrs_file}" -o - \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
     -H "X-Forwarded-For: 198.51.100.7" \

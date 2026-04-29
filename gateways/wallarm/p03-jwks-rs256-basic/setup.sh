@@ -69,19 +69,19 @@ jq -e '.keys | length > 0 and all(type=="object" and has("kid") and has("kty") a
 # -----------------------------------------------------------------------------
 say "wallarm/p03-jwks-rs256-basic: bootstrap via ${ADMIN_URL}"
 for _ in $(seq 1 60); do
-    if curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
+    if curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
         say "admin API ready"
         break
     fi
     sleep 1
 done
-curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
+curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
     || fail "admin API did not come up at ${ADMIN_URL}"
 
 # -----------------------------------------------------------------------------
 # 2. Check whether the running image actually exposes jwt_validation
 # -----------------------------------------------------------------------------
-if ! curl -fsS "${ADMIN_URL}/policies" \
+if ! curl --max-time 5 -fsS "${ADMIN_URL}/policies" \
         | jq -e '.policies[]? | select(.policy_id == "jwt_validation")' >/dev/null; then
     feature_missing "jwt_validation is not exposed by ${ADMIN_URL}/policies on this image"
 fi
@@ -96,7 +96,7 @@ service_body=$(jq -cn \
     --arg backend "${SERVICE_TARGET_URL}" \
     '{name:$name, base_path:$bp, target:{endpoint:{url:$backend}}}')
 
-http_code=$(curl -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
+http_code=$(curl --max-time 5 -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services" \
     -H "Content-Type: application/json" \
     -d "${service_body}" || true)
@@ -108,7 +108,7 @@ case "${http_code}" in
              fail "service create returned ${http_code}";;
 esac
 
-route_code=$(curl -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
+route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/routes" \
     -H "Content-Type: application/json" \
     -d '{"id":"catchall","condition":{"path":["/**"]}}' || true)
@@ -149,7 +149,7 @@ flow_body=$(jq -cn \
         }]
     }')
 
-flow_code=$(curl -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
+flow_code=$(curl --max-time 5 -sS -o /tmp/wallarm-jwks.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/flow" \
     -H "Content-Type: application/json" \
     -d "${flow_body}" || true)
@@ -174,14 +174,14 @@ esac
 #    boot surfaces before the parity runner even starts.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything without Authorization"
-missing_code=$(curl -s -o /tmp/wallarm-jwks.out -w '%{http_code}' "${DATA_URL}/anything" || true)
+missing_code=$(curl --max-time 5 -s -o /tmp/wallarm-jwks.out -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${missing_code}" == "401" ]] \
     || { cat /tmp/wallarm-jwks.out >&2
          fail "smoke: expected 401 without token, got ${missing_code}"; }
 
 valid_token="$("${RS256_GEN_SCRIPT}" valid)"
 say "smoke: GET ${DATA_URL}/anything with valid RS256 token (kid=bench-rs256-2026)"
-valid_code=$(curl -s -o /tmp/wallarm-jwks.out -w '%{http_code}' \
+valid_code=$(curl --max-time 5 -s -o /tmp/wallarm-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${valid_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${valid_code}" == "200" ]] \
@@ -190,7 +190,7 @@ valid_code=$(curl -s -o /tmp/wallarm-jwks.out -w '%{http_code}' \
 
 unknown_token="$("${RS256_GEN_SCRIPT}" unknown-kid)"
 say "smoke: GET ${DATA_URL}/anything with RS256 token carrying unknown kid"
-unknown_code=$(curl -s -o /tmp/wallarm-jwks.out -w '%{http_code}' \
+unknown_code=$(curl --max-time 5 -s -o /tmp/wallarm-jwks.out -w '%{http_code}' \
     -H "Authorization: Bearer ${unknown_token}" \
     "${DATA_URL}/anything" || true)
 [[ "${unknown_code}" == "401" ]] \

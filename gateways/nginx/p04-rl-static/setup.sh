@@ -34,17 +34,17 @@ done
 #    accidentally drops everything (rate=0, wrong zone reference, …).
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything (below limit)"
-body=$(curl -fsS "${DATA_URL}/anything") \
-    || fail "smoke /anything: curl failed"
+body=$(curl --max-time 5 -fsS "${DATA_URL}/anything") \
+    || fail "smoke /anything: curl --max-time 5 failed"
 jq -e '.method == "GET"' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke /anything: .method not GET"; }
 
 # NOTE: no standalone sanity "burst produces 429" check here. Under
-# xargs-based parallelism the 429 rate is unreliable (curl fork/TLS
+# xargs-based parallelism the 429 rate is unreliable (curl --max-time 5 fork/TLS
 # setup costs stretch a 500-req burst over ~1 s, which fits inside
 # rate=1000r/s + burst=200 without triggering limit_req). The real
 # burst assertion is delivered by `scripts/parity-attestation.sh`,
-# which uses `curl --parallel -K <config>` with
+# which uses `curl --max-time 5 --parallel -K <config>` with
 # BURST_PARALLELISM=128 — enough to compress 1200 requests into
 # << 1 s and force the 429 path.
 

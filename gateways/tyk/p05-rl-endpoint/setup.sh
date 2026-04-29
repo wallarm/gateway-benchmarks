@@ -23,15 +23,15 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" | jq -e 'any(.[]; .api_id == "bench" and (.version_data.versions.Default.extended_paths.rate_limit | length) == 1)' >/dev/null 2>&1 \
     || fail "API definition 'bench' missing or extended_paths.rate_limit not declared"
 say "  ✓ /tyk/apis reports api_id=bench with one extended_paths.rate_limit entry"
 
 say "smoke: GET /anything/limited -> 200, /anything/free -> 200"
-code1=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
-code2=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/free" || true)
+code1=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
+code2=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything/free" || true)
 [[ "${code1}" == "200" && "${code2}" == "200" ]] \
     || fail "expected 200/200 for limited/free, got ${code1}/${code2}"
 

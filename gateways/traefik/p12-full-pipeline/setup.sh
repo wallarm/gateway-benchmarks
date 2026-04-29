@@ -49,7 +49,7 @@ done
 #    chain short-circuits, the body rewrite never runs).
 # -----------------------------------------------------------------------------
 say "smoke A: GET /anything without Authorization -> expect 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 [[ "${code}" == "401" ]] || fail "expected 401 with no Authorization, got ${code}"
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,7 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 # -----------------------------------------------------------------------------
 say "smoke B: POST /anything with valid JWT + secret body -> expect 200 + transforms"
 token=$("${REPO_ROOT}/scripts/gen-jwt.sh" valid)
-out=$(curl -isS -X POST \
+out=$(curl --max-time 5 -isS -X POST \
     -H "Authorization: Bearer ${token}" \
     -H 'Content-Type: application/json' \
     -H 'X-Forwarded-For: 198.51.100.7' \

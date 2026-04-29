@@ -17,7 +17,7 @@ say "apisix/p10-req-body: waiting for route reload"
 # cycle or two. Loop until the body-rewrite surgery is actually in
 # effect — the canonical "injected" field is the readiness signal.
 for _ in $(seq 1 30); do
-    probe=$(curl -sS -X POST -H 'Content-Type: application/json' \
+    probe=$(curl --max-time 5 -sS -X POST -H 'Content-Type: application/json' \
         -d '{"ping":true}' --max-time 2 \
         "${DATA_URL}/anything" 2>/dev/null || true)
     # go-httpbin pretty-prints; match `"injected": true` (with a space
@@ -30,7 +30,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: POST /anything with {\"msg\":\"hi\",\"secret\":\"x\"} -> backend sees injected=true, no secret"
-body=$(curl -sS -X POST -H 'Content-Type: application/json' \
+body=$(curl --max-time 5 -sS -X POST -H 'Content-Type: application/json' \
     -d '{"msg":"hi","secret":"x"}' \
     "${DATA_URL}/anything" || true)
 printf '%s' "${body}" | grep -qE '"injected":[[:space:]]*true' \

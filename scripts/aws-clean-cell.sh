@@ -93,7 +93,7 @@ HEARTBEAT_PID=$!
 cleanup() {
 	set +e
 	kill "${HEARTBEAT_PID}" >/dev/null 2>&1 || true
-	ssh_gateway "cd /opt/gateway-benchmarks; env_file='gateways/${GATEWAY}/${POLICY}/.env'; env_args=''; if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi; BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' logs --no-color > '${REMOTE_OUT}/compose.log' 2>&1 || true; BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true"
+	ssh_gateway "cd /opt/gateway-benchmarks; env_file='gateways/${GATEWAY}/${POLICY}/.env'; env_args=''; if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' logs --no-color > '${REMOTE_OUT}/compose.log' 2>&1 || true; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true"
 	ssh_gateway "rm -f '${OVERRIDE}'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -122,13 +122,21 @@ cd /opt/gateway-benchmarks;
 env_file='gateways/${GATEWAY}/${POLICY}/.env';
 env_args='';
 if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi;
-BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true;
-BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' up -d;
+BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true;
+BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' up -d;
 for i in \$(seq 1 90); do
   if curl -fsS -o /dev/null --max-time 2 http://localhost:9080/ 2>/dev/null; then exit 0; fi
   sleep 1
 done;
-exit 3"
+exit 3" || up_rc=$?
+up_rc="${up_rc:-0}"
+if [[ "${up_rc}" != "0" ]]; then
+	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${up_rc}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"GATEWAY_TIMEOUT",details:("docker compose up or healthcheck failed with "+$rc)}' \
+		> "${OUTPUT}/excluded.json"
+	exit 0
+fi
 
 PHASE="gateway-setup"
 ssh_gateway "cd /opt/gateway-benchmarks && BENCH_CONTAINER_PREFIX='${PREFIX}' DATA_URL='http://localhost:9080' ADMIN_URL='http://localhost:9081' BACKEND_URL='http://backend:8080' FEATURE_MISSING_REASON_FILE='${REMOTE_OUT}/setup-feature-missing.txt' bash gateways/${GATEWAY}/${POLICY}/setup.sh" \
@@ -143,7 +151,11 @@ if [[ "${setup_rc}" == "42" ]]; then
 	exit 0
 elif [[ "${setup_rc}" != "0" ]]; then
 	echo "setup failed on gateway host; see ${LOGS_DIR}/setup.log" >&2
-	exit "${setup_rc}"
+	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${setup_rc}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"SETUP_FAILED",details:("setup.sh exited with "+$rc)}' \
+		> "${OUTPUT}/excluded.json"
+	exit 0
 fi
 
 PHASE="parity"
@@ -192,23 +204,27 @@ PHASE="k6-image"
 docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 
 # -----------------------------------------------------------------------------
-# Warmup phase: 5 seconds of traffic to prime JIT and connection pools.
+# Warmup phase: 20 seconds of traffic to prime JIT and connection pools.
 # This prevents the 'UNSTABLE' flag caused by cold-start latency jitter
 # in the first few seconds of a fresh container run.
 # -----------------------------------------------------------------------------
 PHASE="k6-warmup"
-echo "Starting 5s warmup for ${GATEWAY}/${POLICY}..." >&2
-docker run --rm \
+echo "Starting 20s warmup for ${GATEWAY}/${POLICY}..." >&2
+docker run --rm -i \
 	-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \
 	-e "BENCH_TARGET_URL_HTTPS=${GATEWAY_TARGET_HTTPS}" \
 	-e "BENCH_JWT_VALID=${BENCH_JWT_VALID}" \
 	-e "BENCH_JWT_VALID_RS256=${BENCH_JWT_VALID_RS256}" \
 	"${K6_IMAGE}" run - <<EOF >/dev/null 2>&1 || true
 import http from 'k6/http';
-export const options = { vus: 10, duration: '5s' };
+export const options = { vus: 50, duration: '20s' };
 export default function() {
     const headers = {};
-    if (__ENV.BENCH_JWT_VALID) { headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID; }
+    if (__ENV.BENCH_JWT_VALID) { 
+        headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID; 
+    } else if (__ENV.BENCH_JWT_VALID_RS256) {
+        headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID_RS256;
+    }
     http.get(__ENV.BENCH_TARGET_URL + '/anything', { headers });
 }
 EOF
@@ -240,6 +256,16 @@ fi
 ssh_gateway "cat '${REMOTE_OUT}/compose.log' 2>/dev/null || true" > "${LOGS_DIR}/compose.log"
 
 if [[ "${k6_rc}" != "0" ]]; then
-	exit "${k6_rc}"
+	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${k6_rc}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"K6_FAILED",details:("k6 exited with "+$rc)}' \
+		> "${OUTPUT}/excluded.json"
+	exit 0
 fi
-[[ -s "${OUTPUT}/k6-summary.json" ]] || exit 5
+[[ -s "${OUTPUT}/k6-summary.json" ]] || {
+	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"NO_SUMMARY",details:"k6-summary.json is missing or empty"}' \
+		> "${OUTPUT}/excluded.json"
+	exit 0
+}

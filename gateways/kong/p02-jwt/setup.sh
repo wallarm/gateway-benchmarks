@@ -28,12 +28,12 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke A: no Authorization -> expect 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 [[ "${code}" == "401" ]] || fail "expected 401 with no Authorization, got ${code}"
 
 say "smoke B: valid HS256 token -> expect 200"
 token=$("${REPO_ROOT}/scripts/gen-jwt.sh" valid)
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer ${token}" \
     "${DATA_URL}/anything")
 [[ "${code}" == "200" ]] || fail "expected 200 with valid token, got ${code}"

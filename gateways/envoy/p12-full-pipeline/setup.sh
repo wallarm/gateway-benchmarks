@@ -40,7 +40,7 @@ done
 # Smoke A: 401 on no-auth (JWT filter fires before body rewrite).
 # -----------------------------------------------------------------------------
 say "smoke A: POST /anything without Authorization -> expect 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
     -H 'Content-Type: application/json' \
     -d '{"msg":"x"}' \
     "${DATA_URL}/anything")
@@ -56,13 +56,13 @@ token=$("${REPO_ROOT}/scripts/gen-jwt.sh" valid)
 
 # Capture headers and body together. go-httpbin's /anything echoes
 # the backend-seen request headers under `.headers` as arrays.
-resp=$(curl -fsS -D /tmp/p11-envoy-hdrs.txt \
+resp=$(curl --max-time 5 -fsS -D /tmp/p11-envoy-hdrs.txt \
     -H "Authorization: Bearer ${token}" \
     -H 'Content-Type: application/json' \
     -H 'X-Forwarded-For: 198.51.100.7' \
     -d '{"msg":"hello","secret":"drop","bench":{"from_client":true}}' \
     "${DATA_URL}/anything") \
-    || fail "curl POST /anything (full pipeline) failed"
+    || fail "curl --max-time 5 POST /anything (full pipeline) failed"
 
 # p08: X-Bench-Out present, Server absent on downstream response.
 grep -iq '^x-bench-out: 1' /tmp/p11-envoy-hdrs.txt \

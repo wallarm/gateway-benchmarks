@@ -25,14 +25,14 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" | jq -e 'any(.[]; .api_id == "bench" and .global_rate_limit.rate == 1000 and .global_rate_limit.per == 1)' >/dev/null 2>&1 \
     || fail "API definition 'bench' missing or global_rate_limit not 1000/1"
 say "  ✓ /tyk/apis registers api_id=bench with global_rate_limit=1000/1s"
 
 say "smoke: GET /anything -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] || fail "expected 200 on /anything, got ${code}"
 
 say "tyk/p04-rl-static ready"

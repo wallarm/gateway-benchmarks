@@ -52,7 +52,7 @@ say "  ✓ /hello reports status=pass"
 # parses the body unconditionally on a path/method match, so wiring
 # it on GET would force a body-parse round-trip on every burst hop
 # for no semantic gain (probe 4 sends no body).
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e '
@@ -74,7 +74,7 @@ say "  ✓ /tyk/apis registers bench with full p11 pipeline (JWT + RL + native b
 # Confirm the policy that JWT-keyed sessions attach to is loaded and
 # grants the bench API. Without this, every signed token is rejected
 # with 'no session found for token user identity'.
-policies=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+policies=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                 "${DATA_URL}/tyk/policies" 2>/dev/null || true)
 printf '%s' "${policies}" \
     | jq -e 'to_entries | any(.value.access_rights.bench.api_id == "bench")' \

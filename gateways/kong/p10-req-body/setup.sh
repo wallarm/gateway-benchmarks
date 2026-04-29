@@ -18,7 +18,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: backend echoes injected JSON, $.secret stripped"
-body=$(curl -sS -X POST "${DATA_URL}/anything" \
+body=$(curl --max-time 5 -sS -X POST "${DATA_URL}/anything" \
     -H "Content-Type: application/json" \
     -d '{"msg":"hello","secret":"please-drop","bench":{"from_client":true}}')
 echo "${body}" | grep -qE '"injected":[[:space:]]*true' \

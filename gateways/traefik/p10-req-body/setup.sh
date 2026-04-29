@@ -40,10 +40,10 @@ done
 #    `.json.bench.injected` / `.json.secret`.
 # -----------------------------------------------------------------------------
 say "smoke: POST ${DATA_URL}/anything with secret+msg body"
-body=$(curl -fsS -H 'Content-Type: application/json' \
+body=$(curl --max-time 5 -fsS -H 'Content-Type: application/json' \
             -d '{"msg":"hello","secret":"please-drop","bench":{"from_client":true}}' \
             "${DATA_URL}/anything") \
-    || fail "smoke POST /anything: curl failed"
+    || fail "smoke POST /anything: curl --max-time 5 failed"
 
 jq -e '.json.bench.injected == true' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke: bench.injected missing or != true"; }

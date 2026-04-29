@@ -22,7 +22,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET /anything -> expect injected=true, origin dropped"
-body=$(curl -sS "${DATA_URL}/anything")
+body=$(curl --max-time 5 -sS "${DATA_URL}/anything")
 
 echo "${body}" | jq -e '.bench.injected == true' >/dev/null \
     || fail "\$.bench.injected is not true in response body"

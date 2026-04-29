@@ -20,7 +20,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET /anything -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] || fail "expected 200 on /anything, got ${code}"
 
 say "kong/p01-vanilla ready"

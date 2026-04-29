@@ -23,7 +23,7 @@ done
 (( hello_ok == 1 )) || fail "tyk /hello never returned status=pass"
 say "  ✓ /hello reports status=pass"
 
-api_list=$(curl -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
+api_list=$(curl --max-time 5 -sS -H "X-Tyk-Authorization: ${TYK_SECRET}" \
                "${DATA_URL}/tyk/apis" 2>/dev/null || true)
 printf '%s' "${api_list}" \
     | jq -e 'any(.[]; .api_id == "bench" and (.custom_middleware.pre | length) == 1 and .config_data.BENCH_RL_RATE == "100")' \
@@ -32,7 +32,7 @@ printf '%s' "${api_list}" \
 say "  ✓ /tyk/apis registers api_id=bench with per_ip_session pre + BENCH_RL_RATE=100"
 
 say "smoke: GET /anything with X-Real-IP=10.5.0.99 -> 200 (synthesises session for 10.5.0.99)"
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
            -H 'X-Real-IP: 10.5.0.99' "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] || fail "expected 200 on /anything with X-Real-IP, got ${code}"
 

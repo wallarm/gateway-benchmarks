@@ -22,7 +22,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke A: GET /anything -> client sees bench.injected=true, no origin"
-body=$(curl -sS "${DATA_URL}/anything" || true)
+body=$(curl --max-time 5 -sS "${DATA_URL}/anything" || true)
 printf '%s' "${body}" | grep -qE '"injected":[[:space:]]*true' \
     || fail "client did not see bench.injected=true; body:\n${body}"
 # $.origin is the TOP-LEVEL go-httpbin field — our p10 drops it, so

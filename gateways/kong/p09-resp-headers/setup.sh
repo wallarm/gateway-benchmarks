@@ -15,7 +15,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: client sees X-Bench-Out and not Server"
-hdrs=$(curl -sS -D - -o /dev/null "${DATA_URL}/get")
+hdrs=$(curl --max-time 5 -sS -D - -o /dev/null "${DATA_URL}/get")
 echo "${hdrs}" | grep -qi '^X-Bench-Out:' || fail "missing X-Bench-Out: ${hdrs}"
 if echo "${hdrs}" | grep -qi '^Server:'; then
     fail "unexpected Server header: ${hdrs}"

@@ -20,7 +20,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: one request below 1000 rps -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything")
 [[ "${code}" == "200" ]] || fail "expected 200, got ${code}"
 
 say "kong/p04-rl-static ready"

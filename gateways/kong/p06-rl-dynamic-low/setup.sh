@@ -15,7 +15,7 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
-code=$(curl -sS -o /dev/null -w '%{http_code}' -H "X-Real-IP: 10.0.0.1" "${DATA_URL}/anything")
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' -H "X-Real-IP: 10.0.0.1" "${DATA_URL}/anything")
 [[ "${code}" == "200" ]] || fail "expected 200 with X-Real-IP, got ${code}"
 
 say "kong/p06-rl-dynamic-low ready"

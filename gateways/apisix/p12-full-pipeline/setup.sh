@@ -25,7 +25,7 @@ fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 say "apisix/p12-full-pipeline: waiting for route reload"
 # The serverless-pre-function owns JWT enforcement, so the absence
 # of an Authorization header is our readiness signal — a plain
-# `curl /anything` must hit the 401 branch once the route is bound.
+# `curl --max-time 5 /anything` must hit the 401 branch once the route is bound.
 for _ in $(seq 1 30); do
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 \
         "${DATA_URL}/anything" 2>/dev/null || true)
@@ -42,7 +42,7 @@ tmp_body=$(mktemp)
 tmp_hdr=$(mktemp)
 trap 'rm -f "${tmp_body}" "${tmp_hdr}"' EXIT
 
-code=$(curl -sS -o "${tmp_body}" -D "${tmp_hdr}" -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o "${tmp_body}" -D "${tmp_hdr}" -w '%{http_code}' \
     -X POST \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \

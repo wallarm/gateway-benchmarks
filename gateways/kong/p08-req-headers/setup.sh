@@ -15,7 +15,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: backend sees X-Bench-In=1, does NOT see X-Forwarded-For"
-body=$(curl -sS "${DATA_URL}/headers" -H "X-Forwarded-For: 198.51.100.7")
+body=$(curl --max-time 5 -sS "${DATA_URL}/headers" -H "X-Forwarded-For: 198.51.100.7")
 echo "${body}" | grep -qi '"X-Bench-In"' || fail "backend missing X-Bench-In: ${body}"
 if echo "${body}" | grep -qi '"X-Forwarded-For"'; then
     fail "backend still sees X-Forwarded-For: ${body}"

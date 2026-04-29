@@ -38,8 +38,8 @@ done
 #    the fixture's assertions are falsifiable from a single response.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/headers with client-supplied X-Forwarded-For"
-body=$(curl -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
-    || fail "smoke /headers: curl failed"
+body=$(curl --max-time 5 -fsS -H 'X-Forwarded-For: 198.51.100.7' "${DATA_URL}/headers") \
+    || fail "smoke /headers: curl --max-time 5 failed"
 
 jq -e '.headers["X-Bench-In"] == ["1"]' <<<"${body}" >/dev/null \
     || { printf '%s\n' "${body}" >&2; fail "smoke: X-Bench-In missing or != 1"; }

@@ -22,7 +22,7 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke: GET /anything below 1000 rps -> 200"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${code}" == "200" ]] || fail "single below-limit request: expected 200, got ${code}"
 
 say "apisix/p04-rl-static ready"

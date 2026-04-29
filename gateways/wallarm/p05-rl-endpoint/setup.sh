@@ -79,13 +79,13 @@ fail() { printf '\033[31m[FAIL]\033[0m %s\n' "$*" >&2; exit 1; }
 # -----------------------------------------------------------------------------
 say "wallarm/p05-rl-endpoint: bootstrap via ${ADMIN_URL}"
 for _ in $(seq 1 60); do
-    if curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
+    if curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1; then
         say "admin API ready"
         break
     fi
     sleep 1
 done
-curl -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
+curl --max-time 5 -fsS "${ADMIN_URL}/health" >/dev/null 2>&1 \
     || fail "admin API did not come up at ${ADMIN_URL}"
 
 # -----------------------------------------------------------------------------
@@ -98,7 +98,7 @@ body=$(jq -cn \
     --arg backend "${BACKEND_URL}${SERVICE_PATH}" \
     '{name:$name, base_path:$bp, target:{endpoint:{url:$backend}}}')
 
-http_code=$(curl -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
+http_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services" \
     -H "Content-Type: application/json" \
     -d "${body}" || true)
@@ -116,7 +116,7 @@ esac
 # Ordering: `limited` first — see file header.
 # Patterns: both exact + glob-suffix form for wallarm glob compatibility.
 # -----------------------------------------------------------------------------
-route_code=$(curl -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
+route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/routes" \
     -H "Content-Type: application/json" \
     -d '{"id":"limited","condition":{"path":["/limited","/limited/**"]}}' || true)
@@ -126,7 +126,7 @@ case "${route_code}" in
        fail "route limited create returned ${route_code}";;
 esac
 
-route_code=$(curl -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
+route_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/routes" \
     -H "Content-Type: application/json" \
     -d '{"id":"free","condition":{"path":["/free","/free/**"]}}' || true)
@@ -165,7 +165,7 @@ rl_config=$(jq -cn \
         }]
     }')
 
-flow_code=$(curl -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
+flow_code=$(curl --max-time 5 -sS -o /tmp/wallarm-p04.out -w '%{http_code}' \
     -X POST "${ADMIN_URL}/services/${SERVICE_NAME}/routes/limited/flow" \
     -H "Content-Type: application/json" \
     -d "${rl_config}" || true)
@@ -179,14 +179,14 @@ esac
 # 5. Smoke — both endpoints answer 200 on the very first request.
 # -----------------------------------------------------------------------------
 say "smoke: GET ${DATA_URL}/anything/limited (below 100 rps)"
-smoke_code=$(curl -s -o /tmp/wallarm-p04.out -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
+smoke_code=$(curl --max-time 5 -s -o /tmp/wallarm-p04.out -w '%{http_code}' "${DATA_URL}/anything/limited" || true)
 if [[ "${smoke_code}" != "200" ]]; then
     cat /tmp/wallarm-p04.out >&2
     fail "smoke /anything/limited: expected 200, got ${smoke_code}"
 fi
 
 say "smoke: GET ${DATA_URL}/anything/free (unrestricted)"
-smoke_code=$(curl -s -o /tmp/wallarm-p04.out -w '%{http_code}' "${DATA_URL}/anything/free" || true)
+smoke_code=$(curl --max-time 5 -s -o /tmp/wallarm-p04.out -w '%{http_code}' "${DATA_URL}/anything/free" || true)
 if [[ "${smoke_code}" != "200" ]]; then
     cat /tmp/wallarm-p04.out >&2
     fail "smoke /anything/free: expected 200, got ${smoke_code}"

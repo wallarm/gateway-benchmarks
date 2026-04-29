@@ -32,7 +32,7 @@ done
 # response means the transform didn't fire.
 # -----------------------------------------------------------------------------
 say "smoke A: GET /response-headers?Server=x-upstream — expect Server absent"
-hdrs=$(curl -sSI "${DATA_URL}/response-headers?Server=x-upstream")
+hdrs=$(curl --max-time 5 -sSI "${DATA_URL}/response-headers?Server=x-upstream")
 grep -iq '^x-bench-out: 1' <<<"${hdrs}" \
     || { printf '%s\n' "${hdrs}" >&2; fail "X-Bench-Out: expected '1', not found"; }
 if grep -iq '^server:' <<<"${hdrs}"; then
@@ -46,7 +46,7 @@ fi
 # its own, so even when upstream emits nothing the client sees no Server.
 # -----------------------------------------------------------------------------
 say "smoke B: GET /get — expect Server absent, X-Bench-Out present"
-hdrs=$(curl -sSI "${DATA_URL}/get")
+hdrs=$(curl --max-time 5 -sSI "${DATA_URL}/get")
 grep -iq '^x-bench-out: 1' <<<"${hdrs}" \
     || { printf '%s\n' "${hdrs}" >&2; fail "X-Bench-Out: expected '1', not found"; }
 if grep -iq '^server:' <<<"${hdrs}"; then

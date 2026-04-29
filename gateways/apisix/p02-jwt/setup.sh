@@ -26,11 +26,11 @@ for _ in $(seq 1 30); do
 done
 
 say "smoke A: no Authorization -> 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' "${DATA_URL}/anything" || true)
 [[ "${code}" == "401" ]] || fail "expected 401 on missing Authorization, got ${code}"
 
 say "smoke B: garbage bearer token -> 401"
-code=$(curl -sS -o /dev/null -w '%{http_code}' \
+code=$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' \
     -H 'Authorization: Bearer not.a.jwt' \
     "${DATA_URL}/anything" || true)
 [[ "${code}" == "401" ]] || fail "expected 401 on garbage bearer, got ${code}"

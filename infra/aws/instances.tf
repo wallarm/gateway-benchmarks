@@ -75,6 +75,8 @@ resource "aws_instance" "backend" {
 resource "aws_instance" "runner" {
   count = var.runner_count
 
+  depends_on = [aws_instance.loadgen, aws_instance.gateway, aws_instance.backend]
+
   launch_template {
     id      = aws_launch_template.runner.id
     version = "$Latest"
@@ -95,6 +97,8 @@ resource "aws_instance" "runner" {
 resource "aws_instance" "cluster_loadgen" {
   count = var.cluster_count
 
+  depends_on = [aws_instance.loadgen, aws_instance.gateway, aws_instance.backend]
+
   launch_template {
     id      = aws_launch_template.cluster_loadgen.id
     version = "$Latest"
@@ -112,6 +116,8 @@ resource "aws_instance" "cluster_loadgen" {
 resource "aws_instance" "cluster_gateway" {
   count = var.cluster_count
 
+  depends_on = [aws_instance.loadgen, aws_instance.gateway, aws_instance.backend]
+
   launch_template {
     id      = aws_launch_template.cluster_gateway.id
     version = "$Latest"
@@ -128,6 +134,8 @@ resource "aws_instance" "cluster_gateway" {
 
 resource "aws_instance" "cluster_backend" {
   count = var.cluster_count
+
+  depends_on = [aws_instance.loadgen, aws_instance.gateway, aws_instance.backend]
 
   launch_template {
     id      = aws_launch_template.cluster_backend.id

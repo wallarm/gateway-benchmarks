@@ -340,6 +340,7 @@ fi
 
 mkdir -p "${COPY_DIR}"
 report_cmd=("${ORCH_BIN}" --repo-root "${REPO_ROOT}" report --combined "${combined}" \
+	--unstable-threshold "0.10" \
 	--output "${REPORT_PATH}" --title "API Gateway Benchmark" \
 	--env "AWS · ${runner_count} cluster(s) · ${INSTANCE_TYPE}${PARALLEL_SUFFIX}")
 if [[ -n "${REPORT_LOGO}" ]]; then

@@ -12,7 +12,7 @@ import (
 // embedded into the binary so `bench report` works on hosts that
 // don't have the source tree mounted.
 //
-//go:embed assets/report.html.tmpl assets/styles.css assets/report.js
+//go:embed assets/report.html.tmpl assets/styles.css assets/report.js assets/logo-cropped.png
 var assets embed.FS
 
 // loadAssets returns (template source, css source, js source).
@@ -46,21 +46,44 @@ func templateFuncs() template.FuncMap {
 		"safe":    func(v interface{}) template.HTML { return template.HTML(fmt.Sprint(v)) },
 		"cssSafe": func(v interface{}) template.CSS { return template.CSS(fmt.Sprint(v)) },
 		"jsSafe":  func(v interface{}) template.JS { return template.JS(fmt.Sprint(v)) },
+		"urlSafe": func(v interface{}) template.URL { return template.URL(fmt.Sprint(v)) },
 		"default": func(v, fallback string) string {
 			if strings.TrimSpace(v) == "" {
 				return fallback
 			}
 			return v
 		},
-		"color":       func(gw string) string { return GatewayColors[gw] },
-		"shortSHA":    shortSHA,
-		"shortDigest": shortDigest,
-		"rank":        rankSymbol,
-		"fmtFloat":    fmtFloat,
-		"fmtInt":      fmtInt,
-		"fmtBytes":    fmtBytes,
-		"deltaP50":    deltaP50,
+		"color":            func(gw string) string { return GatewayColors[gw] },
+		"k6Version":        k6Version,
+		"shortSHA":         shortSHA,
+		"shortDigest":      shortDigest,
+		"rank":             rankSymbol,
+		"fmtFloat":         fmtFloat,
+		"fmtInt":           fmtInt,
+		"fmtBytes":         fmtBytes,
+		"fmtMaybeMB":       fmtMaybeMB,
+		"fmtRSSPair":       fmtRSSPair,
+		"fmtBps":           fmtBps,
+		"fmtPct":           fmtPct,
+		"unexpectedErrors": unexpectedErrors,
+		"bottleneckClass":  bottleneckClass,
+		"showBottleneck":   showBottleneck,
+		"deltaP50":         deltaP50,
 	}
+}
+
+func k6Version(image string) string {
+	if i := strings.Index(image, "@"); i >= 0 {
+		image = image[:i]
+	}
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "unknown"
+	}
+	if i := strings.LastIndex(image, ":"); i >= 0 && i+1 < len(image) {
+		return image[i+1:]
+	}
+	return image
 }
 
 func shortSHA(s string) string {
@@ -128,6 +151,63 @@ func fmtBytes(v interface{}) string {
 		return fmt.Sprintf("~%.1f GB", mb/1024)
 	}
 	return fmt.Sprintf("~%d MB", int(math.Round(mb)))
+}
+
+func fmtRSSPair(peak, steady int64) string {
+	if peak <= 0 && steady <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%s / %s", fmtBytes(peak), fmtBytes(steady))
+}
+
+func fmtMaybeMB(v interface{}) string {
+	f, ok := toFloat(v)
+	if !ok || f <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("~%.0f MB", f)
+}
+
+func unexpectedErrors(c Cell) int64 {
+	return c.Policy5xxUnexpected + c.Policy4xxUnexpected
+}
+
+func fmtBps(v interface{}) string {
+	f, ok := toFloat(v)
+	if !ok || f == 0 {
+		return "—"
+	}
+	mbs := f / (1024 * 1024)
+	if mbs >= 1 {
+		return fmt.Sprintf("%.1f MB/s", mbs)
+	}
+	kbs := f / 1024
+	return fmt.Sprintf("%.0f KB/s", kbs)
+}
+
+func fmtPct(v interface{}) string {
+	f, ok := toFloat(v)
+	if !ok || f <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", f)
+}
+
+func bottleneckClass(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	switch v {
+	case "cpu", "ram", "disk", "network":
+		return v
+	case "not saturated":
+		return "ok"
+	default:
+		return "unknown"
+	}
+}
+
+func showBottleneck(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	return v == "cpu" || v == "ram" || v == "disk" || v == "network"
 }
 
 func deltaP50(c Cell, ref *Cell) string {

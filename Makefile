@@ -5,7 +5,7 @@
 	bench-run bench-validate bench-aggregate bench-manifest bench-version bench-report bench-compare-runs \
 	perf-local-up perf-local-parity perf-local-cycle-smoke \
 	perf-local-run perf-local-report perf-local-down perf-local-clean \
-	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report \
+	perf-aws-init perf-aws-deploy perf-aws-run perf-aws-report perf-aws-full-report \
 	perf-aws-up perf-aws-destroy perf-aws-ssh-loadgen perf-aws-ssh-gateway perf-aws-ssh-backend \
 	perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
@@ -97,6 +97,7 @@ help: ## Show this help
 	@echo "  $(GREEN)perf-aws-destroy$(NC)          $(TOFU_BIN) destroy — terminate everything"
 	@echo "  $(GREEN)perf-aws-run$(NC)              Drive the AWS matrix via bench (set BENCH_TARGET_AWS=http://<gateway-ip>:9080)"
 	@echo "  $(GREEN)perf-aws-report$(NC)           Render HTML report for the AWS run (BENCH_RUN_ID overrides --latest)"
+	@echo "  $(GREEN)perf-aws-full-report$(NC)      One command: deploy AWS, run canonical matrix with progress, copy/open report.html"
 	@echo ""
 	@echo "$(YELLOW)Quality (Phase 3):$(NC)"
 	@echo "  $(GREEN)parity-check$(NC)          Run parity for a single profile against a live target"
@@ -404,6 +405,23 @@ perf-local-clean: ## Delete the local-smoke output directory (reports/local-smok
 # `make perf-aws-up TOFU_BIN=terraform`.
 TOFU_BIN ?= $(shell command -v tofu >/dev/null 2>&1 && echo tofu || echo terraform)
 
+# One-command AWS report runner. Defaults to a larger instance class than the
+# canonical c6i.2xlarge so the loadgen/gateway have headroom; the fixed-duration
+# k6 profiles still dominate elapsed time unless the matrix is sharded.
+BENCH_AWS_FULL_RUN_ID      ?= aws-$(RUN_ID)
+BENCH_AWS_FULL_GATEWAYS    ?= all
+BENCH_AWS_FULL_LOADS       ?= http
+BENCH_AWS_FULL_REPS        ?= 1
+BENCH_AWS_FULL_NOTES       ?= AWS canonical report sweep
+BENCH_AWS_INSTANCE_TYPE    ?= c7i.4xlarge
+BENCH_AWS_FLEET_SIZE       ?= 7
+BENCH_AWS_PARALLEL         ?= 4
+BENCH_AWS_REPORT_COPY_DIR  ?= $(HOME)/Desktop/$(BENCH_AWS_FULL_RUN_ID)
+BENCH_AWS_OPEN_REPORT      ?= 1
+BENCH_AWS_DESTROY_AFTER    ?= 1
+BENCH_PROGRESS_INTERVAL    ?= 30s
+BENCH_AWS_REMOTE_BIN       ?= orchestrator/bin/bench-linux-amd64
+
 perf-aws-init: ## tofu init in $(AWS_TOFU_DIR)/
 	@echo "$(YELLOW)perf-aws-init: $(TOFU_BIN) init in $(AWS_TOFU_DIR)/$(NC)"
 	@cd $(AWS_TOFU_DIR) && $(TOFU_BIN) init
@@ -457,6 +475,26 @@ perf-aws-report: orchestrator-build ## Render the canonical HTML report for an A
 	else \
 		$(ORCH_BIN) --repo-root "$(CURDIR)" report --latest; \
 	fi
+
+perf-aws-full-report: orchestrator-build ## One command: deploy AWS, run canonical matrix with progress, copy/open report.html
+	@BENCH_AWS_FULL_RUN_ID="$(BENCH_AWS_FULL_RUN_ID)" \
+	AWS_TOFU_DIR="$(AWS_TOFU_DIR)" \
+	TOFU_BIN="$(TOFU_BIN)" \
+	ORCH_BIN="$(ORCH_BIN)" \
+	BENCH_AWS_FULL_GATEWAYS="$(BENCH_AWS_FULL_GATEWAYS)" \
+	BENCH_AWS_FULL_LOADS="$(BENCH_AWS_FULL_LOADS)" \
+	BENCH_AWS_FULL_REPS="$(BENCH_AWS_FULL_REPS)" \
+	BENCH_AWS_FULL_NOTES="$(BENCH_AWS_FULL_NOTES)" \
+	BENCH_AWS_INSTANCE_TYPE="$(BENCH_AWS_INSTANCE_TYPE)" \
+	BENCH_AWS_FLEET_SIZE="$(BENCH_AWS_FLEET_SIZE)" \
+	BENCH_AWS_PARALLEL="$(BENCH_AWS_PARALLEL)" \
+	BENCH_AWS_REPORT_COPY_DIR="$(BENCH_AWS_REPORT_COPY_DIR)" \
+	BENCH_AWS_OPEN_REPORT="$(BENCH_AWS_OPEN_REPORT)" \
+	BENCH_AWS_DESTROY_AFTER="$(BENCH_AWS_DESTROY_AFTER)" \
+	BENCH_PROGRESS_INTERVAL="$(BENCH_PROGRESS_INTERVAL)" \
+	BENCH_AWS_REMOTE_BIN="$(BENCH_AWS_REMOTE_BIN)" \
+	BENCH_SEED="$(BENCH_SEED)" \
+		bash scripts/perf-aws-full-report.sh
 
 perf-aws-destroy: ## tofu destroy — terminate the 3 EC2 hosts and free all resources
 	@echo "$(YELLOW)perf-aws-destroy: $(TOFU_BIN) destroy in $(AWS_TOFU_DIR)/$(NC)"

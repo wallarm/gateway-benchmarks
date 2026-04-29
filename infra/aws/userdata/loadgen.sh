@@ -64,7 +64,9 @@ fi
 chown -R ubuntu:ubuntu "${REPO_DIR}"
 
 # -----------------------------------------------------------------------------
-# Pre-pull k6 (matches scripts/load-gateway.sh K6_IMAGE pin)
+# Pre-pull k6 only. Gateway images are pulled on the gateway hosts on
+# demand; pulling every gateway image during cloud-init made smoke runs
+# wait for unrelated images before the first cell could start.
 # -----------------------------------------------------------------------------
 docker pull grafana/k6:1.7.1@sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f
 

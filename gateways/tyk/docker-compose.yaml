@@ -60,12 +60,12 @@
 #   docker pull redis:7.4-alpine           && ...
 #   docker pull nginx:1.27.3-alpine        && ...
 
-name: gateway-benchmarks-tyk
+name: ${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-tyk}
 
 services:
   backend:
     image: gateway-benchmarks/backend:v2.22.1
-    container_name: gwb-tyk-backend
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}-backend
     restart: "no"
     networks:
       bench-net:
@@ -79,7 +79,7 @@ services:
     # key-storage semantics do not shift silently if Docker Hub ever
     # retags the `redis:7` moving tag.
     image: redis:7.4-alpine@sha256:7aec734b2bb298a1d769fd8729f13b8514a41bf90fcdd1f38ec52267fbaa8ee6
-    container_name: gwb-tyk-redis
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}-redis
     restart: "no"
     # No volume mount: the bench is intentionally stateless across
     # runs. Session keys minted during one parity sweep must not
@@ -94,7 +94,7 @@ services:
     # new pull surface; the digest is identical to
     # `gateways/nginx/docker-compose.yaml`.
     image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
-    container_name: gwb-tyk-jwks-server
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}-jwks-server
     restart: "no"
     # Read-only bind mounts:
     #  - the tiny server block that whitelists /.well-known/jwks.json
@@ -112,7 +112,7 @@ services:
 
   gateway:
     image: ${GATEWAY_IMAGE:-tykio/tyk-gateway:v5.11.1@sha256:225624f56be59a54614ff8ba88255fec1c430037a4f7232fc141d2615bdff598}
-    container_name: gwb-tyk
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}
     restart: "no"
     depends_on:
       - backend
@@ -143,7 +143,7 @@ services:
       - ./_shared/templates:/opt/tyk-gateway/middleware/bench-templates:ro
       - ./${GATEWAY_PROFILE:-p01-vanilla}/apis:/opt/tyk-gateway/apps:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target). Tyk listens on :9080 internally — see tyk.standalone.conf "listen_port". Aligning the internal port matters because k6 runs inside bench-net and dials http://gateway:9080 directly: docker port-mapping does not apply to container-to-container traffic, so a mismatched internal port silently produced 100% TCP refused under load even though parity (which goes through the host port-map) passed.
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target). Tyk listens on :9080 internally — see tyk.standalone.conf "listen_port". Aligning the internal port matters because k6 runs inside bench-net and dials http://gateway:9080 directly: docker port-mapping does not apply to container-to-container traffic, so a mismatched internal port silently produced 100% TCP refused under load even though parity (which goes through the host port-map) passed.
     # Tyk handles SIGTERM gracefully; 5 s is plenty for `docker
     # compose down` between parity runs.
     stop_grace_period: 5s

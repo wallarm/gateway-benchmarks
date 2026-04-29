@@ -62,6 +62,28 @@ variable "instance_type" {
   default     = "c6i.2xlarge"
 }
 
+variable "runner_count" {
+  description = "Additional physically separate load-runner EC2 instances for sharded turbo sweeps. 0 preserves the canonical 3-host topology."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.runner_count >= 0 && var.runner_count <= 64
+    error_message = "runner_count must be between 0 and 64."
+  }
+}
+
+variable "cluster_count" {
+  description = "Additional clean AWS benchmark clusters. Each cluster is 3 EC2 hosts: loadgen -> gateway -> backend."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.cluster_count >= 0 && var.cluster_count <= 64
+    error_message = "cluster_count must be between 0 and 64."
+  }
+}
+
 variable "ebs_size_gb" {
   description = "Root EBS volume size in GiB. 300 holds the OS, Docker layer cache, all gateway images, and ~50 GiB of raw k6 stream JSON before rotation."
   type        = number

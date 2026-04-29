@@ -56,34 +56,8 @@ if [[ ! -d "${REPO_DIR}/.git" ]]; then
 fi
 chown -R ubuntu:ubuntu "${REPO_DIR}"
 
-# -----------------------------------------------------------------------------
-# Pre-pull every gateway base image (parallel where possible)
-# -----------------------------------------------------------------------------
-# The exact pins MUST stay in sync with each gateways/<gw>/docker-compose.yaml
-# `image:` line. Mismatched digests would mean the AWS run measures
-# a different binary than the local run — the canonical-numbers contract
-# would silently break. Update both files together.
-{
-    docker pull nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4 &
-    docker pull openresty/openresty:1.25.3.2-2-alpine                                                          &
-    docker pull envoyproxy/envoy:v1.34.0                                                                       &
-    docker pull traefik:3.5                                                                                    &
-    docker pull kong:3.7                                                                                       &
-    docker pull apache/apisix:3.13.0-debian                                                                    &
-    docker pull tykio/tyk-gateway:v5.5.0                                                                       &
-    docker pull bitnami/etcd:3.5.13                                                                            &
-    wait
-} || echo "WARN: at least one pre-pull failed — `docker pull` it manually before the sweep."
-
-# Build the vendored backend image too, in case the operator runs a
-# single-host smoke (gateway + backend on this host) for sanity-
-# checking without the loadgen host. See infra/aws/userdata/backend.sh
-# for why we build instead of pull.
-DOCKER_BUILDKIT=1 docker build \
-    --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --tag ghcr.io/mccutchen/go-httpbin:v2.22.1 \
-    --tag gateway-benchmarks/backend:v2.22.1 \
-    "${REPO_DIR}/backend" || \
-    echo "WARN: vendored backend build failed — single-host smoke won't work; sweep is unaffected."
+# Gateway images are pulled on demand by docker compose for the current
+# shard. Avoid pre-pulling every gateway here: it made smoke runs wait
+# for unrelated images before readiness completed.
 
 echo "==> userdata/gateway: done at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

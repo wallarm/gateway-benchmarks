@@ -20,6 +20,7 @@ func newReportCmd() *cobra.Command {
 		outputPath        string
 		title             string
 		envLine           string
+		logoPath          string
 		howToRead         string
 		unstableThreshold float64
 	)
@@ -79,6 +80,7 @@ Output defaults to reports/<id>/report.html (next to the JSONL).`,
 			out, err := report.Render(loaded, report.Options{
 				Title:             title,
 				EnvLine:           envLine,
+				LogoPath:          logoPath,
 				OutputPath:        outputPath,
 				UnstableThreshold: unstableThreshold,
 				HowToRead:         howToRead,
@@ -113,6 +115,8 @@ Output defaults to reports/<id>/report.html (next to the JSONL).`,
 		"hero title (default: 'API Gateway Benchmark — <run-id>')")
 	cmd.Flags().StringVar(&envLine, "env", "",
 		"environment subtitle (default: derived from manifest.json)")
+	cmd.Flags().StringVar(&logoPath, "logo", "",
+		"path to a logo image embedded into the report hero")
 	cmd.Flags().StringVar(&howToRead, "how-to-read", "",
 		"override the explanatory note shown under the hero")
 	cmd.Flags().Float64Var(&unstableThreshold, "unstable-threshold", 0.05,

@@ -48,12 +48,12 @@
 # and is disabled via KONG_ADMIN_LISTEN=off — parity never touches it
 # (all config is declarative).
 
-name: gateway-benchmarks-kong
+name: ${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-kong}
 
 services:
   backend:
     image: gateway-benchmarks/backend:v2.22.1
-    container_name: gwb-kong-backend
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-kong}-backend
     restart: "no"
     # Backend listens on :8080 inside the container. We do NOT publish
     # it on the host — only the gateway needs to talk to it, over the
@@ -65,7 +65,7 @@ services:
 
   gateway:
     image: ${GATEWAY_IMAGE:-kong/kong:3.9.1@sha256:6addf50e6bd8d578314cb9ce4f2d2d1e3781d2edecef59f707e00c6e05d384f5}
-    container_name: gwb-kong
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-kong}
     restart: "no"
     depends_on:
       - backend
@@ -152,7 +152,7 @@ services:
       - ./_shared/lualib:/usr/local/kong/custom:ro
       - ./_shared/bench-start.sh:/bench/bench-start.sh:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
     # Kong exits cleanly on SIGTERM via its supervisord wrapper; 5 s
     # is more than enough for `docker compose down` between parity
     # runs.

@@ -50,7 +50,7 @@ type SummaryRow struct {
 	Stack       [2]string
 	AvgRPS      float64
 	MaxErrPct   float64
-	Coverage    string  // "12/12"
+	Coverage    string // "12/12"
 	PassCells   int
 	TotalCells  int
 	PeakRSSMB   float64
@@ -64,6 +64,7 @@ type LoadGroup struct {
 	Meta     LoadProfileMeta
 	Cells    []Cell // sorted by RPS descending; PASS only
 	Excluded []Cell // tail-listed in the table
+	Failed   []Cell // failed/crashed/timed-out cells tail-listed in the table
 	// Pre-computed chart payloads. Latency arrays use a sentinel
 	// (math.NaN) for cells whose timing instrumentation is broken;
 	// the template marshals them as JSON null so Chart.js draws a gap.
@@ -90,11 +91,11 @@ type PolicyTab struct {
 
 // RadarSeries is one line of the overall-profile radar chart.
 type RadarSeries struct {
-	Label                 string    `json:"label"`
-	Data                  []float64 `json:"data"`
-	BorderColor           string    `json:"borderColor"`
-	BackgroundColor       string    `json:"backgroundColor"`
-	PointBackgroundColor  string    `json:"pointBackgroundColor"`
+	Label                string    `json:"label"`
+	Data                 []float64 `json:"data"`
+	BorderColor          string    `json:"borderColor"`
+	BackgroundColor      string    `json:"backgroundColor"`
+	PointBackgroundColor string    `json:"pointBackgroundColor"`
 }
 
 // Footer carries the bottom-of-page totals.
@@ -110,20 +111,22 @@ type Footer struct {
 // needs comes from this struct — no template helpers reach back into
 // Cell objects directly.
 type View struct {
-	Title        string
-	GeneratedAt  string
-	EnvLine      string
-	HeroNote     string  // "Known measurement gap: ..." or empty
-	HowToRead    string  // explanatory note shown at the top of the body
+	Title       string
+	GeneratedAt string
+	EnvLine     string
+	LogoDataURI string
+	HeroNote    string // "Known measurement gap: ..." or empty
+	HowToRead   string // explanatory note shown at the top of the body
 
-	Manifest     *Manifest
-	Summary      []SummaryRow
-	MemoryChips  []MemoryChip
-	RadarLabels  []string
-	RadarSeries  []RadarSeries
-	Tabs         []PolicyTab
-	Footer       Footer
-	Downloads    Downloads
+	Manifest        *Manifest
+	Summary         []SummaryRow
+	HasResourceData bool
+	MemoryChips     []MemoryChip
+	RadarLabels     []string
+	RadarSeries     []RadarSeries
+	Tabs            []PolicyTab
+	Footer          Footer
+	Downloads       Downloads
 
 	// JSON-encoded payloads handed straight to the inline <script>.
 	ChartDataJSON   string
@@ -317,6 +320,9 @@ func BuildSummary(idx *Index, loads []string) []SummaryRow {
 func BuildMemoryChips(rows []SummaryRow) []MemoryChip {
 	chips := make([]MemoryChip, 0, len(rows))
 	for _, r := range rows {
+		if r.PeakRSSMB <= 0 {
+			continue
+		}
 		chips = append(chips, MemoryChip{
 			Gateway:   r.Gateway,
 			Color:     GatewayColors[r.Gateway],
@@ -411,21 +417,23 @@ func BuildTabs(idx *Index, loads []string) []PolicyTab {
 func buildLoadGroup(policy string, byGW map[string]map[string]Cell, load string) (LoadGroup, bool) {
 	pass := make([]Cell, 0, len(byGW))
 	excluded := make([]Cell, 0)
+	failed := make([]Cell, 0)
 	for gw, byLoad := range byGW {
 		cell, ok := byLoad[load]
 		if !ok {
 			continue
 		}
+		cell.Gateway = gw
 		switch cell.Verdict {
 		case "PASS":
-			cell.Gateway = gw
 			pass = append(pass, cell)
 		case "EXCLUDED":
-			cell.Gateway = gw
 			excluded = append(excluded, cell)
+		case "FAIL", "CRASHED", "TIMEOUT":
+			failed = append(failed, cell)
 		}
 	}
-	if len(pass) == 0 && len(excluded) == 0 {
+	if len(pass) == 0 && len(excluded) == 0 && len(failed) == 0 {
 		return LoadGroup{}, false
 	}
 
@@ -436,6 +444,7 @@ func buildLoadGroup(policy string, byGW map[string]map[string]Cell, load string)
 		Meta:     LoadDescriptions[load],
 		Cells:    pass,
 		Excluded: excluded,
+		Failed:   failed,
 	}
 
 	g.ChartLabels = make([]string, len(pass))
@@ -552,11 +561,11 @@ func BuildFooter(idx *Index) Footer {
 // NaN latencies are emitted as JSON null so Chart.js draws a gap.
 func BuildChartDataJSON(tabs []PolicyTab) (string, error) {
 	type group struct {
-		Labels []string  `json:"labels"`
-		RPS    []float64 `json:"rps"`
+		Labels []string   `json:"labels"`
+		RPS    []float64  `json:"rps"`
 		P50    []*float64 `json:"p50"`
 		P95    []*float64 `json:"p95"`
-		Colors []string  `json:"colors"`
+		Colors []string   `json:"colors"`
 	}
 	out := make(map[string]map[string]group)
 	for _, t := range tabs {

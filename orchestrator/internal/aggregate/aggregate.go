@@ -67,8 +67,11 @@ type Cell struct {
 	ChecksFails         int64   `json:"checks_fails"`
 	MemRSSPeakBytes     int64   `json:"mem_rss_peak"`
 	MemRSSSteadyBytes   int64   `json:"mem_rss_steady"`
+	MemLimitBytes       int64   `json:"mem_limit_bytes"`
+	MemUtilPeakPct      float64 `json:"mem_util_peak_pct"`
 	CPUPctPeak          float64 `json:"cpu_pct_peak"`
 	CPUPctSteady        float64 `json:"cpu_pct_steady"`
+	CPUOnline           int64   `json:"cpu_online"`
 
 	// Bandwidth — cumulative totals over the cell (last − first
 	// sample) plus the peak-per-second delta observed between two
@@ -80,6 +83,14 @@ type Cell struct {
 	NetTxTotalBytes int64   `json:"net_tx_total_bytes"`
 	NetRxPeakBps    float64 `json:"net_rx_peak_bps"`
 	NetTxPeakBps    float64 `json:"net_tx_peak_bps"`
+
+	BlkReadTotalBytes  int64   `json:"blk_read_total_bytes"`
+	BlkWriteTotalBytes int64   `json:"blk_write_total_bytes"`
+	BlkReadPeakBps     float64 `json:"blk_read_peak_bps"`
+	BlkWritePeakBps    float64 `json:"blk_write_peak_bps"`
+
+	ResourceBottleneck       string `json:"resource_bottleneck,omitempty"`
+	ResourceBottleneckDetail string `json:"resource_bottleneck_detail,omitempty"`
 
 	// Derived; not in the canonical CSV but persisted to JSONL for
 	// downstream reporters.
@@ -146,6 +157,7 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 		// Optional sidecars
 		loadParity(filepath.Join(cellDir, "parity.json"), &cell)
 		loadDockerStats(filepath.Join(cellDir, "docker-stats.csv"), &cell)
+		deriveResourceBottleneck(&cell)
 
 		// Derived fields
 		cell.TimingBroken = (classify.LatencyShape{
@@ -198,11 +210,9 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 }
 
 // canonicalColumns mirrors scripts/aggregate-csv.sh § COLUMNS and
-// appends the four bandwidth columns introduced in the post-Phase-8
-// tech-debt sweep. The bandwidth columns live at the end so existing
-// consumers that parse matrix.csv by index for the legacy 27 columns
-// keep working; parsers that read by header name transparently pick
-// up the new fields.
+// appends resource-pressure columns after the legacy fields. Existing
+// consumers should read by header name; index-based parsers must be
+// updated when consuming post-resource-pressure reports.
 var canonicalColumns = []string{
 	"gateway", "policy", "scenario", "load", "run_id", "verdict", "parity_status",
 	"http_reqs", "http_req_rate", "iter_duration_avg_ms",
@@ -211,11 +221,14 @@ var canonicalColumns = []string{
 	"http_req_failed_rate",
 	"policy_2xx", "policy_4xx_expected", "policy_4xx_unexpected", "policy_5xx_unexpected",
 	"checks_total", "checks_passes", "checks_fails",
-	"mem_rss_peak", "mem_rss_steady", "cpu_pct_peak", "cpu_pct_steady",
+	"mem_rss_peak", "mem_rss_steady", "mem_limit_bytes", "mem_util_peak_pct",
+	"cpu_pct_peak", "cpu_pct_steady", "cpu_online",
 	"net_rx_total_bytes", "net_tx_total_bytes", "net_rx_peak_bps", "net_tx_peak_bps",
+	"blk_read_total_bytes", "blk_write_total_bytes", "blk_read_peak_bps", "blk_write_peak_bps",
+	"resource_bottleneck", "resource_bottleneck_detail",
 }
 
-// WriteCSV writes the canonical 31-column wide CSV (27 legacy + 4 bandwidth).
+// WriteCSV writes the canonical wide CSV.
 func (a *Aggregator) WriteCSV(path string, cells []Cell) error {
 	f, err := openWrite(path)
 	if err != nil {
@@ -446,7 +459,13 @@ func loadDockerStats(path string, cell *Cell) {
 		netRxPeakBps           float64
 		netTxPeakBps           float64
 		prevNetRx, prevNetTx   int64
-		prevTS                 time.Time
+
+		firstBlkRead, firstBlkWrite int64
+		lastBlkRead, lastBlkWrite   int64
+		blkReadPeakBps              float64
+		blkWritePeakBps             float64
+		prevBlkRead, prevBlkWrite   int64
+		prevTS                      time.Time
 	)
 
 	if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][1]), 10, 64); err == nil {
@@ -458,6 +477,12 @@ func loadDockerStats(path string, cell *Cell) {
 	if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][3]), 10, 64); err == nil {
 		online = v
 	}
+	var memLimit int64
+	if len(rows[0]) >= 6 {
+		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][5]), 10, 64); err == nil {
+			memLimit = v
+		}
+	}
 	if len(rows[0]) >= 8 {
 		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][6]), 10, 64); err == nil {
 			firstNetRx = v
@@ -466,6 +491,16 @@ func loadDockerStats(path string, cell *Cell) {
 		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][7]), 10, 64); err == nil {
 			firstNetTx = v
 			prevNetTx = v
+		}
+	}
+	if len(rows[0]) >= 10 {
+		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][8]), 10, 64); err == nil {
+			firstBlkRead = v
+			prevBlkRead = v
+		}
+		if v, err := strconv.ParseInt(strings.TrimSpace(rows[0][9]), 10, 64); err == nil {
+			firstBlkWrite = v
+			prevBlkWrite = v
 		}
 	}
 	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(rows[0][0])); err == nil {
@@ -482,6 +517,11 @@ func loadDockerStats(path string, cell *Cell) {
 		rss, _ := strconv.ParseInt(strings.TrimSpace(row[4]), 10, 64)
 		if on > 0 {
 			online = on
+		}
+		if len(row) >= 6 {
+			if ml, err := strconv.ParseInt(strings.TrimSpace(row[5]), 10, 64); err == nil && ml > 0 {
+				memLimit = ml
+			}
 		}
 
 		var cpuPct float64
@@ -502,28 +542,57 @@ func loadDockerStats(path string, cell *Cell) {
 
 		// Bandwidth rollup — only when the schema has at least 8
 		// columns (older CSVs from pre-Phase-4 runs have only 5).
+		var (
+			rowTS time.Time
+			hasTS bool
+		)
+		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(row[0])); err == nil {
+			rowTS = t
+			hasTS = true
+		}
+
 		if len(row) >= 8 {
 			netRx, _ := strconv.ParseInt(strings.TrimSpace(row[6]), 10, 64)
 			netTx, _ := strconv.ParseInt(strings.TrimSpace(row[7]), 10, 64)
 			lastNetRx = netRx
 			lastNetTx = netTx
 
-			if !prevTS.IsZero() {
-				if t, err := time.Parse(time.RFC3339, strings.TrimSpace(row[0])); err == nil {
-					dt := t.Sub(prevTS).Seconds()
-					if dt > 0 {
-						if bps := float64(netRx-prevNetRx) / dt; bps > netRxPeakBps {
-							netRxPeakBps = bps
-						}
-						if bps := float64(netTx-prevNetTx) / dt; bps > netTxPeakBps {
-							netTxPeakBps = bps
-						}
+			if !prevTS.IsZero() && hasTS {
+				dt := rowTS.Sub(prevTS).Seconds()
+				if dt > 0 {
+					if bps := float64(netRx-prevNetRx) / dt; bps > netRxPeakBps {
+						netRxPeakBps = bps
 					}
-					prevTS = t
+					if bps := float64(netTx-prevNetTx) / dt; bps > netTxPeakBps {
+						netTxPeakBps = bps
+					}
 				}
 			}
 			prevNetRx = netRx
 			prevNetTx = netTx
+		}
+		if len(row) >= 10 {
+			blkRead, _ := strconv.ParseInt(strings.TrimSpace(row[8]), 10, 64)
+			blkWrite, _ := strconv.ParseInt(strings.TrimSpace(row[9]), 10, 64)
+			lastBlkRead = blkRead
+			lastBlkWrite = blkWrite
+
+			if !prevTS.IsZero() && hasTS {
+				dt := rowTS.Sub(prevTS).Seconds()
+				if dt > 0 {
+					if bps := float64(blkRead-prevBlkRead) / dt; bps > blkReadPeakBps {
+						blkReadPeakBps = bps
+					}
+					if bps := float64(blkWrite-prevBlkWrite) / dt; bps > blkWritePeakBps {
+						blkWritePeakBps = bps
+					}
+				}
+			}
+			prevBlkRead = blkRead
+			prevBlkWrite = blkWrite
+		}
+		if hasTS {
+			prevTS = rowTS
 		}
 	}
 
@@ -539,8 +608,13 @@ func loadDockerStats(path string, cell *Cell) {
 
 	cell.MemRSSPeakBytes = rssPeak
 	cell.MemRSSSteadyBytes = rssSteady
+	cell.MemLimitBytes = memLimit
+	if memLimit > 0 {
+		cell.MemUtilPeakPct = roundTo(float64(rssPeak)/float64(memLimit)*100, 2)
+	}
 	cell.CPUPctPeak = roundTo(cpuPeak, 2)
 	cell.CPUPctSteady = roundTo(cpuSteady, 2)
+	cell.CPUOnline = online
 	if lastNetRx >= firstNetRx {
 		cell.NetRxTotalBytes = lastNetRx - firstNetRx
 	}
@@ -549,6 +623,53 @@ func loadDockerStats(path string, cell *Cell) {
 	}
 	cell.NetRxPeakBps = roundTo(netRxPeakBps, 2)
 	cell.NetTxPeakBps = roundTo(netTxPeakBps, 2)
+	if lastBlkRead >= firstBlkRead {
+		cell.BlkReadTotalBytes = lastBlkRead - firstBlkRead
+	}
+	if lastBlkWrite >= firstBlkWrite {
+		cell.BlkWriteTotalBytes = lastBlkWrite - firstBlkWrite
+	}
+	cell.BlkReadPeakBps = roundTo(blkReadPeakBps, 2)
+	cell.BlkWritePeakBps = roundTo(blkWritePeakBps, 2)
+}
+
+func deriveResourceBottleneck(cell *Cell) {
+	if cell.CPUOnline == 0 && cell.MemRSSPeakBytes == 0 &&
+		cell.NetRxPeakBps == 0 && cell.NetTxPeakBps == 0 &&
+		cell.BlkReadPeakBps == 0 && cell.BlkWritePeakBps == 0 {
+		cell.ResourceBottleneck = "unknown"
+		cell.ResourceBottleneckDetail = "no docker-stats samples"
+		return
+	}
+
+	cpuCap := float64(cell.CPUOnline) * 100
+	cpuUtil := 0.0
+	if cpuCap > 0 {
+		cpuUtil = math.Max(cell.CPUPctSteady, cell.CPUPctPeak) / cpuCap * 100
+	}
+	memUtil := cell.MemUtilPeakPct
+	diskPeak := math.Max(cell.BlkReadPeakBps, cell.BlkWritePeakBps)
+	netPeak := math.Max(cell.NetRxPeakBps, cell.NetTxPeakBps)
+
+	switch {
+	case cpuUtil >= 85:
+		cell.ResourceBottleneck = "cpu"
+	case memUtil >= 85:
+		cell.ResourceBottleneck = "ram"
+	case diskPeak >= 80*1024*1024:
+		cell.ResourceBottleneck = "disk"
+	case netPeak >= 100*1024*1024:
+		cell.ResourceBottleneck = "network"
+	default:
+		cell.ResourceBottleneck = "not saturated"
+	}
+
+	cell.ResourceBottleneckDetail = fmt.Sprintf(
+		"cpu %.0f%% of %.0f%% cap; ram %.0f%%; disk r/w %.1f/%.1f MB/s; net rx/tx %.1f/%.1f MB/s",
+		cpuUtil, cpuCap, memUtil,
+		cell.BlkReadPeakBps/(1024*1024), cell.BlkWritePeakBps/(1024*1024),
+		cell.NetRxPeakBps/(1024*1024), cell.NetTxPeakBps/(1024*1024),
+	)
 }
 
 // -----------------------------------------------------------------------------
@@ -638,12 +759,21 @@ func rowCSV(c Cell) []string {
 		fmt.Sprintf("%d", c.ChecksFails),
 		fmt.Sprintf("%d", c.MemRSSPeakBytes),
 		fmt.Sprintf("%d", c.MemRSSSteadyBytes),
+		fmt.Sprintf("%d", c.MemLimitBytes),
+		formatFloat(c.MemUtilPeakPct),
 		formatFloat(c.CPUPctPeak),
 		formatFloat(c.CPUPctSteady),
+		fmt.Sprintf("%d", c.CPUOnline),
 		fmt.Sprintf("%d", c.NetRxTotalBytes),
 		fmt.Sprintf("%d", c.NetTxTotalBytes),
 		formatFloat(c.NetRxPeakBps),
 		formatFloat(c.NetTxPeakBps),
+		fmt.Sprintf("%d", c.BlkReadTotalBytes),
+		fmt.Sprintf("%d", c.BlkWriteTotalBytes),
+		formatFloat(c.BlkReadPeakBps),
+		formatFloat(c.BlkWritePeakBps),
+		c.ResourceBottleneck,
+		c.ResourceBottleneckDetail,
 	}
 }
 

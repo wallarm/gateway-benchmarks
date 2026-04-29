@@ -84,12 +84,12 @@
 #     apache/apisix:3.15.0-debian --format '{{index .RepoDigests 0}}'
 #   docker pull nginx:1.27.3-alpine        && ...
 
-name: gateway-benchmarks-apisix
+name: ${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-apisix}
 
 services:
   backend:
     image: gateway-benchmarks/backend:v2.22.1
-    container_name: gwb-apisix-backend
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-apisix}-backend
     restart: "no"
     # Backend listens on :8080 inside the container. We do NOT publish
     # it on the host — only the gateway needs to talk to it, over the
@@ -104,7 +104,7 @@ services:
     # `gateways/nginx/docker-compose.yaml` and
     # `gateways/tyk/_jwks-server/`.
     image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
-    container_name: gwb-apisix-oidc-server
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-apisix}-oidc-server
     restart: "no"
     # Read-only bind mounts:
     #  - the tiny server block that whitelists the two well-known paths
@@ -124,7 +124,7 @@ services:
 
   gateway:
     image: ${GATEWAY_IMAGE:-apache/apisix:3.15.0-debian@sha256:4c201af4f6887def17c22be19e38f64cedf507db8bcc43991089778ad1188b9c}
-    container_name: gwb-apisix
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-apisix}
     restart: "no"
     depends_on:
       - backend
@@ -168,7 +168,7 @@ services:
       # `/usr/local/apisix/` to avoid colliding with image files.
       - ./_shared/bench-start.sh:/bench/bench-start.sh:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
     # APISIX exits cleanly on SIGTERM (see `apisix quit`); 5 s is
     # enough for `docker compose down` between parity runs.
     stop_grace_period: 5s

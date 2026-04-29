@@ -102,6 +102,11 @@ type Runner struct {
 	Verbose  bool          // stream child stdout/stderr
 	Env      []string      // additional KEY=VAL pairs (e.g. WALLARM_IMAGE=…)
 
+	// CellEnv returns additional environment for a specific cell. It is
+	// used by parallel sweeps to allocate a unique compose project,
+	// container prefix, and host port range per worker/cell.
+	CellEnv func(cell matrix.Cell) []string
+
 	// RetryOnCrash is the number of *additional* attempts after the
 	// first one for a cell that ends CRASHED. Default 0 = no retry,
 	// first crash is terminal. 1 = one retry (total 2 attempts).
@@ -157,8 +162,12 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 	outputDir := cell.OutputDir(r.RunID)
 	startedAt := time.Now().UTC()
 
+	cellRunner := os.Getenv("BENCH_CELL_RUNNER")
+	if cellRunner == "" {
+		cellRunner = "scripts/load-gateway.sh"
+	}
 	args := []string{
-		"scripts/load-gateway.sh",
+		cellRunner,
 		"--gateway", cell.Gateway,
 		"--policy", cell.Policy,
 		"--scenario", cell.Scenario,
@@ -185,8 +194,14 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 	// opted out. The collector polls the Docker socket for
 	// `gwb-<gateway>` and writes reports/<run>/raw/<cell>/docker-stats.csv
 	// — the shell sidecar is suppressed via BENCH_SKIP_DOCKER_STATS=1.
+	cellEnv := nilSafeCellEnv(r.CellEnv, cell)
+	gatewayContainer := envValue(cellEnv, "BENCH_CONTAINER_PREFIX")
+	if gatewayContainer == "" {
+		gatewayContainer = "gwb-" + cell.Gateway
+	}
+
 	absOutputDir := filepath.Join(r.RepoRoot, outputDir)
-	statsStop := r.startStatsCollector(runCtx, cell, absOutputDir)
+	statsStop := r.startStatsCollector(runCtx, cell, absOutputDir, gatewayContainer)
 	defer statsStop()
 
 	cmd := exec.CommandContext(runCtx, "bash", args...)
@@ -202,7 +217,7 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 	if !r.DisableNativeStats {
 		childEnv = append(childEnv, "BENCH_SKIP_DOCKER_STATS=1")
 	}
-	cmd.Env = append(os.Environ(), append(childEnv, r.Env...)...)
+	cmd.Env = append(os.Environ(), append(append(childEnv, r.Env...), cellEnv...)...)
 
 	var (
 		stdout    io.ReadCloser
@@ -305,12 +320,12 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 // treated as a fatal error for the cell (the cell just ends without
 // resource-usage data, same as an unreachable socket with the shell
 // sidecar).
-func (r *Runner) startStatsCollector(ctx context.Context, cell matrix.Cell, outputDirAbs string) func() {
+func (r *Runner) startStatsCollector(ctx context.Context, cell matrix.Cell, outputDirAbs, container string) func() {
 	if r.DisableNativeStats {
 		return func() {}
 	}
 	c := &stats.Collector{
-		Container: "gwb-" + cell.Gateway,
+		Container: container,
 		Output:    filepath.Join(outputDirAbs, "docker-stats.csv"),
 		Interval:  r.StatsInterval,
 		Socket:    r.StatsSocket,
@@ -365,6 +380,23 @@ func formatCrashError(c *GatewayCrashInfo) string {
 		parts = append(parts, c.Error)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func nilSafeCellEnv(fn func(matrix.Cell) []string, cell matrix.Cell) []string {
+	if fn == nil {
+		return nil
+	}
+	return fn(cell)
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return strings.TrimPrefix(kv, prefix)
+		}
+	}
+	return ""
 }
 
 func pipeWithPrefix(dst io.Writer, src io.Reader, prefix string) {

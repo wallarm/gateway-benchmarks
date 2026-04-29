@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,11 +26,16 @@ func newRunCmd() *cobra.Command {
 		policiesCSV        string
 		scenariosCSV       string
 		loadsCSV           string
+		matrixMode         string
+		shardIndex         int
+		shardCount         int
 		seed               int64
 		repetitions        int
 		mode               string
 		dryRun             bool
+		parallelism        int
 		stopOnFail         bool
+		allowFailedCells   bool
 		stream             bool
 		keepUp             bool
 		watchdogMins       int
@@ -41,6 +47,8 @@ func newRunCmd() *cobra.Command {
 		resume             bool
 		renderReport       bool
 		disableNativeStats bool
+		showProgress       bool
+		progressInterval   time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -72,16 +80,43 @@ Use --dry-run first to see the planned cell list.`,
 
 			scenarios := matrix.ParseCSV(scenariosCSV)
 
-			sel := matrix.Selection{
-				Gateways:    gateways,
-				Policies:    policies,
-				Scenarios:   scenarios,
-				Loads:       loads,
-				Repetitions: repetitions,
+			var cells []matrix.Cell
+			var err error
+			switch matrixMode {
+			case "selection":
+				sel := matrix.Selection{
+					Gateways:    gateways,
+					Policies:    policies,
+					Scenarios:   scenarios,
+					Loads:       loads,
+					Repetitions: repetitions,
+				}
+				cells, err = sel.Expand()
+			case "canonical":
+				if len(scenarios) > 0 || cmd.Flags().Changed("policies") {
+					return fmt.Errorf("--matrix canonical owns policies/scenarios; use --gateways/--loads/--reps to narrow it")
+				}
+				cells, err = matrix.CanonicalReportCells(gateways, loads, repetitions)
+			default:
+				return fmt.Errorf("unknown --matrix %q (valid: selection, canonical)", matrixMode)
 			}
-			cells, err := sel.Expand()
 			if err != nil {
 				return err
+			}
+			if shardCount < 1 {
+				return fmt.Errorf("--shard-count must be >= 1")
+			}
+			if shardIndex < 0 || shardIndex >= shardCount {
+				return fmt.Errorf("--shard-index must be in [0, %d), got %d", shardCount, shardIndex)
+			}
+			if shardCount > 1 {
+				sharded := make([]matrix.Cell, 0, (len(cells)+shardCount-1)/shardCount)
+				for i, cell := range cells {
+					if i%shardCount == shardIndex {
+						sharded = append(sharded, cell)
+					}
+				}
+				cells = sharded
 			}
 
 			runID := flagRunID
@@ -94,6 +129,9 @@ Use --dry-run first to see the planned cell list.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "=== bench run (dry-run) ===\n")
 				fmt.Fprintf(cmd.OutOrStdout(), "  run-id:      %s\n", runID)
 				fmt.Fprintf(cmd.OutOrStdout(), "  mode:        %s\n", mode)
+				if shardCount > 1 {
+					fmt.Fprintf(cmd.OutOrStdout(), "  shard:       %d/%d\n", shardIndex+1, shardCount)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  total cells: %d\n", len(cells))
 				for i, c := range cells {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %3d. %s\n", i+1, c.ID())
@@ -145,17 +183,23 @@ Use --dry-run first to see the planned cell list.`,
 			}
 
 			// -------------------------------------------------- runners
-			runr := &runner.Runner{
-				RepoRoot:           flagRepoRoot,
-				RunID:              runID,
-				Seed:               seed,
-				Stream:             stream,
-				KeepUp:             keepUp,
-				Watchdog:           time.Duration(watchdogMins) * time.Minute,
-				RetryOnCrash:       retryOnCrash,
-				DisableNativeStats: disableNativeStats,
-				Logger:             cmd.OutOrStderr(),
-				Verbose:            flagVerbose,
+			if parallelism < 1 {
+				parallelism = 1
+			}
+			newRunner := func(cellEnv func(matrix.Cell) []string) *runner.Runner {
+				return &runner.Runner{
+					RepoRoot:           flagRepoRoot,
+					RunID:              runID,
+					Seed:               seed,
+					Stream:             stream,
+					KeepUp:             keepUp,
+					Watchdog:           time.Duration(watchdogMins) * time.Minute,
+					RetryOnCrash:       retryOnCrash,
+					DisableNativeStats: disableNativeStats,
+					Logger:             cmd.OutOrStderr(),
+					Verbose:            flagVerbose,
+					CellEnv:            cellEnv,
+				}
 			}
 			parityChk := &parity.Checker{
 				RepoRoot: flagRepoRoot,
@@ -178,7 +222,7 @@ Use --dry-run first to see the planned cell list.`,
 			// starts. --skip-parity remains as an explicit escape hatch
 			// for AWS debugging.
 			parityAutoSkipped := false
-			if mode == "local" && !skipParity {
+			if (mode == "local" || parallelism > 1) && !skipParity {
 				skipParity = true
 				parityAutoSkipped = true
 			}
@@ -187,18 +231,50 @@ Use --dry-run first to see the planned cell list.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "=== bench run ===\n")
 			fmt.Fprintf(cmd.OutOrStdout(), "  run-id:    %s\n", runID)
 			fmt.Fprintf(cmd.OutOrStdout(), "  mode:      %s\n", mode)
+			if shardCount > 1 {
+				fmt.Fprintf(cmd.OutOrStdout(), "  shard:     %d/%d\n", shardIndex+1, shardCount)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  cells:     %d\n", len(cells))
+			fmt.Fprintf(cmd.OutOrStdout(), "  parallel:  %d\n", parallelism)
 			if gatewayTarget != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "  target:    %s\n", gatewayTarget)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "  reports:   %s/\n", runDir)
 			if parityAutoSkipped {
 				fmt.Fprintf(cmd.OutOrStdout(),
-					"  parity:    delegated to load-gateway.sh (auto in --mode local)\n")
+					"  parity:    delegated to load-gateway.sh (auto in local/parallel mode)\n")
 			}
 
-			var pass, excluded, failed, crashed, skipped int
-			for i, cell := range cells {
+			var progress *progressTracker
+			if showProgress && !flagQuiet {
+				progress = newProgressTracker(cmd.OutOrStdout(), cells, progressInterval)
+				progress.PrintPlan()
+			}
+
+			var (
+				pass, excluded, failed, crashed, skipped int
+				countsMu                                 sync.Mutex
+			)
+			addVerdict := func(v runner.Verdict) {
+				countsMu.Lock()
+				defer countsMu.Unlock()
+				switch v {
+				case runner.VerdictPass:
+					pass++
+				case runner.VerdictExcluded:
+					excluded++
+				case runner.VerdictCrashed:
+					crashed++
+				default:
+					failed++
+				}
+			}
+			addSkipped := func() {
+				countsMu.Lock()
+				skipped++
+				countsMu.Unlock()
+			}
+			runCell := func(i int, cell matrix.Cell, runr *runner.Runner) error {
 				idx := fmt.Sprintf("[%d/%d]", i+1, len(cells))
 				if !flagQuiet {
 					fmt.Fprintln(cmd.OutOrStdout(), "")
@@ -206,14 +282,19 @@ Use --dry-run first to see the planned cell list.`,
 				}
 				if resume {
 					if v, done := cp.HasDone(cell.ID()); done {
-						skipped++
+						addSkipped()
 						if flagQuiet {
 							fmt.Fprintf(cmd.OutOrStdout(), "%s SKIP %s — resume (%s)\n", idx, formatCellLabel(cell), v)
 						} else {
 							fmt.Fprintf(cmd.OutOrStdout(), "  resume: skipped — already recorded as %s\n", v)
 						}
-						continue
+						return nil
 					}
+				}
+				var stopProgress func()
+				cellStarted := time.Now()
+				if progress != nil {
+					stopProgress = progress.StartCell(i, cell)
 				}
 
 				// ---------- parity gate
@@ -236,10 +317,8 @@ Use --dry-run first to see the planned cell list.`,
 						verdict := runner.VerdictFail
 						if rep.Status == parity.StatusFeatureMissing {
 							verdict = runner.VerdictExcluded
-							excluded++
-						} else {
-							failed++
 						}
+						addVerdict(verdict)
 						res := runner.Result{
 							Cell:      cell,
 							Verdict:   verdict,
@@ -249,6 +328,10 @@ Use --dry-run first to see the planned cell list.`,
 							EndedAt:   time.Now().UTC(),
 						}
 						_ = cp.Append(res)
+						if stopProgress != nil {
+							stopProgress()
+							progress.FinishCell(i, cell, time.Since(cellStarted), string(verdict))
+						}
 						if flagQuiet {
 							fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s — parity gate (%s)\n",
 								idx, verdict, formatCellLabel(cell), rep.Status)
@@ -259,7 +342,7 @@ Use --dry-run first to see the planned cell list.`,
 						if stopOnFail && verdict == runner.VerdictFail {
 							return fmt.Errorf("stop-on-fail: cell %s failed parity (%s)", cell.ID(), rep.Status)
 						}
-						continue
+						return nil
 					}
 				} else if !flagQuiet {
 					fmt.Fprintf(cmd.OutOrStdout(), "  parity:  skipped (--skip-parity)\n")
@@ -271,17 +354,12 @@ Use --dry-run first to see the planned cell list.`,
 				}
 				res := runr.Run(ctx, cell)
 				_ = cp.Append(res)
-
-				switch res.Verdict {
-				case runner.VerdictPass:
-					pass++
-				case runner.VerdictExcluded:
-					excluded++
-				case runner.VerdictCrashed:
-					crashed++
-				default:
-					failed++
+				if stopProgress != nil {
+					stopProgress()
+					progress.FinishCell(i, cell, time.Since(cellStarted), string(res.Verdict))
 				}
+
+				addVerdict(res.Verdict)
 				if flagQuiet {
 					tries := ""
 					if res.Attempts > 1 {
@@ -300,6 +378,50 @@ Use --dry-run first to see the planned cell list.`,
 					res.Verdict == runner.VerdictCrashed ||
 					res.Verdict == runner.VerdictTimeout) {
 					return fmt.Errorf("stop-on-fail: cell %s ended %s", cell.ID(), res.Verdict)
+				}
+				return nil
+			}
+			if parallelism == 1 {
+				runr := newRunner(nil)
+				for i, cell := range cells {
+					if err := runCell(i, cell, runr); err != nil {
+						return err
+					}
+				}
+			} else {
+				if stopOnFail {
+					return fmt.Errorf("--stop-on-fail is not supported with --parallel > 1")
+				}
+				type job struct {
+					index int
+					cell  matrix.Cell
+				}
+				jobs := make(chan job)
+				errCh := make(chan error, parallelism)
+				var wg sync.WaitGroup
+				for worker := 0; worker < parallelism; worker++ {
+					slot := worker
+					runr := newRunner(parallelCellEnv(runID, slot))
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for j := range jobs {
+							if err := runCell(j.index, j.cell, runr); err != nil {
+								errCh <- err
+							}
+						}
+					}()
+				}
+				for i, cell := range cells {
+					jobs <- job{index: i, cell: cell}
+				}
+				close(jobs)
+				wg.Wait()
+				close(errCh)
+				for err := range errCh {
+					if err != nil {
+						return err
+					}
 				}
 			}
 
@@ -377,7 +499,7 @@ Use --dry-run first to see the planned cell list.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "  manifest: %s\n", manifestPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  reports:  %s/\n", runDir)
 
-			if failed > 0 || crashed > 0 {
+			if (failed > 0 || crashed > 0) && !allowFailedCells {
 				return fmt.Errorf("sweep ended with %d failed cells", failed+crashed)
 			}
 			return nil
@@ -392,11 +514,21 @@ Use --dry-run first to see the planned cell list.`,
 		"comma-separated scenarios; one-per-policy in order; auto-derived when empty")
 	cmd.Flags().StringVar(&loadsCSV, "loads", "p1-baseline",
 		"comma-separated load profiles or 'all'/'http'/'paced'")
+	cmd.Flags().StringVar(&matrixMode, "matrix", "selection",
+		"matrix expansion mode: selection (explicit policies/scenarios) or canonical (published report matrix)")
+	cmd.Flags().IntVar(&shardIndex, "shard-index", 0,
+		"zero-based shard index for fleet runs")
+	cmd.Flags().IntVar(&shardCount, "shard-count", 1,
+		"total shard count for fleet runs")
 	cmd.Flags().Int64Var(&seed, "seed", 42, "RNG seed (forwarded to k6 via BENCH_RUN_SEED)")
 	cmd.Flags().IntVar(&repetitions, "reps", 1, "repetitions per cell")
 	cmd.Flags().StringVar(&mode, "mode", "local", "infra mode: local | aws (annotation only)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the cell plan and exit")
+	cmd.Flags().IntVar(&parallelism, "parallel", 1,
+		"number of cells to run concurrently; >1 allocates isolated compose projects and host ports")
 	cmd.Flags().BoolVar(&stopOnFail, "stop-on-fail", false, "halt sweep on the first FAIL/CRASHED")
+	cmd.Flags().BoolVar(&allowFailedCells, "allow-failed-cells", false,
+		"exit 0 after rendering the report even if some cells failed or crashed")
 	cmd.Flags().BoolVar(&stream, "stream", false, "forward k6 per-request streaming JSON")
 	cmd.Flags().BoolVar(&keepUp, "keep-up", false, "leave the gateway up between cells (debug)")
 	cmd.Flags().IntVar(&watchdogMins, "watchdog-mins", 30,
@@ -422,6 +554,10 @@ Use --dry-run first to see the planned cell list.`,
 		"skip cells already recorded in checkpoint.jsonl")
 	cmd.Flags().BoolVar(&renderReport, "report", true,
 		"render reports/<run-id>/report.html after the sweep (set false to skip)")
+	cmd.Flags().BoolVar(&showProgress, "progress", true,
+		"print progress bar, elapsed time, and ETA while the sweep runs")
+	cmd.Flags().DurationVar(&progressInterval, "progress-interval", 30*time.Second,
+		"how often to print in-flight progress updates")
 
 	return cmd
 }
@@ -479,4 +615,43 @@ func formatRunnerSummary(res runner.Result) string {
 		summary += " — " + res.Error
 	}
 	return summary
+}
+
+func parallelCellEnv(runID string, slot int) func(matrix.Cell) []string {
+	runSlug := sanitizeDockerName(runID)
+	if runSlug == "" {
+		runSlug = "run"
+	}
+	project := fmt.Sprintf("gwb-%s-w%02d", runSlug, slot+1)
+	basePort := 20000 + slot*10
+	return func(cell matrix.Cell) []string {
+		prefix := fmt.Sprintf("%s-%s", project, sanitizeDockerName(cell.Gateway))
+		return []string{
+			"BENCH_COMPOSE_PROJECT=" + project,
+			"BENCH_CONTAINER_PREFIX=" + prefix,
+			fmt.Sprintf("GATEWAY_HTTP_PORT=%d", basePort),
+			fmt.Sprintf("GATEWAY_HTTPS_PORT=%d", basePort+1),
+			fmt.Sprintf("GATEWAY_ADMIN_PORT=%d", basePort+2),
+			fmt.Sprintf("GATEWAY_ENVOY_ADMIN_PORT=%d", basePort+3),
+		}
+	}
+}
+
+func sanitizeDockerName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

@@ -68,3 +68,77 @@ resource "aws_instance" "backend" {
     Role = "backend"
   }
 }
+
+# -----------------------------------------------------------------------------
+# Optional runner fleet — physically separate hosts for sharded turbo sweeps
+# -----------------------------------------------------------------------------
+resource "aws_instance" "runner" {
+  count = var.runner_count
+
+  launch_template {
+    id      = aws_launch_template.runner.id
+    version = "$Latest"
+  }
+
+  placement_group             = aws_placement_group.bench.name
+  user_data_replace_on_change = true
+
+  tags = merge(local.required_tags, {
+    Name = "${var.name_prefix}-runner-${count.index + 1}"
+    Role = "runner"
+  })
+}
+
+# -----------------------------------------------------------------------------
+# Clean cluster fleet — each shard gets loadgen -> gateway -> backend
+# -----------------------------------------------------------------------------
+resource "aws_instance" "cluster_loadgen" {
+  count = var.cluster_count
+
+  launch_template {
+    id      = aws_launch_template.cluster_loadgen.id
+    version = "$Latest"
+  }
+
+  placement_group             = aws_placement_group.bench.name
+  user_data_replace_on_change = true
+
+  tags = merge(local.required_tags, {
+    Name = "${var.name_prefix}-cluster-${count.index + 1}-loadgen"
+    Role = "cluster-loadgen"
+  })
+}
+
+resource "aws_instance" "cluster_gateway" {
+  count = var.cluster_count
+
+  launch_template {
+    id      = aws_launch_template.cluster_gateway.id
+    version = "$Latest"
+  }
+
+  placement_group             = aws_placement_group.bench.name
+  user_data_replace_on_change = true
+
+  tags = merge(local.required_tags, {
+    Name = "${var.name_prefix}-cluster-${count.index + 1}-gateway"
+    Role = "cluster-gateway"
+  })
+}
+
+resource "aws_instance" "cluster_backend" {
+  count = var.cluster_count
+
+  launch_template {
+    id      = aws_launch_template.cluster_backend.id
+    version = "$Latest"
+  }
+
+  placement_group             = aws_placement_group.bench.name
+  user_data_replace_on_change = true
+
+  tags = merge(local.required_tags, {
+    Name = "${var.name_prefix}-cluster-${count.index + 1}-backend"
+    Role = "cluster-backend"
+  })
+}

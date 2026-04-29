@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -19,12 +20,13 @@ import (
 type Options struct {
 	Title             string
 	EnvLine           string
+	LogoPath          string
 	OutputPath        string
 	UnstableThreshold float64 // (max-min)/mean RPS spread; 0.05 = 5%
 	HowToRead         string  // free-form note inserted under the hero
 	HeroNote          string  // appended to HowToRead when set; usually
-	                          // populated by the renderer when it sees
-	                          // timing-broken cells.
+	// populated by the renderer when it sees
+	// timing-broken cells.
 }
 
 // DefaultHowToRead is the canonical reviewer-facing note. Mirrors
@@ -58,6 +60,7 @@ func Render(loaded *Loaded, opts Options) (string, error) {
 		Title:       firstNonEmpty(opts.Title, defaultTitle(loaded)),
 		GeneratedAt: time.Now().UTC().Format("2006-01-02 15:04 UTC"),
 		EnvLine:     firstNonEmpty(opts.EnvLine, defaultEnvLine(loaded)),
+		LogoDataURI: "",
 		HowToRead:   firstNonEmpty(opts.HowToRead, DefaultHowToRead),
 		Manifest:    loaded.Manifest,
 		Summary:     BuildSummary(idx, loads),
@@ -65,6 +68,7 @@ func Render(loaded *Loaded, opts Options) (string, error) {
 		Footer:      BuildFooter(idx),
 	}
 	view.MemoryChips = BuildMemoryChips(view.Summary)
+	view.HasResourceData = len(view.MemoryChips) > 0
 
 	// Radar focuses on p1-baseline by default — the load profile we
 	// expect to be present in every public report. Falls back to the
@@ -82,6 +86,19 @@ func Render(loaded *Loaded, opts Options) (string, error) {
 	}
 
 	view.Downloads = computeDownloads(loaded, opts.OutputPath)
+	if opts.LogoPath != "" {
+		logo, err := imageDataURI(opts.LogoPath)
+		if err != nil {
+			return "", err
+		}
+		view.LogoDataURI = logo
+	} else {
+		logo, err := embeddedLogoDataURI()
+		if err != nil {
+			return "", err
+		}
+		view.LogoDataURI = logo
+	}
 
 	if b, err := jsonStr(view.RadarLabels); err == nil {
 		view.RadarLabelsJSON = b
@@ -136,6 +153,34 @@ func Render(loaded *Loaded, opts Options) (string, error) {
 		return "", err
 	}
 	return out, nil
+}
+
+func imageDataURI(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read logo %s: %w", path, err)
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	mime := "image/png"
+	switch ext {
+	case ".svg":
+		mime = "image/svg+xml"
+	case ".jpg", ".jpeg":
+		mime = "image/jpeg"
+	case ".webp":
+		mime = "image/webp"
+	case ".gif":
+		mime = "image/gif"
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+func embeddedLogoDataURI() (string, error) {
+	data, err := assets.ReadFile("assets/logo-cropped.png")
+	if err != nil {
+		return "", fmt.Errorf("read embedded logo: %w", err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 // -----------------------------------------------------------------------------
@@ -306,4 +351,3 @@ func jsonStr(v interface{}) (string, error) {
 	}
 	return string(b), nil
 }
-

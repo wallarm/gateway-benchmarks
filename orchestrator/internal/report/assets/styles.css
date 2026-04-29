@@ -13,25 +13,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-s
 .wrap { max-width: 1280px; margin: 0 auto; padding: 0 1.5rem 3rem; }
 
 .hero { background: var(--dark); color: #fff; padding: 2.5rem 0 2rem; margin-bottom: 2rem; }
-.hero .wrap { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1rem; }
+.hero .wrap { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: nowrap; gap: 2rem; }
 .hero h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
 .hero .meta { font-size: 0.85rem; color: #9ca3af; margin-top: 0.35rem; }
 .hero .meta-mono { font-family: var(--mono); font-size: 0.78rem; color: #a3a8b3; }
 .hero .meta code { background: rgba(255,255,255,0.06); border-radius: 3px; padding: 0 0.25rem; }
-
-.hero-downloads { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-.hero-downloads .dl {
-  background: rgba(255,255,255,0.06);
-  color: #fff;
-  border: 1px solid rgba(255,255,255,0.18);
-  text-decoration: none;
-  border-radius: 6px;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.78rem;
-  font-family: var(--mono);
-  transition: background 0.15s;
-}
-.hero-downloads .dl:hover { background: rgba(255,255,255,0.14); }
+.hero-logo-wrap { margin-left: auto; display: flex; align-items: flex-end; justify-content: flex-end; padding-bottom: 0.1rem; }
+.hero-logo { width: 220px; max-height: 88px; object-fit: contain; object-position: right bottom; display: block; }
 
 .card { background: var(--card); border-radius: 10px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .section-title { font-size: 1.25rem; font-weight: 700; margin: 2.5rem 0 1rem; padding-bottom: 0.4rem; border-bottom: 2px solid var(--border); }
@@ -50,6 +38,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-s
 .unstable-row { box-shadow: inset 4px 0 0 var(--warn); }
 .excluded-row { background: #fafafa; color: var(--muted); }
 .excluded-cell { font-style: italic; }
+.failed-row { background: #fff1f2; color: #991b1b; }
+.failed-cell { font-style: italic; }
 
 .mem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.75rem; margin-top: 0.25rem; }
 .mem-chip { text-align: center; padding: 0.75rem 0.5rem; border-radius: 8px; background: #f8f9fb; }
@@ -67,6 +57,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-s
 .scenario-header h3 { font-size: 1.2rem; }
 .parity-line { color: var(--muted); font-size: 0.85rem; font-family: var(--mono); padding: 0.15rem 0.5rem; background: #eef2f6; border-radius: 4px; }
 .unstable-tag { color: #fff; background: var(--warn); font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 4px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
+.bottleneck { display: inline-block; border-radius: 999px; padding: 0.12rem 0.5rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
+.bottleneck-cpu { background: #fee2e2; color: #991b1b; }
+.bottleneck-ram { background: #ffedd5; color: #9a3412; }
+.bottleneck-disk { background: #fef3c7; color: #92400e; }
+.bottleneck-network { background: #dbeafe; color: #1e40af; }
+.bottleneck-ok { background: #dcfce7; color: #166534; }
+.bottleneck-unknown { background: #e5e7eb; color: #374151; }
 
 .policy-meta { background: #f8f9fb; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.88rem; }
 .policy-meta div { margin: 0.25rem 0; }
@@ -89,18 +86,36 @@ td { padding: 0.5rem 0.65rem; border-bottom: 1px solid #f0f1f3; font-size: 0.85r
 tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: #f8f9fb; }
 .ovh { color: var(--muted); font-size: 0.8rem; }
+.load-section table { table-layout: fixed; }
+.load-section th,
+.load-section td { white-space: nowrap; vertical-align: middle; line-height: 1.25; }
+.load-section th:not(:first-child),
+.load-section td.num { text-align: right; }
+.load-section th:nth-child(1), .load-section td:nth-child(1) { width: 120px; }
+.load-section th:nth-child(2), .load-section td:nth-child(2) { width: 115px; }
+.load-section th:nth-child(3), .load-section td:nth-child(3),
+.load-section th:nth-child(4), .load-section td:nth-child(4) { width: 90px; }
+.load-section th:nth-child(5), .load-section td:nth-child(5) { width: 80px; }
+.load-section th:nth-child(6), .load-section td:nth-child(6) { width: 120px; }
+.load-section th:nth-child(7), .load-section td:nth-child(7) { width: 150px; }
+.load-section th:nth-child(8), .load-section td:nth-child(8) { width: 80px; }
+.load-section th:nth-child(9), .load-section td:nth-child(9) { width: 120px; text-align: center; }
 
 .radar-wrap { max-width: 540px; margin: 0 auto; }
 
 .note-card { background: #fffbe6; border: 1px solid #f9dc73; border-radius: 8px; padding: 0.75rem 1rem; margin: 1rem 0; font-size: 0.88rem; }
 .note-card strong { color: #876800; }
+.note-card summary { cursor: pointer; }
+.note-card:not([open]) .note-card-body { display: none; }
+.note-card-body { margin-top: 0.65rem; }
 
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; color: var(--muted); margin-top: 3rem; font-size: 0.82rem; padding: 1.5rem 0; border-top: 1px solid var(--border); }
 
 @media (max-width: 900px) {
   .chart-row { grid-template-columns: 1fr; }
   .hero .wrap { flex-direction: column; align-items: flex-start; }
-  .hero-downloads { flex-direction: row; }
+  .hero-logo-wrap { margin-left: 0; }
+  .hero-logo { width: 160px; max-height: 64px; }
   .mem-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
   table { font-size: 0.78rem; }
   th { padding: 0.45rem 0.5rem; }
@@ -109,7 +124,6 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.
 @media print {
   .hero { background: #fff; color: #000; border-bottom: 2px solid #000; }
   .hero .meta, .hero .meta-mono { color: #666; }
-  .hero-downloads { display: none; }
   .tab-btn { display: none; }
   .tab-panel { display: block !important; page-break-inside: avoid; }
   .card, .chart-box, table { box-shadow: none; border: 1px solid #ddd; }

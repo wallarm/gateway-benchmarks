@@ -51,6 +51,33 @@ output "ssh_backend" {
   value       = "ssh -i ${var.ssh_private_key_path} ubuntu@${aws_instance.backend.public_ip}"
 }
 
+output "runner_public_ips" {
+  description = "Public IPv4s of optional sharded runner hosts."
+  value       = [for r in aws_instance.runner : r.public_ip]
+}
+
+output "ssh_runners" {
+  description = "Ready-to-paste SSH commands for optional sharded runner hosts."
+  value       = [for r in aws_instance.runner : "ssh -i ${var.ssh_private_key_path} ubuntu@${r.public_ip}"]
+}
+
+output "cluster_shards" {
+  description = "Clean benchmark shard clusters: loadgen -> gateway -> backend."
+  value = [
+    for i in range(var.cluster_count) : {
+      index              = i
+      loadgen_public_ip  = aws_instance.cluster_loadgen[i].public_ip
+      gateway_public_ip  = aws_instance.cluster_gateway[i].public_ip
+      gateway_private_ip = aws_instance.cluster_gateway[i].private_ip
+      backend_public_ip  = aws_instance.cluster_backend[i].public_ip
+      backend_private_ip = aws_instance.cluster_backend[i].private_ip
+      ssh_loadgen        = "ssh -i ${var.ssh_private_key_path} ubuntu@${aws_instance.cluster_loadgen[i].public_ip}"
+      ssh_gateway        = "ssh -i ${var.ssh_private_key_path} ubuntu@${aws_instance.cluster_gateway[i].public_ip}"
+      ssh_backend        = "ssh -i ${var.ssh_private_key_path} ubuntu@${aws_instance.cluster_backend[i].public_ip}"
+    }
+  ]
+}
+
 output "summary" {
   description = "Human-readable summary of the cluster — printed after `tofu apply` to remind the operator of the topology and ready-to-use SSH commands."
   value       = <<-EOT

@@ -107,7 +107,7 @@ say "  ✓ /tyk/apis knows api_id=p03-jwks-rs256-basic"
 #    Tyk actually sees over the network — not whatever happens to be
 #    in the loadgen-side filesystem.
 # -----------------------------------------------------------------------------
-served_jwks=$(docker exec gwb-tyk-jwks-server sh -c \
+served_jwks=$(docker exec "${BENCH_CONTAINER_PREFIX:-gwb-tyk}-jwks-server" sh -c \
     'wget -qO- http://127.0.0.1/.well-known/jwks.json' 2>/dev/null || true)
 [[ -n "${served_jwks}" ]] || fail "jwks-server returned empty body for /.well-known/jwks.json"
 

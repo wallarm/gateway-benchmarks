@@ -143,7 +143,17 @@ fi
 LOGS_DIR="${OUTPUT}/logs"
 mkdir -p "${OUTPUT}" "${LOGS_DIR}"
 
-GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:9080}"
+GATEWAY_HTTP_PORT="${GATEWAY_HTTP_PORT:-9080}"
+GATEWAY_HTTPS_PORT="${GATEWAY_HTTPS_PORT:-9443}"
+GATEWAY_ADMIN_PORT="${GATEWAY_ADMIN_PORT:-9081}"
+GATEWAY_ENVOY_ADMIN_PORT="${GATEWAY_ENVOY_ADMIN_PORT:-9901}"
+BENCH_COMPOSE_PROJECT="${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-${GATEWAY}}"
+BENCH_CONTAINER_PREFIX="${BENCH_CONTAINER_PREFIX:-gwb-${GATEWAY}}"
+GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:${GATEWAY_HTTP_PORT}}"
+export GATEWAY_HTTP_PORT GATEWAY_HTTPS_PORT GATEWAY_ADMIN_PORT GATEWAY_ENVOY_ADMIN_PORT
+export BENCH_COMPOSE_PROJECT BENCH_CONTAINER_PREFIX
+export DATA_URL="${DATA_URL:-${GATEWAY_TARGET}}"
+export ADMIN_URL="${ADMIN_URL:-http://localhost:${GATEWAY_ADMIN_PORT}}"
 
 # -----------------------------------------------------------------------------
 # Colors
@@ -190,7 +200,7 @@ fi
 # parity-gateway.sh — keeps the two lifecycles 100% consistent).
 # -----------------------------------------------------------------------------
 profile_env="gateways/${GATEWAY}/${POLICY}/.env"
-compose_cmd=(docker compose)
+compose_cmd=(docker compose -p "${BENCH_COMPOSE_PROJECT}")
 if [[ -f "${profile_env}" ]]; then
     compose_cmd+=(--env-file "${profile_env}")
 fi
@@ -413,7 +423,7 @@ docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 # the policy-overhead number.
 # -----------------------------------------------------------------------------
 STATS_CSV="${OUTPUT}/docker-stats.csv"
-GATEWAY_CONTAINER="gwb-${GATEWAY}"
+GATEWAY_CONTAINER="${BENCH_CONTAINER_PREFIX}"
 SIDECAR_PID=""
 # `bench run` (the Go orchestrator) owns its own native Go
 # docker-stats collector (internal/stats) and suppresses this shell
@@ -457,6 +467,7 @@ docker_run_args=(
     -v "${abs_k6}:/k6:ro"
     -v "${abs_output}:/out"
     -e "BENCH_TARGET_URL=http://gateway:9080"
+    -e "BENCH_TARGET_URL_HTTPS=${BENCH_TARGET_URL_HTTPS:-https://gateway:9443}"
     -e "BENCH_LOAD_PROFILE=${LOAD}"
     -e "BENCH_POLICY_PROFILE=${POLICY}"
     -e "BENCH_SCENARIO=${SCENARIO}"

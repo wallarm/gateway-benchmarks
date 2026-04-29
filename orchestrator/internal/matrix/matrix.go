@@ -31,6 +31,27 @@ var CanonicalPolicies = []string{
 	"p12-full-pipeline",
 }
 
+// CanonicalRankingPolicies excludes the supplemental p03 capability
+// profile. The published ranking matrix is:
+//   - 11 HTTP ranking profiles (p01,p02,p04..p12)
+//   - 2 HTTPS scenarios tied to p01 and p12
+//
+// p03 still exists for parity/capability checks, but does not consume
+// load budget in the canonical report.
+var CanonicalRankingPolicies = []string{
+	"p01-vanilla",
+	"p02-jwt",
+	"p04-rl-static",
+	"p05-rl-endpoint",
+	"p06-rl-dynamic-low",
+	"p07-rl-dynamic-high",
+	"p08-req-headers",
+	"p09-resp-headers",
+	"p10-req-body",
+	"p11-resp-body",
+	"p12-full-pipeline",
+}
+
 // CanonicalGateways is the canonical column ordering. Tests pin the
 // list explicitly; CLI flags can override.
 var CanonicalGateways = []string{
@@ -155,6 +176,56 @@ func (s Selection) Expand() ([]Cell, error) {
 						Gateway:    gw,
 						Policy:     policy,
 						Scenario:   scenarios[i],
+						Load:       load,
+						Repetition: rep,
+					})
+				}
+			}
+		}
+	}
+	return cells, nil
+}
+
+// CanonicalReportCells expands the published report matrix:
+// (11 ranking HTTP profiles + 2 HTTPS scenarios) x loads x gateways x reps.
+func CanonicalReportCells(gateways, loads []string, repetitions int) ([]Cell, error) {
+	if len(gateways) == 0 {
+		return nil, fmt.Errorf("matrix: at least one --gateway is required")
+	}
+	if len(loads) == 0 {
+		return nil, fmt.Errorf("matrix: at least one --load is required")
+	}
+	if repetitions < 1 {
+		repetitions = 1
+	}
+	for _, l := range loads {
+		if _, ok := AllowedLoads[l]; !ok {
+			return nil, fmt.Errorf("matrix: unknown load profile %q", l)
+		}
+	}
+
+	type policyScenario struct {
+		policy   string
+		scenario string
+	}
+	pairs := make([]policyScenario, 0, len(CanonicalRankingPolicies)+len(HTTPSScenarios))
+	for _, policy := range CanonicalRankingPolicies {
+		pairs = append(pairs, policyScenario{policy: policy, scenario: ScenarioFor(policy)})
+	}
+	pairs = append(pairs,
+		policyScenario{policy: "p01-vanilla", scenario: HTTPSScenarios["p01-vanilla"]},
+		policyScenario{policy: "p12-full-pipeline", scenario: HTTPSScenarios["p12-full-pipeline"]},
+	)
+
+	var cells []Cell
+	for _, gw := range gateways {
+		for _, pair := range pairs {
+			for _, load := range loads {
+				for rep := 1; rep <= repetitions; rep++ {
+					cells = append(cells, Cell{
+						Gateway:    gw,
+						Policy:     pair.policy,
+						Scenario:   pair.scenario,
 						Load:       load,
 						Repetition: rep,
 					})

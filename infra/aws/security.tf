@@ -92,6 +92,16 @@ resource "aws_security_group_rule" "loadgen_to_gateway_http" {
   description              = "k6 to gateway HTTP/1.1"
 }
 
+resource "aws_security_group_rule" "loadgen_to_gateway_ssh" {
+  type                     = "egress"
+  security_group_id        = aws_security_group.loadgen.id
+  protocol                 = "tcp"
+  from_port                = 22
+  to_port                  = 22
+  source_security_group_id = aws_security_group.gateway.id
+  description              = "loadgen controls its paired gateway during clean shard runs"
+}
+
 resource "aws_security_group_rule" "loadgen_to_gateway_https" {
   type                     = "egress"
   security_group_id        = aws_security_group.loadgen.id
@@ -123,6 +133,16 @@ resource "aws_security_group_rule" "gateway_ssh_in" {
   to_port           = 22
   cidr_blocks       = var.allowed_ssh_cidrs
   description       = "operator SSH"
+}
+
+resource "aws_security_group_rule" "gateway_ssh_from_loadgen" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.gateway.id
+  protocol                 = "tcp"
+  from_port                = 22
+  to_port                  = 22
+  source_security_group_id = aws_security_group.loadgen.id
+  description              = "loadgen controls its paired gateway during clean shard runs"
 }
 
 resource "aws_security_group_rule" "gateway_from_loadgen_http" {

@@ -16,35 +16,27 @@
       <p class="meta">
         Generated {{ .GeneratedAt | esc }}
         &nbsp;&bull;&nbsp; {{ .EnvLine | esc }}
+        {{- with .Manifest }}{{- if .K6.Image }}
+        &nbsp;&bull;&nbsp; <span title="{{ .K6.Digest | esc }}">k6 {{ k6Version .K6.Image | esc }}</span>
+        {{- end }}{{- end }}
       </p>
-      {{- with .Manifest }}
-      <p class="meta meta-mono">
-        run-id <code>{{ .RunID | esc }}</code>
-        &nbsp;·&nbsp; mode <code>{{ default .Mode "—" | esc }}</code>
-        &nbsp;·&nbsp; bench {{ default .Bench.Version "dev" | esc }}
-        ({{ shortSHA .Bench.GitSHA | esc }}{{ if .Bench.GitDirty }}-dirty{{ end }})
-        &nbsp;·&nbsp; source {{ shortSHA .Git.SHA | esc }}{{ if .Git.Dirty }}-dirty{{ end }}
-        &nbsp;·&nbsp; k6 <code>{{ shortDigest .K6.Digest | esc }}</code>
-      </p>
-      {{- end }}
     </div>
-    <div class="hero-downloads">
-      {{- with .Downloads.Manifest }}<a class="dl" href="{{ . | esc }}" download>manifest.json</a>{{ end }}
-      {{- with .Downloads.CSV      }}<a class="dl" href="{{ . | esc }}" download>matrix.csv</a>{{ end }}
-      {{- with .Downloads.JSONL    }}<a class="dl" href="{{ . | esc }}" download>cells.jsonl</a>{{ end }}
-      {{- with .Downloads.Markdown }}<a class="dl" href="{{ . | esc }}" download>matrix.md</a>{{ end }}
+    {{- if .LogoDataURI }}
+    <div class="hero-logo-wrap">
+      <img class="hero-logo" src="{{ .LogoDataURI | urlSafe }}" alt="Report logo">
     </div>
+    {{- end }}
   </div>
 </header>
 
 <div class="wrap">
 
 {{- if .HowToRead }}
-<div class="note-card">
-  <strong>How to read this report.</strong>
-  {{ .HowToRead | safe }}
+<details class="note-card">
+  <summary><strong>How to read this report</strong></summary>
+  <div class="note-card-body">{{ .HowToRead | safe }}</div>
   {{- with .HeroNote }}<br><br>{{ . | safe }}{{ end }}
-</div>
+</details>
 {{- end }}
 
 <h2 class="section-title">Executive Summary</h2>
@@ -57,8 +49,10 @@
       <th style="text-align:right">Avg RPS</th>
       <th>Max errors</th>
       <th>Coverage</th>
+      {{- if $.HasResourceData }}
       <th>Peak RSS</th>
       <th>Steady RSS</th>
+      {{- end }}
     </tr></thead>
     <tbody>
     {{- range $i, $row := .Summary }}
@@ -69,8 +63,10 @@
         <td class="num">{{ fmtFloat $row.AvgRPS 1 }}</td>
         <td class="{{ if gt $row.MaxErrPct 0.5 }}error-cell{{ end }}">{{ fmtFloat $row.MaxErrPct 1 }}%</td>
         <td>{{ $row.Coverage | esc }}</td>
-        <td class="meta-cell">~{{ fmtFloat $row.PeakRSSMB 0 }} MB</td>
-        <td class="meta-cell">~{{ fmtFloat $row.SteadyRSSMB 0 }} MB</td>
+        {{- if $.HasResourceData }}
+        <td class="meta-cell">{{ fmtMaybeMB $row.PeakRSSMB }}</td>
+        <td class="meta-cell">{{ fmtMaybeMB $row.SteadyRSSMB }}</td>
+        {{- end }}
       </tr>
     {{- end }}
     </tbody>
@@ -134,19 +130,15 @@
 
     <table>
       <thead><tr>
-        <th>Gateway</th>
-        <th>RPS ↓</th>
-        <th>p50 (ms)</th>
-        <th>p95 (ms)</th>
-        <th>Max (ms)</th>
-        <th>Avg iter (ms)</th>
-        <th>Total reqs</th>
-        <th>5xx</th>
-        <th>4xx-exp</th>
-        <th>4xx-uxp</th>
-        <th>RSS peak</th>
-        <th>RSS steady</th>
-        <th>Δ p50 vs latency winner</th>
+        <th title="Gateway implementation under test.">Gateway</th>
+        <th title="Requests per second observed by k6. Higher is better.">RPS ↓</th>
+        <th title="Median request duration in milliseconds.">p50 (ms)</th>
+        <th title="95th percentile request duration in milliseconds.">p95 (ms)</th>
+        <th title="Unexpected errors only: policy_5xx_unexpected + policy_4xx_unexpected. Expected policy responses such as 401/429 are not counted here.">Errors</th>
+        <th title="Total requests issued by k6 during this cell.">Requests</th>
+        <th title="Container RSS memory: peak / steady-state. Hidden as — when docker-stats data is unavailable.">RSS</th>
+        <th title="Docker CPU percentage at steady state. 100% is approximately one fully used vCPU; on multi-core instances this is not necessarily saturation.">CPU</th>
+        <th title="Likely resource bottleneck inferred from CPU, memory, disk and network counters. Blank means no clear saturation was detected or resource data is unavailable.">Bottleneck</th>
       </tr></thead>
       <tbody>
       {{- $ref := .LatWinner }}
@@ -162,21 +154,23 @@
           <td class="num">{{ fmtFloat .HTTPReqRate 1 }}</td>
           <td class="num">{{ if .TimingBroken }}<span class="meta-cell" title="k6 timing instrumentation returned zeros">N/A ⚠️</span>{{ else }}{{ fmtFloat .HTTPReqDurationP50 3 }}{{ end }}</td>
           <td class="num">{{ if .TimingBroken }}<span class="meta-cell" title="k6 timing instrumentation returned zeros">N/A ⚠️</span>{{ else }}{{ fmtFloat .HTTPReqDurationP95 3 }}{{ end }}</td>
-          <td class="num">{{ if .TimingBroken }}<span class="meta-cell">N/A</span>{{ else }}{{ fmtFloat .HTTPReqDurationMax 3 }}{{ end }}</td>
-          <td class="num">{{ if .TimingBroken }}<span class="meta-cell">N/A</span>{{ else }}{{ fmtFloat .IterDurationAvgMs 3 }}{{ end }}</td>
+          <td class="num {{ if gt (unexpectedErrors .) 0 }}error-cell{{ end }}">{{ fmtInt (unexpectedErrors .) }}</td>
           <td class="num">{{ fmtInt .HTTPReqs }}</td>
-          <td class="num {{ if gt .Policy5xxUnexpected 0 }}error-cell{{ end }}">{{ fmtInt .Policy5xxUnexpected }}</td>
-          <td class="num">{{ fmtInt .Policy4xxExpected }}</td>
-          <td class="num {{ if gt .Policy4xxUnexpected 0 }}error-cell{{ end }}">{{ fmtInt .Policy4xxUnexpected }}</td>
-          <td class="num meta-cell">{{ fmtBytes .MemRSSPeakBytes }}</td>
-          <td class="num meta-cell">{{ fmtBytes .MemRSSSteadyBytes }}</td>
-          <td class="num"><span class="ovh">{{ deltaP50 . $ref }}</span></td>
+          <td class="num meta-cell" title="peak / steady">{{ fmtRSSPair .MemRSSPeakBytes .MemRSSSteadyBytes }}</td>
+          <td class="num meta-cell" title="100% is approximately one full vCPU">{{ fmtPct .CPUPctSteady }}</td>
+          <td>{{ if showBottleneck .ResourceBottleneck }}<span class="bottleneck bottleneck-{{ bottleneckClass .ResourceBottleneck }}" title="{{ .ResourceBottleneckDetail | esc }}">{{ .ResourceBottleneck | esc }}</span>{{ else }}<span class="meta-cell" title="No clear CPU/RAM/disk/network saturation detected, or resource data is unavailable.">—</span>{{ end }}</td>
         </tr>
       {{- end }}
       {{- range .Excluded }}
         <tr class="excluded-row">
           <td><span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span></td>
-          <td colspan="12" class="excluded-cell">FEATURE-MISSING — {{ default .ParityStatus "see docs/POLICIES.md for the gateway's deviation table" | esc }}</td>
+          <td colspan="8" class="excluded-cell">FEATURE-MISSING — {{ default .ParityStatus "see docs/POLICIES.md for the gateway's deviation table" | esc }}</td>
+        </tr>
+      {{- end }}
+      {{- range .Failed }}
+        <tr class="failed-row">
+          <td><span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span></td>
+          <td colspan="8" class="failed-cell">{{ .Verdict | esc }} — {{ default .ParityStatus "see raw logs for this cell" | esc }}</td>
         </tr>
       {{- end }}
       </tbody>
@@ -194,10 +188,9 @@
     {{- if gt .Footer.OtherCount 0 }} · {{ .Footer.OtherCount }} OTHER{{ end }}
     across {{ len .Footer.RunIDs }} run(s).
   </div>
-  <div class="meta-cell">
-    Rendered by <code>bench report</code>
-    {{- with .Manifest }} (bench {{ default .Bench.Version "dev" | esc }} · source {{ shortSHA .Git.SHA | esc }}{{ if .Git.Dirty }}-dirty{{ end }}){{ end }}.
-  </div>
+  {{- with .Manifest }}
+  <div class="meta-cell">run_id: {{ .RunID | esc }}</div>
+  {{- end }}
 </footer>
 
 </div>

@@ -90,11 +90,11 @@ say "  ✓ data plane answering on ${DATA_URL}"
 #    to resolve. Both are hand-crafted in this repo so drift would
 #    be a human error, not runtime rotation.
 # -----------------------------------------------------------------------------
-served_jwks=$(docker exec gwb-apisix-oidc-server sh -c \
+served_jwks=$(docker exec "${BENCH_CONTAINER_PREFIX:-gwb-apisix}-oidc-server" sh -c \
     'wget -qO- http://127.0.0.1/.well-known/jwks.json' 2>/dev/null || true)
 [[ -n "${served_jwks}" ]] || fail "oidc-server returned empty body for /.well-known/jwks.json"
 
-served_discovery=$(docker exec gwb-apisix-oidc-server sh -c \
+served_discovery=$(docker exec "${BENCH_CONTAINER_PREFIX:-gwb-apisix}-oidc-server" sh -c \
     'wget -qO- http://127.0.0.1/.well-known/openid-configuration' 2>/dev/null || true)
 [[ -n "${served_discovery}" ]] || fail "oidc-server returned empty body for /.well-known/openid-configuration"
 

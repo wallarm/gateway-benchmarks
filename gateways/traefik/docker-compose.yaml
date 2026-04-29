@@ -40,12 +40,12 @@
 # swap it via `gateways/traefik/<profile>/.env` without touching this
 # file.
 
-name: gateway-benchmarks-traefik
+name: ${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-traefik}
 
 services:
   backend:
     image: gateway-benchmarks/backend:v2.22.1
-    container_name: gwb-traefik-backend
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-traefik}-backend
     restart: "no"
     # Backend listens on :8080 inside the container. We do NOT publish
     # it on the host — only traefik needs to talk to it, over the
@@ -57,7 +57,7 @@ services:
 
   gateway:
     image: ${GATEWAY_IMAGE:-traefik:v3.3.4@sha256:cc11989f418e2cfe5e60fc40c92c1813be847f58eda15eced7d5ac890255ad9e}
-    container_name: gwb-traefik
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-traefik}
     restart: "no"
     depends_on:
       - backend
@@ -82,7 +82,7 @@ services:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/dynamic.yaml:/etc/traefik/dynamic/dynamic.yaml:ro
       - ./_shared/plugins-local:/plugins-local:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
     # Traefik shuts down cleanly on SIGTERM. A 5 s stop-grace-period
     # keeps `docker compose down` snappy during the parity sweeps.
     stop_grace_period: 5s
@@ -123,7 +123,7 @@ services:
   # setup.sh diffs the two copies on every boot.
   jwks-auth:
     image: openresty/openresty:1.27.1.2-alpine@sha256:761047d688bb91fe4eb42c42a05c794c54f274ee769ad54802b2c06247e8c38c
-    container_name: gwb-traefik-jwks-auth
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-traefik}-jwks-auth
     restart: "no"
     profiles: [p03-jwks-rs256-basic]
     # The sidecar only needs the shared data plane at :9091 —

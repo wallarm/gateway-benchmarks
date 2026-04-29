@@ -1,6 +1,7 @@
 # ---- Local scratch (never committed) ----
 .notes/
 .omx/
+external/
 
 # ---- Go ----
 orchestrator/bin/

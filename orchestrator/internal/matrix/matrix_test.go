@@ -82,6 +82,38 @@ func TestSelectionExpand(t *testing.T) {
 	}
 }
 
+func TestCanonicalReportCells(t *testing.T) {
+	cells, err := CanonicalReportCells(
+		[]string{"nginx", "kong"},
+		[]string{"p1-baseline", "p2-sustained"},
+		1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 2 * 13 * 2
+	if len(cells) != want {
+		t.Fatalf("canonical cells: want %d, got %d", want, len(cells))
+	}
+	for _, c := range cells {
+		if c.Policy == "p03-jwks-rs256-basic" {
+			t.Fatalf("canonical report matrix must not load supplemental p03: %+v", c)
+		}
+	}
+	var sawS13, sawS14 bool
+	for _, c := range cells {
+		if c.Scenario == "s13-vanilla-https" {
+			sawS13 = true
+		}
+		if c.Scenario == "s14-full-pipeline-https" {
+			sawS14 = true
+		}
+	}
+	if !sawS13 || !sawS14 {
+		t.Fatalf("canonical report matrix should include s13/s14; s13=%v s14=%v", sawS13, sawS14)
+	}
+}
+
 func TestSelectionExpandRejectsBadLoad(t *testing.T) {
 	sel := Selection{
 		Gateways: []string{"nginx"},

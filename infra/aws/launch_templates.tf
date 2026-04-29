@@ -210,3 +210,242 @@ resource "aws_launch_template" "backend" {
     Role = "backend"
   }
 }
+
+# -----------------------------------------------------------------------------
+# Optional sharded runner fleet
+# -----------------------------------------------------------------------------
+resource "aws_launch_template" "runner" {
+  name_prefix   = "${var.name_prefix}-runner-"
+  description   = "Sharded runner template — same tag-spec pattern as loadgen."
+  image_id      = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = var.ssh_key_name
+
+  user_data = base64encode(file("${path.module}/userdata/loadgen.sh"))
+
+  network_interfaces {
+    subnet_id                   = aws_subnet.public.id
+    security_groups             = [aws_security_group.loadgen.id]
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_type           = "gp3"
+      volume_size           = var.ebs_size_gb
+      iops                  = var.ebs_iops
+      throughput            = var.ebs_throughput_mbps
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-runner"
+      Role = "runner"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-runner-root"
+      Role = "runner"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-runner-eni"
+      Role = "runner"
+    })
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-runner-lt"
+    Role = "runner"
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Clean cluster fleet templates — loadgen -> gateway -> backend per shard
+# -----------------------------------------------------------------------------
+resource "aws_launch_template" "cluster_loadgen" {
+  name_prefix   = "${var.name_prefix}-cluster-loadgen-"
+  description   = "Clean shard loadgen template."
+  image_id      = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = var.ssh_key_name
+  user_data     = base64encode(file("${path.module}/userdata/loadgen.sh"))
+
+  network_interfaces {
+    subnet_id                   = aws_subnet.public.id
+    security_groups             = [aws_security_group.loadgen.id]
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_type           = "gp3"
+      volume_size           = var.ebs_size_gb
+      iops                  = var.ebs_iops
+      throughput            = var.ebs_throughput_mbps
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-loadgen"
+      Role = "cluster-loadgen"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-loadgen-root"
+      Role = "cluster-loadgen"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-loadgen-eni"
+      Role = "cluster-loadgen"
+    })
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-cluster-loadgen-lt"
+    Role = "cluster-loadgen"
+  }
+}
+
+resource "aws_launch_template" "cluster_gateway" {
+  name_prefix   = "${var.name_prefix}-cluster-gateway-"
+  description   = "Clean shard gateway template."
+  image_id      = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = var.ssh_key_name
+  user_data     = base64encode(file("${path.module}/userdata/gateway.sh"))
+
+  network_interfaces {
+    subnet_id                   = aws_subnet.public.id
+    security_groups             = [aws_security_group.gateway.id]
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_type           = "gp3"
+      volume_size           = var.ebs_size_gb
+      iops                  = var.ebs_iops
+      throughput            = var.ebs_throughput_mbps
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-gateway"
+      Role = "cluster-gateway"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-gateway-root"
+      Role = "cluster-gateway"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-gateway-eni"
+      Role = "cluster-gateway"
+    })
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-cluster-gateway-lt"
+    Role = "cluster-gateway"
+  }
+}
+
+resource "aws_launch_template" "cluster_backend" {
+  name_prefix   = "${var.name_prefix}-cluster-backend-"
+  description   = "Clean shard backend template."
+  image_id      = data.aws_ami.ubuntu.id
+  instance_type = var.instance_type
+  key_name      = var.ssh_key_name
+  user_data     = base64encode(file("${path.module}/userdata/backend.sh"))
+
+  network_interfaces {
+    subnet_id                   = aws_subnet.public.id
+    security_groups             = [aws_security_group.backend.id]
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_type           = "gp3"
+      volume_size           = var.ebs_size_gb
+      iops                  = var.ebs_iops
+      throughput            = var.ebs_throughput_mbps
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-backend"
+      Role = "cluster-backend"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-backend-root"
+      Role = "cluster-backend"
+    })
+  }
+
+  tag_specifications {
+    resource_type = "network-interface"
+    tags = merge(local.required_tags, {
+      Name = "${var.name_prefix}-cluster-backend-eni"
+      Role = "cluster-backend"
+    })
+  }
+
+  tags = {
+    Name = "${var.name_prefix}-cluster-backend-lt"
+    Role = "cluster-backend"
+  }
+}

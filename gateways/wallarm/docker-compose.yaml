@@ -28,12 +28,12 @@
 # (jwt_validation, request_flow.rate_limit, request_flow.request_body_
 # rewrite, request_flow.response_body_rewrite) will pass 12/12.
 
-name: gateway-benchmarks-wallarm
+name: ${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-wallarm}
 
 services:
   backend:
     image: gateway-benchmarks/backend:v2.22.1
-    container_name: gwb-wallarm-backend
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-wallarm}-backend
     restart: "no"
     # The backend listens on :8080 inside the container. We do NOT
     # publish the port — only the gateway needs to talk to it, over
@@ -45,7 +45,7 @@ services:
 
   gateway:
     image: ${WALLARM_IMAGE:?WALLARM_IMAGE must be set — build the Wallarm API Gateway from sources and pass the resulting tag/digest, e.g. WALLARM_IMAGE=wallarm/api-gateway:main-<sha>}
-    container_name: gwb-wallarm
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-wallarm}
     restart: "no"
     depends_on:
       - backend
@@ -53,8 +53,8 @@ services:
     volumes:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/gateway.yaml:/config/gateway.yaml:ro
     ports:
-      - "9080:9080"  # data plane (parity-gateway target)
-      - "9081:9081"  # admin API  (setup.sh runs against this)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_ADMIN_PORT:-9081}:9081"  # admin API  (setup.sh runs against this)
     networks:
       bench-net:
         aliases: [gateway]

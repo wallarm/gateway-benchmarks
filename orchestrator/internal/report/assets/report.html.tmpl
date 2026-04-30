@@ -164,13 +164,13 @@
       {{- range .Excluded }}
         <tr class="excluded-row">
           <td><span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span></td>
-          <td colspan="8" class="excluded-cell">FEATURE-MISSING — {{ default .ParityStatus "see docs/POLICIES.md for the gateway's deviation table" | esc }}</td>
+          <td colspan="8" class="excluded-cell">FEATURE-MISSING{{ if .ParityStatus }} · parity {{ .ParityStatus | esc }}{{ else }} (see docs/POLICIES.md for the gateway's deviation table){{ end }}</td>
         </tr>
       {{- end }}
       {{- range .Failed }}
         <tr class="failed-row">
           <td><span class="badge" style="background:{{ color .Gateway | esc }}">{{ .Gateway | esc }}</span></td>
-          <td colspan="8" class="failed-cell">{{ .Verdict | esc }} — {{ default .ParityStatus "see raw logs for this cell" | esc }}</td>
+          <td colspan="8" class="failed-cell">{{ .Verdict | esc }}{{ if .ParityStatus }} · parity {{ .ParityStatus | esc }}{{ else }} (see raw logs for this cell){{ end }}</td>
         </tr>
       {{- end }}
       </tbody>

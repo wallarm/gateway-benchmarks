@@ -91,13 +91,10 @@ import http from 'k6/http';
 // false-trip on stress saturation, where 5xx / client-timeouts are
 // the dominant signal anyway). Phase 5 will revisit per-profile
 // widening if observation warrants it.
-export const options = {
-    ...resolvedOptions,
-    thresholds: {
-        ...(resolvedOptions.thresholds || {}),
-        http_req_duration: ['p(95)<240'],
-    },
-};
+// Scenario-level threshold override removed — see
+// k6/profiles/p1-baseline.js for the rationale (we measure latency
+// rather than fail on it; the report renders absolute p95 columns).
+export const options = resolvedOptions;
 
 // Init-phase guards (shape identical to s13): hard fail on an empty
 // BENCH_TARGET_URL_HTTPS (Phase 5 not wired) and hard fail on a

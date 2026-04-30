@@ -295,10 +295,16 @@ if [[ -n "${STATS_PID}" ]]; then
 	wait "${STATS_PID}" >/dev/null 2>&1 || true
 fi
 
-if [[ "${k6_rc}" != "0" ]]; then
+# k6 exit 99 = "at least one threshold crossed" but the run completed
+# and the summary was written. We deliberately don't treat that as
+# FAIL — the operator wants the data (RPS / p95 / errors) in the
+# report, not a hidden cell. Hard k6 crashes (rc != 0 AND no summary
+# written) still excluded as K6_FAILED below by the empty-summary
+# guard.
+if [[ "${k6_rc}" != "0" ]] && [[ ! -s "${OUTPUT}/k6-summary.json" ]]; then
 	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
 		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${k6_rc}" \
-		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"K6_FAILED",details:("k6 exited with "+$rc)}' \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"K6_FAILED",details:("k6 exited with "+$rc+" and wrote no summary")}' \
 		> "${OUTPUT}/excluded.json"
 	exit 0
 fi

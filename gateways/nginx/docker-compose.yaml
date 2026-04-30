@@ -46,14 +46,32 @@ services:
         aliases: [backend]
 
   gateway:
-    image: ${GATEWAY_IMAGE:-nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4}
+    # OpenResty (nginx + LuaJIT + lua-resty-* libraries) instead of
+    # mainline nginx so policy profiles that use `lua_package_path` /
+    # `init_by_lua_block` (p02-jwt, p03-jwks-rs256-basic, p09-resp-
+    # headers, p10-req-body, p11-resp-body, p12-full-pipeline) actually
+    # boot. Mainline nginx didn't ship with the lua module, so those
+    # six profiles previously timed out on "unknown directive
+    # 'lua_package_path'" in the configtest path. The non-Lua profiles
+    # (p01/p04/p05/p06/p07/p08) keep working — OpenResty is a strict
+    # superset, the same nginx.conf parses identically.
+    image: ${GATEWAY_IMAGE:-openresty/openresty:1.27.1.2-alpine@sha256:761047d688bb91fe4eb42c42a05c794c54f274ee769ad54802b2c06247e8c38c}
     container_name: ${BENCH_CONTAINER_PREFIX:-gwb-nginx}
     restart: "no"
     depends_on:
       - backend
-    # `nginx -g 'daemon off;'` is the default entrypoint; we just
-    # override the config file path to keep the volume mount obvious.
-    command: ["nginx", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    # The 12 per-profile nginx.conf files all carry `user nginx;`
+    # which the mainline nginx image satisfied via its preinstalled
+    # `nginx` system user. The openresty image only ships `nobody`,
+    # so we add an `nginx` user alias at uid=65534 (same as `nobody`)
+    # before exec-ing nginx. Net effect: workers still run unprivileged
+    # but the existing `user nginx;` directive parses without
+    # touching any of the 12 nginx.conf files (12-way drift avoided).
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        id nginx 2>/dev/null || adduser -DHs /sbin/nologin nginx
+        exec nginx -c /etc/nginx/nginx.conf -g 'daemon off;'
     volumes:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/nginx.conf:/etc/nginx/nginx.conf:ro
       # Shared Lua library mounted at a path that only OpenResty reads.

@@ -528,10 +528,24 @@ assert_all() {
     local probe_json="$1" status_code="$2"
     local expected
 
-    # status
+    # status — exact match expectation. The fixture's `expect.status`
+    # value MUST equal the observed status_code or the probe fails.
     expected=$(jq -r '.expect.status // empty' <<< "${probe_json}")
     if [[ -n "${expected}" && "${expected}" != "${status_code}" ]]; then
         fails+=("expected HTTP ${expected}, got ${status_code}")
+    fi
+
+    # status_one_of — set-membership expectation. Use this for probes
+    # where multiple HTTP statuses are equally valid responses (e.g.
+    # missing-JWT cases: nginx/kong/apisix/envoy return 401, tyk OSS
+    # returns 400 because its built-in JWT middleware classifies a
+    # missing Authorization header as "malformed request" not "denied
+    # auth"; both are acceptable per the bench's contract).
+    expected_set=$(jq -r '.expect.status_one_of // [] | map(tostring) | join("|")' <<< "${probe_json}")
+    if [[ -n "${expected_set}" ]]; then
+        if ! [[ "${status_code}" =~ ^(${expected_set})$ ]]; then
+            fails+=("expected HTTP one of [${expected_set//|/, }], got ${status_code}")
+        fi
     fi
 
     # response_header_present

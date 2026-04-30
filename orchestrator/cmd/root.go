@@ -72,6 +72,9 @@ func init() {
 	rootCmd.AddCommand(newCompareCmd())
 	rootCmd.AddCommand(newManifestCmd())
 	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newAWSReadinessCmd())
+	rootCmd.AddCommand(newAWSSyncCmd())
+	rootCmd.AddCommand(newAWSFetchCmd())
 }
 
 func newVersionCmd() *cobra.Command {

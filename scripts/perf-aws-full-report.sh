@@ -73,6 +73,101 @@ bar() {
 	printf ']'
 }
 
+# diagnose_aws_log scans a tofu log for known error patterns,
+# deduplicates terraform's repeated `╷ │ Error: ... ╵` blocks (one
+# per failed resource — typically 9-30 near-identical copies that
+# bury the actionable signal) and prints a compact summary on
+# stderr. Returns 0 always — best-effort hint, never fatal.
+diagnose_aws_log() {
+	local log="$1"
+	# Pull every "│ Error: ..." line, strip the terraform prefix +
+	# request-IDs (which differ per attempt and would defeat sort -u),
+	# then count + classify. We extract the api-error name and any
+	# instance type / AZ / resource hint into one digestible line per
+	# unique cause.
+	local errors
+	errors="$(grep -E '│ Error: |api error ' "${log}" 2>/dev/null \
+		| sed -E 's/RequestID: [a-f0-9-]+, //g; s/operation error [^,]+, [^,]+, //g; s/^[[:space:]]*│[[:space:]]*//')"
+	[[ -z "${errors}" ]] && return 0
+
+	# Group by api-error name (everything after "api error " up to
+	# the first colon). Falls back to the verbatim line for messages
+	# that don't follow the AWS SDK pattern.
+	local summary
+	summary="$(printf '%s\n' "${errors}" \
+		| awk '
+			/api error / {
+				match($0, /api error [^:]+/); name=substr($0,RSTART+10,RLENGTH-10);
+				count[name]++; sample[name]=$0; next
+			}
+			/Error: / { count["other"]++; sample["other"]=$0 }
+			END { for (k in count) printf "%dx %s\n%s\n---\n", count[k], k, sample[k] }
+		' \
+		| head -200)"
+
+	[[ -z "${summary}" ]] && return 0
+
+	# Extract distinct hint values (AZ, instance type, resource refs)
+	# straight from the raw log so the recommendation is concrete.
+	local az_hint type_hint resource_hint
+	az_hint="$(grep -oE '(eu|us|ap|sa|ca|af|me)-[a-z]+-[0-9][a-z]?' "${log}" | sort -u | tr '\n' ',' | sed 's/,$//')"
+	type_hint="$(grep -oE '\b[cmrtipx][0-9]+[a-z]*\.[0-9a-z]+xlarge\b' "${log}" | sort -u | tr '\n' ',' | sed 's/,$//')"
+	resource_hint="$(grep -oE 'with aws_instance\.[a-z_]+\[[0-9]+\]' "${log}" \
+		| sed 's/with aws_instance\.//' | sort -u | tr '\n' ',' | sed 's/,$//')"
+
+	printf '%sDIAGNOSIS:%s\n' "${YELLOW}" "${NC}" >&2
+	printf '%s\n' "${summary}" \
+		| awk '/^[0-9]+x / { print "  • " $0 }' >&2
+	printf '\n%sCONTEXT:%s' "${YELLOW}" "${NC}" >&2
+	[[ -n "${type_hint}"     ]] && printf '\n  instance type(s): %s' "${type_hint}" >&2
+	[[ -n "${az_hint}"       ]] && printf '\n  AZ(s) mentioned:  %s' "${az_hint}" >&2
+	[[ -n "${resource_hint}" ]] && printf '\n  failed resources: %s' "${resource_hint}" >&2
+	printf '\n\n%sNEXT:%s\n' "${YELLOW}" "${NC}" >&2
+
+	# Pattern-specific remediation. We pick whichever applies first
+	# so the most-likely fix is at the top of the list.
+	if grep -q 'InsufficientInstanceCapacity' "${log}" 2>/dev/null; then
+		printf '  • Capacity often returns within 5-15 min — simply rerun.\n' >&2
+		printf '  • If recurrent: BENCH_AWS_INSTANCE_TYPE=c7i.4xlarge (or c6i.2xlarge) — different family/size usually has free capacity.\n' >&2
+		printf '  • Or edit infra/aws/terraform.tfvars to a different AZ (eu-central-1b / 1c).\n' >&2
+	fi
+	if grep -q 'RequestLimitExceeded' "${log}" 2>/dev/null; then
+		printf '  • Account-wide ec2:RunInstances throttle — wait 1-2 min and rerun. Lowering BENCH_AWS_FLEET_SIZE reduces the burst.\n' >&2
+	fi
+	if grep -qE 'VcpuLimitExceeded|InstanceLimitExceeded' "${log}" 2>/dev/null; then
+		printf '  • EC2 vCPU / instance quota hit — file an AWS Support ticket; rerun alone will not help.\n' >&2
+	fi
+	if grep -qE 'UnauthorizedOperation|AccessDenied|InvalidClientTokenId|ExpiredToken' "${log}" 2>/dev/null; then
+		printf '  • AWS auth failed — `aws sts get-caller-identity` to verify, then refresh credentials / SSO.\n' >&2
+	fi
+}
+
+# pretty_log_tail filters noise out of a captured log and prints
+# meaningful CONTEXT lines on stderr. Drops:
+#   • `Still creating... [Nm…s]` / `Still destroying... [Nm…s]`
+#     polling chatter
+#   • All terraform error decoration (`╷ │ ... ╵` boxes) and Error
+#     blocks themselves — diagnose_aws_log already summarised those
+#     with counts and remediation, so the tail is for *context*
+#     (which resources DID succeed before the wall) only.
+#   • ANSI colour codes that confuse `head/tail` line counting.
+#
+# Falls back to plain `tail -15` if filtering left nothing.
+pretty_log_tail() {
+	local log="$1"
+	local filtered
+	filtered="$(sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "${log}" 2>/dev/null \
+		| grep -Ev 'Still creating\.\.\.|Still destroying\.\.\.|^[[:space:]]*$|^╷|^╵|^│ ?$|^│ +Error:|^│ +operation error|^│ +api error|^│ +with aws_|^│ +on .*\.tf|^│ +[0-9]+: resource ' 2>/dev/null \
+		| tail -15)"
+	if [[ -n "${filtered}" ]]; then
+		printf '%s\n' "${filtered}" >&2
+	else
+		# Final fallback: the log was 100% errors; show nothing
+		# extra. The diagnosis already covered it.
+		printf '  (log contained only error blocks — see DIAGNOSIS above)\n' >&2
+	fi
+}
+
 run_logged() {
 	local label="$1"
 	local log="$2"
@@ -86,9 +181,14 @@ run_logged() {
 	else
 		local rc=$?
 		local end=$(( $(date +%s) - start ))
-		printf '%s✗ %s failed%s after %s; log: %s\n' "${RED}" "${label}" "${NC}" "$(duration "${end}")" "${log}" >&2
-		printf '%sLast log lines:%s\n' "${YELLOW}" "${NC}" >&2
-		tail -80 "${log}" >&2 || true
+		printf '%s✗ %s failed%s after %s; log: %s\n\n' "${RED}" "${label}" "${NC}" "$(duration "${end}")" "${log}" >&2
+		# Surface a structured diagnosis (counts + remediation) above
+		# the raw log tail so the operator sees the actionable hint
+		# first. Filter the polling spam and dedupe the repeated
+		# Error blocks so the tail stays compact.
+		diagnose_aws_log "${log}"
+		printf '\n%sFiltered tail (last meaningful lines, polling + duplicate Error blocks suppressed):%s\n' "${YELLOW}" "${NC}" >&2
+		pretty_log_tail "${log}"
 		return "${rc}"
 	fi
 }
@@ -106,28 +206,11 @@ ssh_opts() {
 	sed 's|^ssh |ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=10 |'
 }
 
-wait_remote_ready() {
-	local ssh_cmd="$1"
-	local label="$2"
-	local log="$3"
-	local deadline=$(( $(date +%s) + 900 ))
-	local attempt=0
-	local check='docker info >/dev/null 2>&1'
-	if [[ "${label}" == *" backend" ]]; then
-		check='docker info >/dev/null 2>&1 && curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8080/status/200'
-	fi
-	while (( $(date +%s) < deadline )); do
-		attempt=$((attempt + 1))
-		echo "[$(ts)] ${label}: readiness attempt ${attempt}" >>"${log}"
-		if ${ssh_cmd} "${check}" >>"${log}" 2>&1; then
-			echo "[$(ts)] ${label}: ready" >>"${log}"
-			return 0
-		fi
-		sleep 10
-	done
-	echo "${label}: SSH/service readiness did not complete within 15m" >>"${log}"
-	return 1
-}
+# Single-source-of-truth for SSH options spliced into every readiness
+# probe. Kept in sync with `ssh_opts()` above (sed inserts the same
+# list between "ssh " and the rest of the command line for every
+# remote invocation outside the readiness wait).
+SSH_HARDENING_OPTS='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=10'
 
 cleanup() {
 	local rc=$?
@@ -209,67 +292,80 @@ total_cells="${total_cells:-364}"
 
 printf '%s▶ Wait for cloud-init and Docker on %s clean clusters%s %s\n' "${CYAN}" "${runner_count}" "${NC}" "$(ts)"
 ready_start="$(date +%s)"
-for i in $(seq 0 $((runner_count - 1))); do
-	loadgen_ssh="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_loadgen" | ssh_opts)"
-	gateway_ssh="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_gateway" | ssh_opts)"
-	backend_ssh="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_backend" | ssh_opts)"
-	log="${LOG_DIR}/ready-$(printf '%02d' "${i}").log"
-	printf '  cluster %d/%d readiness log: %s\n' "$((i + 1))" "${runner_count}" "${log}"
-	for role_cmd in "loadgen:${loadgen_ssh}" "gateway:${gateway_ssh}" "backend:${backend_ssh}"; do
-		role="${role_cmd%%:*}"
-		ssh_cmd="${role_cmd#*:}"
-		role_start="$(date +%s)"
-		printf '    waiting for %-7s ... ' "${role}"
-		if ! wait_remote_ready "${ssh_cmd}" "cluster $((i + 1)) ${role}" "${log}"; then
-			printf 'failed\n'
-			printf '\n%s✗ readiness check failed for cluster %d%s log: %s\n' "${RED}" "$((i + 1))" "${NC}" "${log}" >&2
-			tail -80 "${log}" >&2 || true
-			exit 1
-		fi
-		printf '%sready%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - role_start ))")"
-	done
-done
+ready_log="${LOG_DIR}/aws-readiness.log"
+
+# Drive the fleet readiness wait through the Go orchestrator's
+# `bench aws-readiness` subcommand (orchestrator/cmd/aws_readiness.go).
+# All hosts are probed concurrently via goroutines, so the wall-clock
+# wait collapses from O(N_clusters × per_host_time) to O(slowest_host).
+# JSON input is constructed inline from `tofu output -json
+# cluster_shards` plus the shared SSH-hardening options so the Go
+# helper sees exactly the same command lines the bash code used to
+# build via the `ssh_opts()` sed-rewrite.
+readiness_input="$(jq -n \
+	--argjson clusters "${clusters_json}" \
+	--arg     opts     "${SSH_HARDENING_OPTS}" \
+	'{
+		ssh_options: $opts,
+		clusters: [
+			range(0; ($clusters | length)) as $i
+			| $clusters[$i]
+			| {
+				index:       $i,
+				loadgen_ssh: .ssh_loadgen,
+				gateway_ssh: .ssh_gateway,
+				backend_ssh: .ssh_backend
+			}
+		]
+	}')"
+if ! printf '%s' "${readiness_input}" \
+	| "${ORCH_BIN}" aws-readiness --log "${ready_log}" --timeout 15m --poll-interval 10s; then
+	printf '\n%s✗ AWS readiness failed%s (see %s for per-attempt SSH output)\n' \
+		"${RED}" "${NC}" "${ready_log}" >&2
+	exit 1
+fi
 printf '%s✓ AWS hosts ready%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - ready_start ))")"
 
 printf '%s▶ Sync checkout to %s clean clusters%s %s\n' "${CYAN}" "${runner_count}" "${NC}" "$(ts)"
 sync_start="$(date +%s)"
-for i in $(seq 0 $((runner_count - 1))); do
-	loadgen_ssh="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_loadgen" | ssh_opts)"
-	gateway_ssh="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_gateway" | ssh_opts)"
-	log="${LOG_DIR}/sync-$(printf '%02d' "${i}").log"
-	printf '  cluster %d/%d sync log: %s\n' "$((i + 1))" "${runner_count}" "${log}"
-	step_start="$(date +%s)"
-	printf '    sync loadgen ... '
-	if ! (COPYFILE_DISABLE=1 tar --no-xattrs --exclude='.git' --exclude='reports' -czf - . \
-		| ${loadgen_ssh} 'sudo rm -rf /opt/gateway-benchmarks && sudo mkdir -p /opt/gateway-benchmarks && sudo tar --warning=no-unknown-keyword -xzf - -C /opt/gateway-benchmarks && sudo chown -R ubuntu:ubuntu /opt/gateway-benchmarks') >"${log}" 2>&1; then
-		printf 'failed\n%s✗ sync loadgen %d failed%s log: %s\n' "${RED}" "$((i + 1))" "${NC}" "${log}" >&2
-		tail -80 "${log}" >&2 || true
-		exit 1
-	fi
-	printf '%sdone%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - step_start ))")"
-	step_start="$(date +%s)"
-	printf '    sync gateway ... '
-	if ! (COPYFILE_DISABLE=1 tar --no-xattrs --exclude='.git' --exclude='reports' -czf - . \
-		| ${gateway_ssh} 'sudo rm -rf /opt/gateway-benchmarks && sudo mkdir -p /opt/gateway-benchmarks && sudo tar --warning=no-unknown-keyword -xzf - -C /opt/gateway-benchmarks && sudo chown -R ubuntu:ubuntu /opt/gateway-benchmarks') >>"${log}" 2>&1; then
-		printf 'failed\n%s✗ sync gateway %d failed%s log: %s\n' "${RED}" "$((i + 1))" "${NC}" "${log}" >&2
-		tail -80 "${log}" >&2 || true
-		exit 1
-	fi
-	printf '%sdone%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - step_start ))")"
-	step_start="$(date +%s)"
-	printf '    install gateway SSH key on loadgen ... '
-	${loadgen_ssh} "mkdir -p ~/.ssh && cat > ~/.ssh/gwb_cluster_key && chmod 600 ~/.ssh/gwb_cluster_key" < "${local_key}" >>"${log}" 2>&1
-	printf '%sdone%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - step_start ))")"
-	step_start="$(date +%s)"
-	gateway_private_ip="$(printf '%s' "${clusters_json}" | jq -r ".[$i].gateway_private_ip")"
-	printf '    preflight loadgen -> gateway SSH ... '
-	if ! ${loadgen_ssh} "ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 ubuntu@${gateway_private_ip} true" >>"${log}" 2>&1; then
-		printf 'failed\n%s✗ preflight loadgen -> gateway SSH failed for cluster %d%s log: %s\n' "${RED}" "$((i + 1))" "${NC}" "${log}" >&2
-		tail -80 "${log}" >&2 || true
-		exit 1
-	fi
-	printf '%sdone%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - step_start ))")"
-done
+
+# Drive the per-cluster sync through the Go orchestrator's
+# `bench aws-sync` subcommand (orchestrator/cmd/aws_sync.go). The
+# helper fans out clusters via goroutines (capped by --concurrency to
+# keep the operator's uplink from saturating) and uses MaxAttempts=2
+# to absorb a single network blip on the tar/ssh pipe without burning
+# the whole timeout budget on a permanently-broken cluster. Per-
+# cluster output still lands in ${LOG_DIR}/sync-NN.log — same shape
+# as the previous bash implementation, easier diff during postmortem.
+sync_input="$(jq -n \
+	--argjson clusters  "${clusters_json}" \
+	--arg     opts      "${SSH_HARDENING_OPTS}" \
+	--arg     repo_root "${REPO_ROOT}" \
+	--arg     key_path  "${local_key}" \
+	'{
+		ssh_options:  $opts,
+		repo_root:    $repo_root,
+		key_path:     $key_path,
+		remote_path:  "/opt/gateway-benchmarks",
+		tar_excludes: [".git", "reports"],
+		clusters: [
+			range(0; ($clusters | length)) as $i
+			| $clusters[$i]
+			| {
+				index:              $i,
+				loadgen_ssh:        .ssh_loadgen,
+				gateway_ssh:        .ssh_gateway,
+				gateway_private_ip: .gateway_private_ip
+			}
+		]
+	}')"
+if ! printf '%s' "${sync_input}" \
+	| "${ORCH_BIN}" aws-sync --log-dir "${LOG_DIR}" \
+		--concurrency 6 --max-attempts 2 --timeout 10m --retry-interval 5s; then
+	printf '\n%s✗ Sync checkout failed%s (per-cluster logs in %s/sync-NN.log)\n' \
+		"${RED}" "${NC}" "${LOG_DIR}" >&2
+	exit 1
+fi
 printf '%s✓ Sync checkout%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - sync_start ))")"
 
 printf '%s▶ Run load tests across %d physical runners%s %s\n' "${CYAN}" "${runner_count}" "${NC}" "$(ts)"
@@ -334,23 +430,48 @@ printf '%s✓ Load tests complete%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( 
 
 printf '%s▶ Fetch shard reports%s %s\n' "${CYAN}" "${NC}" "$(ts)"
 fetch_start="$(date +%s)"
+
+# Drive the per-shard fetch through the Go orchestrator's
+# `bench aws-fetch` subcommand (orchestrator/cmd/aws_fetch.go). Each
+# shard runs `ssh loadgen 'tar -czf - <shard>' | tar -xzf -` in its
+# own goroutine; concurrency is capped so the operator's downstream
+# bandwidth and local disk I/O don't saturate on a 22-cluster sweep.
+fetch_input="$(jq -n \
+	--argjson clusters "${clusters_json}" \
+	--arg     opts     "${SSH_HARDENING_OPTS}" \
+	--arg     run_id   "${RUN_ID}" \
+	'{
+		ssh_options: $opts,
+		remote_dir:  "/opt/gateway-benchmarks/reports",
+		local_dir:   "reports",
+		clusters: [
+			range(0; ($clusters | length)) as $i
+			| $clusters[$i]
+			| {
+				index:       $i,
+				loadgen_ssh: .ssh_loadgen,
+				shard_id:    ($run_id + "-shard-" + (if $i < 10 then "0" + ($i|tostring) else ($i|tostring) end))
+			}
+		]
+	}')"
+if ! printf '%s' "${fetch_input}" \
+	| "${ORCH_BIN}" aws-fetch --log-dir "${LOG_DIR}" \
+		--concurrency 6 --max-attempts 2 --timeout 10m --retry-interval 5s; then
+	printf '\n%s✗ Fetch shard reports failed%s (per-shard logs in %s/fetch-NN.log)\n' \
+		"${RED}" "${NC}" "${LOG_DIR}" >&2
+	exit 1
+fi
+printf '%s✓ Fetch shard reports%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - fetch_start ))")"
+
+# Build the combined comma-separated run-id list the report renderer
+# consumes (`bench report --combined a,b,c`). Doing this in bash
+# keeps the contract with downstream steps unchanged — aws-fetch only
+# owns the network transfer.
 combined=""
 for i in $(seq 0 $((runner_count - 1))); do
-	ssh_cmd="$(printf '%s' "${clusters_json}" | jq -r ".[$i].ssh_loadgen" | ssh_opts)"
-	shard_id="$(printf '%02d' "${i}")"
-	shard_run_id="${RUN_ID}-shard-${shard_id}"
-	log="${LOG_DIR}/fetch-${shard_id}.log"
-	printf '  %s %d/%d\r' "$(bar "$((i + 1))" "${runner_count}")" "$((i + 1))" "${runner_count}"
-	rm -rf "reports/${shard_run_id}"
-	mkdir -p reports
-	if ! (${ssh_cmd} "cd /opt/gateway-benchmarks/reports && tar -czf - ${shard_run_id}" | tar -C reports -xzf -) >"${log}" 2>&1; then
-		printf '\n%s✗ fetch shard %s failed%s log: %s\n' "${RED}" "${shard_id}" "${NC}" "${log}" >&2
-		tail -80 "${log}" >&2 || true
-		exit 1
-	fi
+	shard_run_id="${RUN_ID}-shard-$(printf '%02d' "${i}")"
 	if [[ -z "${combined}" ]]; then combined="${shard_run_id}"; else combined="${combined},${shard_run_id}"; fi
 done
-printf '\n%s✓ Fetch shard reports%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - fetch_start ))")"
 
 missing_jsonl=0
 for run in ${combined//,/ }; do

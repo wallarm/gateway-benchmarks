@@ -37,6 +37,17 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # Cap RunInstances retries: the AWS SDK default is 25 attempts with
+  # exponential backoff, which means an InsufficientInstanceCapacity
+  # error in a single AZ keeps the operator waiting up to ~90 minutes
+  # before tofu apply gives up (run aws-20260430T102216Z burned 1h23m
+  # waiting on c7i.2xlarge in eu-central-1a before failing). 5
+  # attempts × ~1-2 minutes per backoff caps the wait at ~5-10 min,
+  # so a cold-AZ situation surfaces fast and the operator can either
+  # rerun (capacity often appears within minutes) or pick a different
+  # instance type / AZ.
+  max_retries = 5
+
   # Default tags applied to every resource. Some AWS Organizations
   # enforce mandatory tags via SCP — Wallarm's qa account, for
   # example, requires `Product` and `Environment` on every resource

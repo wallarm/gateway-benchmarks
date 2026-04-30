@@ -30,7 +30,8 @@ export const options = {
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
     summaryTimeUnit: 'ms',
     thresholds: {
+        // Correctness gate only — see p1-baseline.js for the rationale
+        // behind dropping the `http_req_duration` p95 ceiling.
         policy_5xx_unexpected: ['count==0'],
-        http_req_duration: ['p(95)<300'],
     },
 };

@@ -65,16 +65,11 @@ export const options = {
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
     summaryTimeUnit: 'ms',
     thresholds: {
-        // 5xx floor matches the closed-loop twin: pool exhaustion
-        // should manifest as client-side timeout (http_req_failed)
-        // or as dropped_iterations, not as upstream 5xx.
+        // Correctness gate only — see p1-baseline.js for the rationale
+        // behind dropping the latency ceiling and dropped-iterations
+        // ceiling. Both signals are still emitted to the summary and
+        // surfaced verbatim in the report's columns; we just don't
+        // turn them into exit-99 failures any more.
         policy_5xx_unexpected: ['count==0'],
-        http_req_duration: ['p(95)<750'],
-        // The integral under the ramp is (60+180) × peak_rps / 2 for
-        // the ramps plus 180 × 10000 for the hold ≈ 2.4 M scheduled.
-        // 1 % drops = 24 k missed arrivals — the ceiling at which the
-        // "gateway sustains N kRPS" claim starts to wobble. Above 1 %
-        // the report generator (Phase 7) colours the cell red.
-        dropped_iterations: ['rate<0.01'],
     },
 };

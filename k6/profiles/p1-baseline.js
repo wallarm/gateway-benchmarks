@@ -36,10 +36,15 @@ export const options = {
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
     summaryTimeUnit: 'ms',
     thresholds: {
-        // Gateway-fault budget: zero 5xx tolerated on p1.
+        // Gateway-fault budget: zero 5xx tolerated on p1. Correctness
+        // is the only SLA — the latency p95 ceiling that lived here
+        // (`http_req_duration: p(95)<200`) was removed because it
+        // forced k6 exit 99 on every cell where a real gateway hit
+        // its capacity wall, which then bubbled up as `K6_FAILED` in
+        // aws-clean-cell.sh and excluded the cell from the report.
+        // We want to *measure* latency under stress, not fail the
+        // run on it; the report renders absolute p50/p95/p99 columns
+        // without any SLA gate.
         policy_5xx_unexpected: ['count==0'],
-        // Tail-latency floor: trip the run early if p95 explodes.
-        // 200 ms matches the docs/LOAD-PROFILES.md "p1 strict" line.
-        http_req_duration: ['p(95)<200'],
     },
 };

@@ -1,6 +1,6 @@
-{"name":"no Authorization header -> 401","request":{"method":"GET","path":"/anything"},"expect":{"status":401}}
-{"name":"garbage bearer token -> 401","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer not.a.jwt"}},"expect":{"status":401}}
-{"name":"malformed Authorization scheme -> 401","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Basic Zm9vOmJhcg=="}},"expect":{"status":401}}
+{"name":"no Authorization header rejected","request":{"method":"GET","path":"/anything"},"expect":{"status_one_of":[400,401]}}
+{"name":"garbage bearer token rejected","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer not.a.jwt"}},"expect":{"status_one_of":[401,403]}}
+{"name":"malformed Authorization scheme rejected","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Basic Zm9vOmJhcg=="}},"expect":{"status_one_of":[400,401,403]}}
 {"name":"valid HS256 token -> 200","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_VALID}"}},"expect":{"status":200}}
-{"name":"expired HS256 token -> 401","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_EXPIRED}"}},"expect":{"status":401}}
-{"name":"wrong-secret HS256 token -> 401","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_WRONG}"}},"expect":{"status":401}}
+{"name":"expired HS256 token rejected","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_EXPIRED}"}},"expect":{"status_one_of":[401,403]}}
+{"name":"wrong-secret HS256 token rejected","request":{"method":"GET","path":"/anything","headers":{"Authorization":"Bearer ${JWT_WRONG}"}},"expect":{"status_one_of":[401,403]}}

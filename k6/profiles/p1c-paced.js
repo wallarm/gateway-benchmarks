@@ -53,20 +53,11 @@ export const options = {
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)', 'max'],
     summaryTimeUnit: 'ms',
     thresholds: {
-        // Gateway-fault budget: zero 5xx tolerated on p1c — same strict
-        // floor as the closed-loop twin. A paced 500 RPS hitting 5xx
-        // means the gateway's failing under trivial load, not that the
-        // test setup is marginal.
+        // Correctness gate only — see p1-baseline.js for the rationale
+        // behind dropping the `http_req_duration` and
+        // `dropped_iterations` ceilings. Reviewers read absolute
+        // p50/p95/p99 + dropped-iteration counters straight from the
+        // report; failing the run on those signals only hid the data.
         policy_5xx_unexpected: ['count==0'],
-        // Tail-latency floor: 300 ms = p1-baseline's 200 ms × 1.5.
-        // See header comment for the widening rationale.
-        http_req_duration: ['p(95)<300'],
-        // Arrival-rate integrity: dropped_iterations is k6's signal
-        // that it could not start the scheduled iteration in time.
-        // On p1c the target is so low that any drop indicates either
-        // the gateway couldn't absorb 500 RPS or the loadgen itself
-        // is starved — either way, the run cannot make an absolute-
-        // RPS claim, so we fail the threshold.
-        dropped_iterations: ['count==0'],
     },
 };

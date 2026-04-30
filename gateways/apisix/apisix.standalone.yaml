@@ -68,11 +68,18 @@ apisix:
   # `gateways/apisix/p12-full-pipeline/apisix.yaml` for the actual cert
   # material. Profiles without an `ssls:` block keep the listener bound
   # but answer with the default-loaded snake-oil cert.
+  #
+  # NOTE: `enable_http2` is APISIX-level (top of this `apisix:` block),
+  # not per-port — moved out of `ssl.listen.<port>` after run
+  # aws-20260430T071958Z showed `ERROR: port level enable_http2 in
+  # ssl.listen is deprecated from 3.9 version` aborting startup, so the
+  # default (enabled) applies; for HTTP/1.1-only HTTPS measurement we'd
+  # need the global `enable_http2: false`, but that also disables h2 on
+  # any future http listener. Leaving default.
   ssl:
     enable: true
     listen:
       - port: 9443
-        enable_http2: false
     ssl_protocols: "TLSv1.2 TLSv1.3"
     ssl_ciphers: "HIGH:!aNULL:!MD5"
   # Additional Lua package search path, prepended to OpenResty's

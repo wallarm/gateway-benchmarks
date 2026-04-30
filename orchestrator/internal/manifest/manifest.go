@@ -86,8 +86,8 @@ type GatewayRef struct {
 	Name        string `json:"name"`
 	Image       string `json:"image,omitempty"`
 	Digest      string `json:"digest,omitempty"`
-	Source      string `json:"source,omitempty"`        // e.g. "built from src", "registry"
-	ComposePath string `json:"compose_path,omitempty"`  // gateways/<name>/docker-compose.yaml
+	Source      string `json:"source,omitempty"`       // e.g. "built from src", "registry"
+	ComposePath string `json:"compose_path,omitempty"` // gateways/<name>/docker-compose.yaml
 }
 
 // Builder accumulates fields incrementally during a run.
@@ -154,9 +154,9 @@ func (b *Builder) AddRow(id string) {
 }
 
 // SetRepetitions and SetStopOnFail mirror the run-level CLI flags.
-func (b *Builder) SetRepetitions(n int)       { b.m.Repetitions = n }
-func (b *Builder) SetStopOnFail(stop bool)    { b.m.StopOnFail = stop }
-func (b *Builder) SetNotes(notes string)      { b.m.Notes = notes }
+func (b *Builder) SetRepetitions(n int)    { b.m.Repetitions = n }
+func (b *Builder) SetStopOnFail(stop bool) { b.m.StopOnFail = stop }
+func (b *Builder) SetNotes(notes string)   { b.m.Notes = notes }
 
 // Finalize stamps the end time and computed duration.
 func (b *Builder) Finalize() {
@@ -215,16 +215,21 @@ func probeK6(_ context.Context) K6Info {
 	return K6Info{Image: img, Digest: digest}
 }
 
-// probeGatewayImage runs `docker compose config --images` for the
-// gateway and resolves the digest for the first image it lists. Best
-// effort — returns ok=false on any error so the caller can fall back
-// to "built from src".
+// probeGatewayImage runs `docker compose config --images gateway` and
+// resolves the digest for the gateway service. The earlier
+// implementation called `--images` without a service filter and took
+// `lines[0]`, which on every multi-service stack returned the
+// `backend` image instead of the gateway under test (the run
+// aws-20260429T151344Z manifest had wallarm/traefik/kong all listed
+// as gateway-benchmarks/backend:v2.22.1). Best effort — returns
+// ok=false on any error so the caller can fall back to "built from
+// src".
 func probeGatewayImage(ctx context.Context, gateway string) (image, digest string, ok bool) {
 	composePath := filepath.Join("gateways", gateway, "docker-compose.yaml")
 	if _, err := os.Stat(composePath); err != nil {
 		return "", "", false
 	}
-	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "config", "--images").Output()
+	out, err := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "config", "--images", "gateway").Output()
 	if err != nil {
 		return "", "", false
 	}

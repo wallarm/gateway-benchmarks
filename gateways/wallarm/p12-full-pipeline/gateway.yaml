@@ -5,6 +5,8 @@
 
 net:
   http_port: 9080
+  # Phase 5 — TLS data plane for s14-full-pipeline-https.
+  https_port: 9443
 
 admin:
   listen_address: "0.0.0.0"
@@ -21,3 +23,22 @@ upstream:
     keepalive_secs: 90
     nodelay: true
     reuse_address: true
+
+# Phase 5 — same bench TLS reference as p01-vanilla so the s14-vs-s12
+# RPS / latency delta cleanly attributes the cost to TLS termination,
+# not to a different cert / cipher mix.
+certificate_files:
+  - name: bench-tls
+    certificate_path: /etc/wallarm/tls/bench.crt
+    key_path: /etc/wallarm/tls/bench.key
+
+virtual_hosts:
+  - name: bench-vh
+    protocol: https
+    hosts: ["*"]
+    default: true
+    tls:
+      sni: "bench.local"
+      certificate:
+        type: file
+        name: bench-tls

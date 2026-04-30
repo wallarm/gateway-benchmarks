@@ -1,20 +1,20 @@
-// Package aggregate is the Go reimplementation of
-// scripts/aggregate-csv.sh — same column schema, same per-cell
-// projection, but with richer typed structs that downstream
-// reporters can consume without re-parsing the CSV.
+// Package aggregate walks the per-cell artefact tree under
+// reports/<RUN_ID>/raw/ and projects it into the canonical wide CSV
+// plus a typed JSONL stream that downstream reporters consume without
+// re-parsing the CSV.
 //
 // Inputs (per cell):
 //
 //	reports/<RUN_ID>/raw/<gateway>/<policy>__<load>__<scenario>/
 //	├── k6-summary.json   ← required for PASS rows
 //	├── excluded.json     ← present for FEATURE-MISSING rows
-//	├── docker-stats.csv  ← optional sidecar output
+//	├── docker-stats.csv  ← optional Docker stats sample
 //	└── parity.json       ← optional pre-cell parity report
 //
 // Outputs (per RunID):
 //
-//	reports/<RUN_ID>/matrix.csv     ← wide CSV (27 columns, identical
-//	                                  to scripts/aggregate-csv.sh)
+//	reports/<RUN_ID>/matrix.csv     ← wide CSV (27 ranking columns
+//	                                  + 4 bandwidth columns)
 //	reports/<RUN_ID>/cells.jsonl    ← one JSON object per cell
 //	reports/<RUN_ID>/matrix.md      ← optional markdown rollup
 //
@@ -38,8 +38,8 @@ import (
 )
 
 // Cell is the typed projection of one (gateway, policy, scenario, load)
-// run. JSON tags match scripts/aggregate-csv.sh column names so the
-// JSONL output is a strict superset of the CSV.
+// run. JSON tags match the canonical CSV column names so the JSONL
+// output is a strict superset of the CSV.
 type Cell struct {
 	Gateway      string `json:"gateway"`
 	Policy       string `json:"policy"`
@@ -182,6 +182,25 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 			cell.Verdict == "EXCLUDED",
 		)
 
+		// k6 functional checks (status==200, body asserts, ...) are
+		// the last line of defense against silent connectivity bombs:
+		// when the gateway is unreachable on the listener under test
+		// (e.g. HTTPS scenario hitting an HTTP-only gateway), every
+		// request fails with `connection refused` but Policy2xx /
+		// Policy5xx counters all stay at zero — UnexpectedRatio reads
+		// 0 % and Verdict would otherwise stay PASS. If more than half
+		// the checks failed, demote to FAIL so the cell is excluded
+		// from rankings instead of polluting the median.
+		if cell.Verdict == "PASS" && cell.ChecksTotal > 0 {
+			failRatio := float64(cell.ChecksFails) / float64(cell.ChecksTotal)
+			if failRatio > 0.5 {
+				cell.Verdict = "FAIL"
+				if cell.ParityStatus == "" {
+					cell.ParityStatus = "EXCESSIVE_CHECK_FAILURES"
+				}
+			}
+		}
+
 		cells = append(cells, cell)
 		return nil
 	})
@@ -209,8 +228,7 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 	return cells, nil
 }
 
-// canonicalColumns mirrors scripts/aggregate-csv.sh § COLUMNS and
-// appends resource-pressure columns after the legacy fields. Existing
+// canonicalColumns is the canonical wide-CSV header. Existing
 // consumers should read by header name; index-based parsers must be
 // updated when consuming post-resource-pressure reports.
 var canonicalColumns = []string{
@@ -301,13 +319,12 @@ func (a *Aggregator) WriteMarkdown(path string, cells []Cell) error {
 }
 
 // -----------------------------------------------------------------------------
-// k6-summary parsing — only the fields aggregate-csv.sh consumes.
+// k6-summary parsing — only the fields the wide-CSV projection needs.
 // -----------------------------------------------------------------------------
 
 // k6Summary uses RawMessage for root_group.checks so we can unmarshal
 // it as either an array (older k6 versions) or an object keyed by
-// check name (1.x). aggregate-csv.sh's jq pipeline papers over both
-// shapes; we do the same explicitly.
+// check name (1.x).
 type k6Summary struct {
 	Metrics map[string]json.RawMessage `json:"metrics"`
 	Root    struct {
@@ -388,7 +405,9 @@ func loadExcluded(path string, cell *Cell) {
 func loadParity(path string, cell *Cell) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		cell.ParityStatus = "UNKNOWN"
+		if cell.ParityStatus == "" {
+			cell.ParityStatus = "UNKNOWN"
+		}
 		return
 	}
 	var rep struct {
@@ -402,9 +421,9 @@ func loadParity(path string, cell *Cell) {
 }
 
 // -----------------------------------------------------------------------------
-// docker-stats.csv rollup — same logic as aggregate-csv.sh's awk,
-// extended with bandwidth rollup. CSV columns (fixed schema, see
-// internal/stats.CSVHeader + scripts/docker-stats-sidecar.sh):
+// docker-stats.csv rollup — peak / steady projections plus bandwidth
+// rollup. CSV columns (fixed schema, see internal/stats.CSVHeader and
+// scripts/docker-stats-sidecar.sh — both produce identical headers):
 //
 //   0 ts_utc           RFC3339 timestamp of the sample
 //   1 cpu_ns_total     cumulative ns, .cpu_stats.cpu_usage.total_usage

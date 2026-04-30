@@ -103,7 +103,7 @@ static_resources:
                 server_header_transformation: PASS_THROUGH
                 route_config:
                   name: local_route
-                  virtual_hosts:
+                  virtual_hosts: &p12_vhosts
                     - name: backend_vh
                       domains: ["*"]
                       # --- p07: request-header transforms ---------
@@ -128,7 +128,7 @@ static_resources:
                           route:
                             cluster: backend_cluster
                             timeout: 10s
-                http_filters:
+                http_filters: &p12_http_filters
                   # ---------------------------------------------------
                   # 1. local_ratelimit — p03: 1000 rps service-wide,
                   # 200-request burst cap. Fires BEFORE JWT so a
@@ -266,6 +266,52 @@ static_resources:
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+    # -------------------------------------------------------------------------
+    # Phase 5 — TLS data plane for s14-full-pipeline-https. Reuses the
+    # same virtual_hosts and http_filters list (YAML anchors) as the
+    # HTTP listener so the s14 vs s12 RPS / latency delta cleanly
+    # attributes the cost to TLS termination, not to a different policy
+    # stack. Cert chain mounted by docker-compose at /etc/envoy/tls/.
+    # -------------------------------------------------------------------------
+    - name: listener_tls
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9443
+      reuse_port: true
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                  - certificate_chain:
+                      filename: /etc/envoy/tls/bench.crt
+                    private_key:
+                      filename: /etc/envoy/tls/bench.key
+                tls_params:
+                  tls_minimum_protocol_version: TLSv1_2
+                  tls_maximum_protocol_version: TLSv1_3
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: ingress_https
+                codec_type: HTTP1
+                common_http_protocol_options:
+                  idle_timeout: 60s
+                  max_requests_per_connection: 100000
+                stream_idle_timeout: 60s
+                request_timeout: 10s
+                normalize_path: false
+                merge_slashes: false
+                server_header_transformation: PASS_THROUGH
+                route_config:
+                  name: local_route_tls
+                  virtual_hosts: *p12_vhosts
+                http_filters: *p12_http_filters
 
   clusters:
     - name: backend_cluster

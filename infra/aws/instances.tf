@@ -94,6 +94,12 @@ resource "aws_instance" "runner" {
 # -----------------------------------------------------------------------------
 # Clean cluster fleet — each shard gets loadgen -> gateway -> backend
 # -----------------------------------------------------------------------------
+resource "aws_placement_group" "shard" {
+  count    = var.cluster_count
+  name     = "${var.name_prefix}-shard-${count.index + 1}"
+  strategy = "cluster"
+}
+
 resource "aws_instance" "cluster_loadgen" {
   count = var.cluster_count
 
@@ -104,7 +110,7 @@ resource "aws_instance" "cluster_loadgen" {
     version = "$Latest"
   }
 
-  placement_group             = aws_placement_group.bench.name
+  placement_group             = aws_placement_group.shard[count.index].name
   user_data_replace_on_change = true
 
   tags = merge(local.required_tags, {
@@ -123,7 +129,7 @@ resource "aws_instance" "cluster_gateway" {
     version = "$Latest"
   }
 
-  placement_group             = aws_placement_group.bench.name
+  placement_group             = aws_placement_group.shard[count.index].name
   user_data_replace_on_change = true
 
   tags = merge(local.required_tags, {
@@ -142,7 +148,7 @@ resource "aws_instance" "cluster_backend" {
     version = "$Latest"
   }
 
-  placement_group             = aws_placement_group.bench.name
+  placement_group             = aws_placement_group.shard[count.index].name
   user_data_replace_on_change = true
 
   tags = merge(local.required_tags, {

@@ -77,9 +77,18 @@ services:
       # Proxy on :9080 (bench-standard). Admin fully disabled — the
       # parity harness never introspects the Admin API; every knob
       # comes from the declarative config on disk.
-      KONG_PROXY_LISTEN: "0.0.0.0:9080 reuseport backlog=16384"
+      KONG_PROXY_LISTEN: "0.0.0.0:9080 reuseport backlog=16384, 0.0.0.0:9443 ssl reuseport backlog=16384"
       KONG_ADMIN_LISTEN: "off"
       KONG_STATUS_LISTEN: "off"
+      # --- Phase 5: TLS data plane -----------------------------------
+      # Bench-shared self-signed cert chain (CN=bench.local, SAN covers
+      # localhost / gateway / 127.0.0.1, valid until 2126). Mounted from
+      # gateways/_reference/tls/. Kong serves the same routes/services
+      # over HTTPS as it does over HTTP — no extra declarative config
+      # needed; s13/s14 hit the SSL listener and reuse the p01 / p12
+      # service definitions verbatim.
+      KONG_SSL_CERT: "/etc/kong/tls/bench.crt"
+      KONG_SSL_CERT_KEY: "/etc/kong/tls/bench.key"
       # --- Headers / provenance ---------------------------------------
       # Drop Kong's "Server: kong/3.9.1" and "Via: kong/3.9.1"
       # stamps on responses. The p08 / p12 profiles still explicitly
@@ -151,8 +160,13 @@ services:
       # lookup in one bundle — see `p02-jwt/NOTES.md`).
       - ./_shared/lualib:/usr/local/kong/custom:ro
       - ./_shared/bench-start.sh:/bench/bench-start.sh:ro
+      # Phase 5 — bench TLS reference material. Inert on profiles that
+      # don't drive HTTPS scenarios; only s13 (p01-vanilla) and s14
+      # (p12-full-pipeline) actually exercise the :9443 listener.
+      - ../_reference/tls:/etc/kong/tls:ro
     ports:
-      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"   # data plane (parity-gateway target)
+      - "${GATEWAY_HTTPS_PORT:-9443}:9443"  # Phase 5 TLS data plane
     # Kong exits cleanly on SIGTERM via its supervisord wrapper; 5 s
     # is more than enough for `docker compose down` between parity
     # runs.

@@ -35,10 +35,10 @@ func (c Counters) UnexpectedRatio() float64 {
 type Health string
 
 const (
-	HealthGreen   Health = "GREEN"   // unexpected ratio < 0.1 % AND no broken timing
-	HealthYellow  Health = "YELLOW"  // 0.1 % ≤ ratio < 5 %  (partial outage, still ranked)
-	HealthRed     Health = "RED"     // ratio ≥ 5 %        (effectively broken under load)
-	HealthBroken  Health = "BROKEN"  // timing metrics all zero (e.g. Tyk instrumentation gap)
+	HealthGreen    Health = "GREEN"  // unexpected ratio < 0.1 % AND no broken timing
+	HealthYellow   Health = "YELLOW" // 0.1 % ≤ ratio < 5 %  (partial outage, still ranked)
+	HealthRed      Health = "RED"    // ratio ≥ 5 %        (effectively broken under load)
+	HealthBroken   Health = "BROKEN" // timing metrics all zero (e.g. Tyk instrumentation gap)
 	HealthExcluded Health = "EXCLUDED"
 )
 
@@ -46,13 +46,12 @@ const (
 // detection — when p50, p95 and max are all zero AND the cell sent
 // thousands of requests, the timing channel is broken.
 type LatencyShape struct {
-	HTTPReqs int64
+	HTTPReqs      int64
 	P50, P95, Max float64
 }
 
 // IsTimingBroken returns true when the cell emitted traffic but k6
-// recorded a flat-zero duration distribution. Mirrors the heuristic
-// in scripts/render-html-report.py § "timing_broken".
+// recorded a flat-zero duration distribution.
 func (l LatencyShape) IsTimingBroken() bool {
 	return l.HTTPReqs > 100 && l.P50 == 0 && l.P95 == 0 && l.Max == 0
 }

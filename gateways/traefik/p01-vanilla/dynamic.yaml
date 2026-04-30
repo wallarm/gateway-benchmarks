@@ -18,6 +18,19 @@ http:
       service: backend
       priority: 1
 
+    # Phase 5 — TLS twin of the `backend` router for s13-vanilla-https.
+    # Same service, same rule, just bound to the `websecure` entryPoint
+    # with TLS enabled. The cert is selected by the catch-all default
+    # store below; bench.crt SAN covers bench.local / localhost /
+    # gateway / 127.0.0.1, matching every form k6 / parity / curl use.
+    backend-tls:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/`)"
+      service: backend
+      priority: 1
+      tls: {}
+
   services:
     # Single upstream — same `backend:8080` address every other
     # gateway targets. passHostHeader: false so the upstream sees
@@ -29,3 +42,18 @@ http:
         passHostHeader: false
         servers:
           - url: http://backend:8080
+
+# Phase 5 — TLS material for the `websecure` entryPoint. Files mounted
+# at /etc/traefik/tls/ via docker-compose volume from
+# gateways/_reference/tls/. `default` makes this the cert traefik serves
+# when SNI doesn't match anything more specific — exactly what we want
+# for the catch-all bench setup.
+tls:
+  certificates:
+    - certFile: /etc/traefik/tls/bench.crt
+      keyFile: /etc/traefik/tls/bench.key
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/tls/bench.crt
+        keyFile: /etc/traefik/tls/bench.key

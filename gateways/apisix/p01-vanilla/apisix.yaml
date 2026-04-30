@@ -40,4 +40,69 @@ routes:
       # verbatim). Leaving it default so the go-httpbin backend sees
       # the same Host every other column sends.
 
+# Phase 5 — TLS object that backs the :9443 listener declared in
+# `apisix.standalone.yaml § apisix.ssl`. APISIX standalone mode requires
+# cert/key inline in the declarative config (no `cert_file_path` knob
+# in 3.x), so we paste the bench self-signed material from
+# `gateways/_reference/tls/bench.{crt,key}` (CN=bench.local, SAN covers
+# localhost / gateway / 127.0.0.1, valid until 2126). The same SNI list
+# resolves every form k6 / curl / parity use.
+ssls:
+  - id: bench-tls-p01
+    snis:
+      - "bench.local"
+      - "localhost"
+      - "gateway"
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDfTCCAmWgAwIBAgIUPHK/W2O29O0bXOGEugsdHE1RS8swDQYJKoZIhvcNAQEL
+      BQAwMzEUMBIGA1UEAwwLYmVuY2gubG9jYWwxGzAZBgNVBAoMEmdhdGV3YXktYmVu
+      Y2htYXJrczAgFw0yNjA0MjIwODMzMjdaGA8yMTI2MDMyOTA4MzMyN1owMzEUMBIG
+      A1UEAwwLYmVuY2gubG9jYWwxGzAZBgNVBAoMEmdhdGV3YXktYmVuY2htYXJrczCC
+      ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAPJYwT6bdcORv55Mm8e+xCFS
+      CnuNCMgmoUS6gtqpu5p95o9H7tvQ4aZST8VaD7qd9UVAf2cw1l9D1yVgTBvryitW
+      cw/hVkINQPlmA5+hhgUCETZvr/9YJ+f0mGJfOUG+RmqVY4+gYEAswEekhqy/cDp+
+      eXwVZSo4mpK+IoTOWKtgorTmCQHqddjOFoFVTBi3bc4GzaY6Lxt9q7bOdtg3P9Uu
+      2RYPwNzB37icoFs7xUoWKGuPm0USNPswDGCa4ogTC8gNoVZ+UD/M0mSSNHZUVWB/
+      GFMd/39c2NjsGuvWhTLi0Ukw0PL/a2tpjEsVOTN3Kg2NPbIOAufbOy5crL+ij+EC
+      AwEAAaOBhjCBgzAdBgNVHQ4EFgQUJI5XMPcPsjUfnMVB25nrveev/n0wHwYDVR0j
+      BBgwFoAUJI5XMPcPsjUfnMVB25nrveev/n0wDwYDVR0TAQH/BAUwAwEB/zAwBgNV
+      HREEKTAnggtiZW5jaC5sb2NhbIIJbG9jYWxob3N0ggdnYXRld2F5hwR/AAABMA0G
+      CSqGSIb3DQEBCwUAA4IBAQCFPmCWXee1Gmqs3VhHR309HpeK5+Cnk2QNKrvM3d/2
+      pJ5pVhNEdyJzssEOigzz2FyrrAyLRh7DGwfVOlQQuxerDr3vdMkhPyjW4EXbeM/e
+      fcDryWo+YAIQY38Wp8B7tHwjnJT7xmGNLIQ8d+JJJJYZsBxZbna5HS86OpUymqR7
+      OkgMfTL4sWnPZeFBTaYifUW5NrSrK7XFGmEBDkJSOPenK2uXrsUwhXX4J+S1MMkK
+      3Zz0k+eje1F9iQDZhEovWw/DWLoWs75Y7+877khyCVOPkxQui5yzZMlGHkhwTBdg
+      41LdxuGpLV9oiVFlugF2/5oI3AAHoQEGqMhxENqu3+z+
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDyWME+m3XDkb+e
+      TJvHvsQhUgp7jQjIJqFEuoLaqbuafeaPR+7b0OGmUk/FWg+6nfVFQH9nMNZfQ9cl
+      YEwb68orVnMP4VZCDUD5ZgOfoYYFAhE2b6//WCfn9JhiXzlBvkZqlWOPoGBALMBH
+      pIasv3A6fnl8FWUqOJqSviKEzlirYKK05gkB6nXYzhaBVUwYt23OBs2mOi8bfau2
+      znbYNz/VLtkWD8Dcwd+4nKBbO8VKFihrj5tFEjT7MAxgmuKIEwvIDaFWflA/zNJk
+      kjR2VFVgfxhTHf9/XNjY7Brr1oUy4tFJMNDy/2traYxLFTkzdyoNjT2yDgLn2zsu
+      XKy/oo/hAgMBAAECggEAECwGuTwmilEaOGC5ry/2ZpgoRZZjv6IpoNcmuZtvVB/o
+      AtJfXiEnmFxly7BMMb0uC4ZXpMsy2FND8s/k7vgNGwHp1mVzHB/w9gjuCk5SYy3V
+      eDcmciOv22AMddlk42jkdLhYrHzx71ZifmVm7KAvHQ1+OImKTAb69E/mfcucnyhH
+      yMWXlg0nx/UE2Or3AVfMhcNd3Ay/k58Ut6dwjylQLGBcVfvvErRXS47qqU9fIh1E
+      joAJ4ZoosFAPduVjS8K/DniZckC0/fn5LgPIttEBg56lmEBZ0e7UbeCPYNKuXTqm
+      3D8sWwERhKbWecNGFWJie9v4GRClVlgtcY7FiCc/AQKBgQD9/wkm/iq0YzzoDuQn
+      J4cBxLj7qsUnzoALsDOdCjqK0C2HZw0QSqGOlCJmLXfA/3BlCHpUR3jdrcmzlbVQ
+      iawnqsrC83l44jUrpL4E3iWPuWTtZ6/nGOE6hsko5EvzLFYcs8Y+2TYC/tvRU87Q
+      haMewYnhtPbNhiqlE0L2A+xJTwKBgQD0QjEnk7SkwA6PCT5C0RphkH2vrMmTxFPt
+      Xj6VrAEd5XEzB4CFQWFK54xIXtFCVNkydstru80v+ifrvdAOfgxYfefeYD08mAiP
+      LeY2J4kiGprgho4hUf7+C5m9f+2VdwlYFRAnq7uQDNhRaKfSoXgcQh0KNgXRscHY
+      +FssBoPnzwKBgQDiIG4bguiuFDOjPa6tlSlCz8sIc253FAc3YLVyuCqKbvA5vesJ
+      eAgBEazWXuBguIltyXBvG/plEVWjRkNX4lmcLxe5HF4m2u0PX+m0F7pFDH7oRQl7
+      qtDJ9Dme6DEd23kGsJ5sUaEeZZt57y0OxAsHVLLWeO/I5guNT2qr764rTQKBgQCo
+      1LPLKlI7ajDl9zqczpHQjCID8oemZpaoRHM32xsugfAbmHziHo3US3Xwc/FqSuGR
+      +wCiJ74tAljjnmCYE9IOvIAveg/5uRB5fv1Xwz4LX55bwUWujFGXYYdTr4AVxqCj
+      zHNNKGvNpsNCifcuJMOzrJMMAslE5vwZL5k9NgeoiwKBgGCex1wErIfyrQcg/pTk
+      2H9NwEErt3cswpZaUWWWHf1xE7azzI8FF1WH6uUd7PW+MAeJxVZl+ZV6g2JWfUvd
+      UWSXngZDd6tOnGB3vNdCtU6SeRQ73WrNBIS7c/gmJtPKnaSRXqvH3/otUhUa9vPc
+      mSTF4R1ZuFXwv2r14WyJWlCM
+      -----END PRIVATE KEY-----
+
 #END

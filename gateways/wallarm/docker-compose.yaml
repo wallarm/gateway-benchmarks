@@ -52,8 +52,16 @@ services:
     command: ["-c", "/config/gateway.yaml"]
     volumes:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/gateway.yaml:/config/gateway.yaml:ro
+      # Phase 5 — bench TLS reference material (CN=bench.local, SAN
+      # covers localhost / gateway / 127.0.0.1, valid until 2126). Read
+      # by the `certificate_files:` block in p01-vanilla / p12-full-
+      # pipeline gateway.yaml when those profiles bind the HTTPS
+      # listener via `net.https_port: 9443`. Inert on every other
+      # profile (their gateway.yaml has no certificate_files entry).
+      - ../_reference/tls:/etc/wallarm/tls:ro
     ports:
-      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"   # data plane (parity-gateway target)
+      - "${GATEWAY_HTTPS_PORT:-9443}:9443"  # TLS data plane (s13/s14) — unigw binds whatever net.https_port says, so we keep 9443:9443 for parity with every other gateway column
       - "${GATEWAY_ADMIN_PORT:-9081}:9081"  # admin API  (setup.sh runs against this)
     networks:
       bench-net:

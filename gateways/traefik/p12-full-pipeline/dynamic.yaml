@@ -59,6 +59,25 @@ http:
         - bench-p11
       priority: 1
 
+    # Phase 5 — TLS twin for s14-full-pipeline-https. Same middleware
+    # chain as the HTTP router so the s14-vs-s12 RPS / latency delta
+    # cleanly attributes the cost to TLS termination, not to a different
+    # policy stack.
+    backend-tls:
+      entryPoints:
+        - websecure
+      rule: "PathPrefix(`/`)"
+      service: backend
+      middlewares:
+        - bench-p02
+        - bench-p04
+        - bench-p08
+        - bench-p10
+        - bench-p09
+        - bench-p11
+      priority: 1
+      tls: {}
+
   middlewares:
     bench-p02:
       plugin:
@@ -123,3 +142,17 @@ http:
         passHostHeader: false
         servers:
           - url: http://backend:8080
+
+# Phase 5 — TLS material for the `websecure` entryPoint, identical to
+# the p01-vanilla setup. Same bench.local cert chain so a reviewer can
+# diff p12 vs p01 cleanly: only the middleware list changes between
+# the two HTTPS twins.
+tls:
+  certificates:
+    - certFile: /etc/traefik/tls/bench.crt
+      keyFile: /etc/traefik/tls/bench.key
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/tls/bench.crt
+        keyFile: /etc/traefik/tls/bench.key

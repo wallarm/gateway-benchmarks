@@ -106,8 +106,14 @@ services:
     volumes:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/envoy.yaml:/etc/envoy/envoy.yaml:ro
       - ./_shared/lualib:/etc/envoy/lualib:ro
+      # Phase 5 — bench TLS reference material. Read by p01-vanilla
+      # and p12-full-pipeline envoy.yaml when their listener_tls
+      # transport_socket points at /etc/envoy/tls/. Inert on every
+      # other profile.
+      - ../_reference/tls:/etc/envoy/tls:ro
     ports:
-      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"   # data plane (parity-gateway target)
+      - "${GATEWAY_HTTPS_PORT:-9443}:9443"  # Phase 5 TLS data plane (s13/s14)
       - "${GATEWAY_ENVOY_ADMIN_PORT:-9901}:9901"  # admin (read-only: /stats, /clusters, /config_dump)
     # Envoy drains gracefully on SIGTERM. A 5 s stop-grace-period keeps
     # `docker compose down` snappy during the parity sweeps.

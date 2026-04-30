@@ -17,8 +17,7 @@ type Cell struct {
 	aggregate.Cell
 
 	// ErrRatio is policy_4xx_unexpected + policy_5xx_unexpected
-	// divided by the classified-total. Mirrors render-html-report.py
-	// § _err_rate. 0–1.
+	// divided by the classified-total. Range 0..1.
 	ErrRatio float64
 
 	// Unstable is set when a cell is part of a multi-rep run whose
@@ -155,8 +154,8 @@ type Downloads struct {
 // Derivations
 // -----------------------------------------------------------------------------
 
-// errRatio mirrors scripts/render-html-report.py § _err_rate. Returns
-// 0..1 (NOT a percentage).
+// errRatio returns (4xx_unexpected + 5xx_unexpected) / classified-total.
+// Range 0..1 (NOT a percentage).
 func errRatio(c aggregate.Cell) float64 {
 	total := float64(c.Policy2xx + c.Policy4xxExpected + c.Policy4xxUnexpected + c.Policy5xxUnexpected)
 	if total <= 0 {
@@ -176,22 +175,27 @@ func BuildIndex(raw []aggregate.Cell, unstableThreshold float64) *Index {
 		All:           make([]Cell, 0, len(raw)),
 	}
 
-	// First pass: bucket every cell by (policy, gateway, load), keep
-	// repetitions side-by-side so we can compute medians + spread.
+	// First pass: bucket every cell by (policy, gateway, load,
+	// protocol). HTTPS scenarios live under load+"-https" so they
+	// cannot be silently merged with HTTP scenarios for the same
+	// (policy, gateway, load) — that merge produced the false-UNSTABLE
+	// flagging in run aws-20260429T151344Z (1.3M connection-refused
+	// HTTPS calls were treated as a "rep" of the working HTTP cell).
 	for _, r := range raw {
 		c := Cell{Cell: r, ErrRatio: errRatio(r)}
 		idx.All = append(idx.All, c)
 		if c.Policy == "" || c.Gateway == "" || c.Load == "" {
 			continue
 		}
+		bucketLoad := loadKeyFor(c.Load, c.Scenario)
 		if _, ok := idx.AllRepsByCell[c.Policy]; !ok {
 			idx.AllRepsByCell[c.Policy] = make(map[string]map[string][]Cell)
 		}
 		if _, ok := idx.AllRepsByCell[c.Policy][c.Gateway]; !ok {
 			idx.AllRepsByCell[c.Policy][c.Gateway] = make(map[string][]Cell)
 		}
-		idx.AllRepsByCell[c.Policy][c.Gateway][c.Load] =
-			append(idx.AllRepsByCell[c.Policy][c.Gateway][c.Load], c)
+		idx.AllRepsByCell[c.Policy][c.Gateway][bucketLoad] =
+			append(idx.AllRepsByCell[c.Policy][c.Gateway][bucketLoad], c)
 	}
 
 	// Second pass: pick the representative rep per bucket (median

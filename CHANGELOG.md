@@ -11,8 +11,44 @@ asset.
 
 ## [Unreleased]
 
-Nothing yet — the next tag is `v0.1.1` or `v0.2.0` depending on the
-scope of changes merged after `v0.1.0`.
+### Added
+
+- **Phase 5 — TLS data plane for s13 / s14 HTTPS scenarios across all
+  seven gateways.** The `gateways/_reference/tls/bench.{crt,key}` chain
+  (CN=bench.local, SAN: localhost / gateway / 127.0.0.1, valid until
+  2126) is now wired into every column:
+  - `nginx` — `listen 9443 ssl;` server block (already present).
+  - `traefik` — `websecure` entryPoint + dynamic-config certificate.
+  - `kong` — `KONG_PROXY_LISTEN: "..., 0.0.0.0:9443 ssl ..."`
+    + `KONG_SSL_CERT*` env vars.
+  - `apisix` — `apisix.ssl.enable: true` in standalone config + inline
+    `ssls:` block in p01 / p12 declarative configs.
+  - `envoy` — second `listener_tls` with `DownstreamTlsContext`,
+    sharing the HTTP listener's filter chain via YAML anchors so the
+    s13/s14-vs-s01/s12 delta isolates TLS cost only.
+  - `wallarm` — `net.https_port: 9443` + `certificate_files` +
+    catch-all `virtual_hosts` HTTPS entry.
+  - `tyk` — TLS-terminator nginx sidecar (Tyk OSS lacks per-listener
+    TLS toggles; `http_server_options.use_ssl` is global). Documented
+    deviation: s13/s14 numbers for tyk reflect the `nginx-TLS + tyk`
+    stack, not Tyk's own TLS implementation.
+- **`FEATURE-MISSING-<scenario>` marker** in `aws-clean-cell.sh` —
+  scenario-specific opt-out that doesn't pull the whole policy out of
+  the matrix. Used to mark architectural gaps (was the bridge before
+  the tyk sidecar landed) but kept in tree for future cases.
+
+### Removed
+
+- **Legacy aggregation/report shell pipeline.** Three precursor scripts
+  and their Makefile entry points were removed once the Go orchestrator
+  achieved parity:
+  - `scripts/aggregate-csv.sh` → use `bench aggregate`
+  - `scripts/aggregate-multi-csv.sh` → use `bench compare-runs`
+  - `scripts/render-html-report.py` → use `bench report`
+  - `make load-aggregate`, `make load-combine`, `make load-report`
+  Migration: every flag previously accepted by these scripts has a
+  direct equivalent on the Go subcommands; see `orchestrator/README.md`
+  for the canonical CLI.
 
 ## [0.1.0] — TBD (first public release)
 
@@ -44,8 +80,7 @@ sweep; Phase 9 is the release cut itself.
   collector (replaces the shell sidecar).
 - **`bench report`** — self-contained HTML report (embedded CSS/JS
   + Chart.js CDN bundle) rendered straight from
-  `cells.jsonl + manifest.json`; the Python prototype
-  `scripts/render-html-report.py` is deprecated.
+  `cells.jsonl + manifest.json`.
 - **`bench compare-runs`** — reproducibility gate between any two
   run-ids. Checks identity (git SHA, seed, k6 digest, per-gateway
   image digests, selected rows), per-cell metric tolerance

@@ -94,11 +94,19 @@ cleanup() {
 	set +e
 	kill "${HEARTBEAT_PID}" >/dev/null 2>&1 || true
 	ssh_gateway "cd /opt/gateway-benchmarks; env_file='gateways/${GATEWAY}/${POLICY}/.env'; env_args=''; if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' logs --no-color > '${REMOTE_OUT}/compose.log' 2>&1 || true; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true"
+	ssh_gateway "cat '${REMOTE_OUT}/compose.log' 2>/dev/null || true" > "${LOGS_DIR}/compose.log" 2>/dev/null || true
 	ssh_gateway "rm -f '${OVERRIDE}'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 feature_missing="gateways/${GATEWAY}/${POLICY}/FEATURE-MISSING"
+# Scenario-specific marker — used when only one scenario inside a
+# policy is unimplemented (e.g. tyk OSS can't run s13/s14 because
+# `http_server_options.use_ssl` makes ALL listeners TLS-only, but its
+# HTTP scenario s01 works fine). Checked in addition to the policy-
+# wide marker so a gateway with partial coverage doesn't lose its HTTP
+# rows.
+feature_missing_scenario="gateways/${GATEWAY}/${POLICY}/FEATURE-MISSING-${SCENARIO}"
 if [[ -f "${feature_missing}" ]]; then
 	reason="$(sed -n '1p' "${feature_missing}" 2>/dev/null || true)"
 	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
@@ -107,8 +115,20 @@ if [[ -f "${feature_missing}" ]]; then
 		> "${OUTPUT}/excluded.json"
 	exit 0
 fi
+if [[ -f "${feature_missing_scenario}" ]]; then
+	reason="$(sed -n '1p' "${feature_missing_scenario}" 2>/dev/null || true)"
+	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg reason "${reason}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"EXCLUDED",reason:"FEATURE-MISSING",details:$reason}' \
+		> "${OUTPUT}/excluded.json"
+	exit 0
+fi
 
 PHASE="gateway-compose-up"
+HTTPS_PROBE=0
+case "${SCENARIO}" in
+	*-https|s13-*|s14-*) HTTPS_PROBE=1 ;;
+esac
 ssh_gateway "mkdir -p '${REMOTE_OUT}' && printf '%s\n' \
   'services:' \
   '  backend:' \
@@ -123,17 +143,38 @@ env_file='gateways/${GATEWAY}/${POLICY}/.env';
 env_args='';
 if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi;
 BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true;
-BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' up -d;
+BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' up -d > '${REMOTE_OUT}/compose-up.log' 2>&1;
+up_rc=\$?;
+if [ \"\${up_rc}\" -ne 0 ]; then exit 4; fi;
 for i in \$(seq 1 90); do
-  if curl -fsS -o /dev/null --max-time 2 http://localhost:9080/ 2>/dev/null; then exit 0; fi
+  http_ok=0; https_ok=0;
+  # Healthcheck only verifies the data plane is responding to HTTP.
+  # Gateways that boot in standalone mode without preconfigured routes
+  # (e.g. wallarm/unigw) answer 404 on '/' until setup.sh installs
+  # them; those 404s are still proof the listener is up. We avoid
+  # curl -f on purpose so configuration quality is measured by the
+  # later k6 checks (failed_checks/total > 50% triggers verdict=FAIL
+  # via the aggregator), not by this liveness probe.
+  curl -sS -o /dev/null --max-time 2 http://localhost:9080/ >/dev/null 2>&1 && http_ok=1;
+  if [ \"${HTTPS_PROBE}\" = \"1\" ]; then
+    curl -ksS -o /dev/null --max-time 2 https://localhost:9443/ >/dev/null 2>&1 && https_ok=1;
+    if [ \"\${http_ok}\" = \"1\" ] && [ \"\${https_ok}\" = \"1\" ]; then exit 0; fi
+  else
+    if [ \"\${http_ok}\" = \"1\" ]; then exit 0; fi
+  fi
   sleep 1
 done;
 exit 3" || up_rc=$?
 up_rc="${up_rc:-0}"
+ssh_gateway "cat '${REMOTE_OUT}/compose-up.log' 2>/dev/null || true" \
+	> "${LOGS_DIR}/compose-up.log" 2>/dev/null || true
 if [[ "${up_rc}" != "0" ]]; then
+	reason_code="GATEWAY_TIMEOUT"
+	if [[ "${up_rc}" == "4" ]]; then reason_code="COMPOSE_UP_FAILED"; fi
+	if [[ "${up_rc}" == "3" && "${HTTPS_PROBE}" == "1" ]]; then reason_code="GATEWAY_HTTPS_NOT_READY"; fi
 	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
-		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${up_rc}" \
-		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:"GATEWAY_TIMEOUT",details:("docker compose up or healthcheck failed with "+$rc)}' \
+		--arg load "${LOAD}" --arg run_id "${RUN_ID}" --arg rc "${up_rc}" --arg reason "${reason_code}" \
+		'{gateway:$gateway,policy:$policy,scenario:$scenario,load:$load,run_id:$run_id,status:"FAIL",reason:$reason,details:("docker compose up or healthcheck failed with "+$rc+"; see logs/compose-up.log")}' \
 		> "${OUTPUT}/excluded.json"
 	exit 0
 fi
@@ -253,7 +294,6 @@ if [[ -n "${STATS_PID}" ]]; then
 	kill -TERM "${STATS_PID}" >/dev/null 2>&1 || true
 	wait "${STATS_PID}" >/dev/null 2>&1 || true
 fi
-ssh_gateway "cat '${REMOTE_OUT}/compose.log' 2>/dev/null || true" > "${LOGS_DIR}/compose.log"
 
 if [[ "${k6_rc}" != "0" ]]; then
 	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \

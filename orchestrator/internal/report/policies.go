@@ -1,8 +1,7 @@
 // Package report renders the canonical HTML benchmark report from
-// reports/<run-id>/{cells.jsonl, manifest.json}. It deliberately
-// re-implements the projection that scripts/render-html-report.py
-// produced during Phase 4–5 so the orchestrator binary stays the
-// single source of truth (no Python required on a reviewer's host).
+// reports/<run-id>/{cells.jsonl, manifest.json}. The orchestrator
+// binary is the single source of truth for the report (no Python or
+// other runtime required on a reviewer's host).
 //
 // This file holds the static catalog: gateway palette, language /
 // version metadata, and the policy / scenario descriptions surfaced
@@ -18,8 +17,7 @@ package report
 
 // GatewayColors is the per-gateway brand palette used across every
 // chart so the same gateway stays visually identifiable as the user
-// jumps between tabs. Mirrors the prototype in
-// scripts/render-html-report.py.
+// jumps between tabs.
 var GatewayColors = map[string]string{
 	"nginx":   "#009639",
 	"envoy":   "#AC6EF5",
@@ -205,10 +203,31 @@ var LoadDescriptions = map[string]LoadProfileMeta{
 		Shape:   "constant-arrival 20000 RPS × 2m",
 		Purpose: "Hard-shed test: oversubscribe arrivals deliberately.",
 	},
+	"p1-baseline-https": {
+		Label:   "p1 · baseline (HTTPS)",
+		Shape:   "constant 10 VUs × 60s (closed-loop, TLS)",
+		Purpose: "TLS-overhead twin of p1; isolates handshake + record cost on top of pure passthrough.",
+	},
+	"p2-sustained-https": {
+		Label:   "p2 · sustained (HTTPS)",
+		Shape:   "constant 100 VUs × 5m (closed-loop, TLS)",
+		Purpose: "TLS-overhead twin of p2; steady-state with warmed TLS sessions.",
+	},
+	"p3-ramp-https": {
+		Label:   "p3 · ramp (HTTPS)",
+		Shape:   "ramp 10 → 200 VUs over 3m, hold 2m (closed-loop, TLS)",
+		Purpose: "TLS-overhead twin of p3; spike recovery with TLS termination.",
+	},
+	"p4-stress-https": {
+		Label:   "p4 · stress (HTTPS)",
+		Shape:   "constant 500 VUs × 2m (closed-loop, TLS)",
+		Purpose: "TLS-overhead twin of p4; tail latency under TLS.",
+	},
 }
 
 // LoadOrder is the canonical sub-section order inside a tab. Closed-
-// loop profiles come first, paced-arrival twins follow.
+// loop profiles come first, paced-arrival twins follow, HTTPS variants
+// come last so the HTTP→HTTPS delta is easy to scan visually.
 var LoadOrder = []string{
 	"p1-baseline",
 	"p2-sustained",
@@ -218,4 +237,35 @@ var LoadOrder = []string{
 	"p2c-paced",
 	"p3c-paced",
 	"p4c-paced",
+	"p1-baseline-https",
+	"p2-sustained-https",
+	"p3-ramp-https",
+	"p4-stress-https",
+}
+
+// loadKeyFor returns the bucket key for (load, scenario). HTTPS
+// scenarios live in their own bucket so they cannot be silently
+// merged with HTTP scenarios under the same (policy, gateway, load) —
+// that merge produced the false-UNSTABLE flagging in run
+// aws-20260429T151344Z (1.3M connection-refused HTTPS calls were
+// counted as a "rep" of the working HTTP cell).
+func loadKeyFor(load, scenario string) string {
+	if scenario == "" || load == "" {
+		return load
+	}
+	if isHTTPSScenario(scenario) {
+		return load + "-https"
+	}
+	return load
+}
+
+// isHTTPSScenario returns true for the canonical HTTPS scenarios
+// (s13-vanilla-https, s14-full-pipeline-https) and any future
+// scenario whose name carries the `-https` suffix.
+func isHTTPSScenario(scenario string) bool {
+	if len(scenario) < 6 {
+		return false
+	}
+	suffix := scenario[len(scenario)-6:]
+	return suffix == "-https"
 }

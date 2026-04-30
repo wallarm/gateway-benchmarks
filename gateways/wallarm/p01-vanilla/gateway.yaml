@@ -9,6 +9,11 @@
 
 net:
   http_port: 9080
+  # Phase 5 — TLS data plane for s13-vanilla-https. Wallarm/unigw
+  # (crates/netstack) binds the HTTPS listener whenever https_port > 0
+  # and routes TLS traffic through the SNI resolver fed by
+  # `certificate_files` + `virtual_hosts` below.
+  https_port: 9443
 
 admin:
   listen_address: "0.0.0.0"
@@ -25,3 +30,27 @@ upstream:
     keepalive_secs: 90
     nodelay: true
     reuse_address: true
+
+# Phase 5 — bench TLS reference cert (CN=bench.local, SAN: localhost,
+# gateway, 127.0.0.1, valid until 2126). Mounted by docker-compose at
+# /etc/wallarm/tls/ from gateways/_reference/tls/. Same single-cert
+# pattern every other gateway column uses.
+certificate_files:
+  - name: bench-tls
+    certificate_path: /etc/wallarm/tls/bench.crt
+    key_path: /etc/wallarm/tls/bench.key
+
+# Catch-all HTTPS virtual host that hands the bench cert to the SNI
+# resolver. `hosts: ["*"]` + `default: true` makes it the cert wallarm
+# serves regardless of the SNI value the client sends, matching the
+# nginx column's `server_name _;` posture.
+virtual_hosts:
+  - name: bench-vh
+    protocol: https
+    hosts: ["*"]
+    default: true
+    tls:
+      sni: "bench.local"
+      certificate:
+        type: file
+        name: bench-tls

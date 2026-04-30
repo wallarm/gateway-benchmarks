@@ -127,8 +127,9 @@ Outputs `parity.json` per `(gateway, policy)` under
 ### `bench aggregate`
 
 Replays the wide-table projection from any directory of raw cells.
-Same column schema as the legacy `scripts/aggregate-csv.sh`, plus
-the JSONL output the Phase 7 report generator will consume:
+Emits a wide CSV (one row per cell), a Markdown roll-up, and a
+strictly-typed JSONL stream that `bench report` and
+`bench compare-runs` consume:
 
 ```bash
 bench aggregate --run-id 20260424T120000Z
@@ -355,10 +356,7 @@ aggregator.
 self-contained HTML report from `cells.jsonl` + `manifest.json`,
 including the radar chart, per-policy RPS / latency / memory
 panels, the timing-broken / unstable annotations, and the
-unified executive summary. The Python prototype at
-`scripts/render-html-report.py` is **deprecated** — kept in-tree
-for one cycle so historical reports remain re-renderable, but no
-new fixes will land there.
+unified executive summary.
 
 ✅ **Phase 8 — DONE.** `bench compare-runs` diffs two runs
 against the canonical tolerance table (identity ↔ per-cell

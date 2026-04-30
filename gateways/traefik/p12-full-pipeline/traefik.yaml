@@ -59,6 +59,16 @@ entryPoints:
     address: ":9080"
     forwardedHeaders:
       insecure: true
+  websecure:
+    # Phase 5 — TLS data plane for s14-full-pipeline-https. Cert chain
+    # (gateways/_reference/tls/bench.{crt,key}, CN=bench.local) is bound
+    # in dynamic.yaml under tls.certificates / tls.stores.default. Same
+    # forwardedHeaders.insecure flag as the HTTP entryPoint so the p11
+    # body fixture's XFF assertion stays gateway-controlled regardless
+    # of which scheme drives the request.
+    address: ":9443"
+    forwardedHeaders:
+      insecure: true
 
 providers:
   file:

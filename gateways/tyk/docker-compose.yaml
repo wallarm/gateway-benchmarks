@@ -110,6 +110,34 @@ services:
       bench-net:
         aliases: [jwks-server]
 
+  # ---------------------------------------------------------------------------
+  # Phase 5 — TLS-terminator sidecar (Tyk OSS deviation, see
+  # _shared/tls-terminator/nginx.conf for the full rationale). nginx
+  # terminates TLS on :9443 and proxies plaintext to gateway:9080.
+  # Always boots so the s13 / s14 host port mapping is the same shape
+  # as every other gateway column; on profiles without HTTPS scenarios
+  # the listener is idle and costs ~5 MB RSS.
+  # ---------------------------------------------------------------------------
+  tls-terminator:
+    image: nginx:1.27.3-alpine@sha256:814a8e88df978ade80e584cc5b333144b9372a8e3c98872d07137dbf3b44d0e4
+    container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}-tls-terminator
+    restart: "no"
+    depends_on:
+      - gateway
+    volumes:
+      - ./_shared/tls-terminator/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../_reference/tls:/etc/nginx/tls:ro
+    # Same internal port (9443) as every other gateway. The host port
+    # is exposed here, NOT on the gateway service, so :9443 on the
+    # bench host always lands on the TLS-terminator regardless of how
+    # Tyk's own (HTTP-only) listener is configured.
+    ports:
+      - "${GATEWAY_HTTPS_PORT:-9443}:9443"
+    stop_grace_period: 5s
+    networks:
+      bench-net:
+        aliases: [tls-terminator]
+
   gateway:
     image: ${GATEWAY_IMAGE:-tykio/tyk-gateway:v5.11.1@sha256:225624f56be59a54614ff8ba88255fec1c430037a4f7232fc141d2615bdff598}
     container_name: ${BENCH_CONTAINER_PREFIX:-gwb-tyk}

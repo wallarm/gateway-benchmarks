@@ -53,6 +53,13 @@ entryPoints:
       # header surface); p07 flips the X-Forwarded-For drop to an
       # explicit middleware contract.
       insecure: false
+  websecure:
+    # Phase 5 — TLS data plane for s13-vanilla-https. The cert chain
+    # comes from gateways/_reference/tls/bench.{crt,key} (CN=bench.local
+    # SAN includes localhost / gateway / 127.0.0.1) — same pattern as
+    # the nginx column. The actual TLS material binding lives in
+    # dynamic.yaml under tls.certificates.
+    address: ":9443"
 
 providers:
   file:

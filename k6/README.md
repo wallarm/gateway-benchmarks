@@ -9,44 +9,36 @@ two HTTPS variants from `docs/POLICIES.md § p01-tls / p12-tls`.
 
 ## Status
 
-> **Phase 4 — Iteration 32: path-A breadth + scale sweeps complete.**
-> All 7 gateways swept on `p1-baseline` (80/84 PASS + 3 EXCLUDED +
-> 1 FAIL), plus `nginx × 12 × p2-sustained` (12/12 PASS after a
-> targeted repair). Paced-arrivals twin profiles and HTTPS scenarios
-> landed as init-guarded shells (dead until Phase 5 TLS plumbing).
-> Cross-run aggregator (`scripts/aggregate-multi-csv.sh` +
-> `make load-combine`) rolls N runs into one wide CSV: see
-> `reports/combined-pathA-p1-baseline/matrix.csv`
-> (83 cells × 27 columns) and
-> `reports/combined-pathA-nginx-p2/matrix.csv`
-> (12 cells × 27 columns). Iteration 31 landed the 12 HTTP scenarios
-> + matrix harness + hot-path access-log silence sweep.
+> All 7 gateways are wired through this load-framework end-to-end:
+> per-cell runner, 14 scenarios (12 HTTP + 2 HTTPS), 8 load profiles
+> (4 closed-loop + 4 paced-arrivals), and matrix sweeps. Aggregation,
+> cross-run roll-ups, and HTML rendering are owned by the Go
+> orchestrator (`bench aggregate` / `bench compare-runs` /
+> `bench report`).
 
-| Component                                      | Status  | Notes                                                                          |
-|------------------------------------------------|---------|--------------------------------------------------------------------------------|
-| `k6/lib/{env,options,jwt,payloads,metrics}.js` | landed  | helpers + 4-bucket error classifier per `TASK.md §8`; RS256 twin for `jwks-*`  |
-| `k6/profiles/{p1,p2,p3,p4}-*.js`               | landed  | all 4 closed-loop load profiles wired                                          |
-| `k6/profiles/{p1c,p2c,p3c,p4c}-paced.js`       | landed  | paced-arrivals twins (constant/ramping-arrival-rate) — opt-in by `-paced` slug |
-| `k6/scenarios/s01-vanilla-http.js`             | landed  | smoke: 1.4M reqs / 60s on nginx, p95 = 1.23 ms, 0 failures                     |
-| `k6/scenarios/s02-jwt-http.js`                 | landed  | HS256 JWT + happy-path 200; smoke: 1.33M / 60s on nginx, p95 = 1.27 ms         |
-| `k6/scenarios/s03-jwks-rs256-basic-http.js`    | landed  | RS256 / JWKS kid-lookup; runner mints via `gen-jwt-rs256.sh valid`             |
-| `k6/scenarios/s04-rl-static-http.js`           | landed  | service-wide 1000 rps; expects mixed 200 + 429                                 |
-| `k6/scenarios/s05-rl-endpoint-http.js`         | landed  | 100 rps scoped to `/anything/limited`; `/anything/free` must stay 200          |
-| `k6/scenarios/s06-rl-dynamic-low-http.js`      | landed  | 10 rps × 100-IP pool (init-time deterministic)                                 |
-| `k6/scenarios/s07-rl-dynamic-high-http.js`     | landed  | 100 rps × 50k-IP pool (on-the-fly)                                             |
-| `k6/scenarios/s08-req-headers-http.js`         | landed  | header add+drop on request                                                     |
-| `k6/scenarios/s09-resp-headers-http.js`        | landed  | header add+drop on response                                                    |
-| `k6/scenarios/s10-req-body-http.js`            | landed  | JSON add+drop on request body                                                  |
-| `k6/scenarios/s11-resp-body-http.js`           | landed  | JSON add+drop on response body                                                 |
-| `k6/scenarios/s12-full-pipeline-http.js`       | landed  | composition of p02 + p03 + p07 + p09 + p08 + p10                               |
-| `k6/scenarios/s13-vanilla-https.js`            | landed — dead until Phase 5 TLS plumbing | drives `p01-vanilla` over TLS; init-throws on empty / non-`https://` `BENCH_TARGET_URL_HTTPS` |
-| `k6/scenarios/s14-full-pipeline-https.js`      | landed — dead until Phase 5 TLS plumbing | drives `p12-full-pipeline` over TLS; widens `http_req_duration` p95 to 240 ms (+20% of s12) |
-| `scripts/load-gateway.sh`                      | landed  | mirrors `scripts/parity-gateway.sh` lifecycle; runs docker-stats sidecar       |
-| `scripts/docker-stats-sidecar.sh`              | landed  | per-second Docker REST sampler → `docker-stats.csv` per cell                   |
-| `scripts/load-orchestrator.sh`                 | landed  | matrix sweep: gateways × policies × scenarios × loads → `matrix.tsv`           |
-| `scripts/aggregate-csv.sh`                     | landed  | walks `reports/<RUN_ID>/raw/**` → wide CSV (or TSV / Markdown)                 |
-| `make load-gateway[-load-sweep]`               | landed  | single-cell runner                                                             |
-| `make load-sweep / load-aggregate`             | landed  | full matrix sweep + aggregator                                                 |
+| Component                                      | Notes                                                                          |
+|------------------------------------------------|--------------------------------------------------------------------------------|
+| `k6/lib/{env,options,jwt,payloads,metrics}.js` | helpers + 4-bucket error classifier per `TASK.md §8`; RS256 twin for `jwks-*`  |
+| `k6/profiles/{p1,p2,p3,p4}-*.js`               | 4 closed-loop load profiles                                                    |
+| `k6/profiles/{p1c,p2c,p3c,p4c}-paced.js`       | paced-arrivals twins (constant/ramping-arrival-rate) — opt-in by `-paced` slug |
+| `k6/scenarios/s01-vanilla-http.js`             | smoke: 1.4M reqs / 60s on nginx, p95 = 1.23 ms, 0 failures                     |
+| `k6/scenarios/s02-jwt-http.js`                 | HS256 JWT + happy-path 200; smoke: 1.33M / 60s on nginx, p95 = 1.27 ms         |
+| `k6/scenarios/s03-jwks-rs256-basic-http.js`    | RS256 / JWKS kid-lookup; runner mints via `gen-jwt-rs256.sh valid`             |
+| `k6/scenarios/s04-rl-static-http.js`           | service-wide 1000 rps; expects mixed 200 + 429                                 |
+| `k6/scenarios/s05-rl-endpoint-http.js`         | 100 rps scoped to `/anything/limited`; `/anything/free` must stay 200          |
+| `k6/scenarios/s06-rl-dynamic-low-http.js`      | 10 rps × 100-IP pool (init-time deterministic)                                 |
+| `k6/scenarios/s07-rl-dynamic-high-http.js`     | 100 rps × 50k-IP pool (on-the-fly)                                             |
+| `k6/scenarios/s08-req-headers-http.js`         | header add+drop on request                                                     |
+| `k6/scenarios/s09-resp-headers-http.js`        | header add+drop on response                                                    |
+| `k6/scenarios/s10-req-body-http.js`            | JSON add+drop on request body                                                  |
+| `k6/scenarios/s11-resp-body-http.js`           | JSON add+drop on response body                                                 |
+| `k6/scenarios/s12-full-pipeline-http.js`       | composition of p02 + p03 + p07 + p09 + p08 + p10                               |
+| `k6/scenarios/s13-vanilla-https.js`            | drives `p01-vanilla` over TLS; init-throws on empty / non-`https://` `BENCH_TARGET_URL_HTTPS` |
+| `k6/scenarios/s14-full-pipeline-https.js`      | drives `p12-full-pipeline` over TLS; widens `http_req_duration` p95 to 240 ms (+20% of s12) |
+| `scripts/load-gateway.sh`                      | per-cell runner driven by `bench run --mode local`                             |
+| `scripts/load-orchestrator.sh`                 | shell-only matrix sweep (Path A); modern flow uses `bench run`                 |
+| `make load-gateway[-load-sweep]`               | single-cell runner                                                             |
+| `make load-sweep`                              | full matrix sweep                                                              |
 
 ## Layout
 
@@ -239,7 +231,7 @@ make load-sweep \
     LOAD_LOADS=p1-baseline \
     LOAD_SEED=42
 
-make load-aggregate LOAD_RUN_ID=<run-id> LOAD_FORMAT=csv
+bench aggregate --run-id <run-id>
 ```
 
 Omitting `LOAD_POLICIES` runs all 12 (`p01..p12`), and each policy
@@ -247,19 +239,18 @@ is paired with its canonical `sNN-<slug>-http` scenario from the
 table above (e.g. `p04-rl-static → s04-rl-static-http`). Drop
 `LOAD_STOP_ON_FAIL=1` to abort the sweep on the first non-PASS cell.
 
-The aggregator walks `reports/<RUN_ID>/raw/**` and emits one wide
+`bench aggregate` walks `reports/<RUN_ID>/raw/**` and emits one wide
 row per cell: all k6 latency quantiles (p50/p90/p95/p99/max), RPS,
 the 4-bucket error split, check counts, plus peak + steady-state
 memory (`mem_rss_peak` / `mem_rss_steady`) and CPU percentages
-(`cpu_pct_peak` / `cpu_pct_steady`) sampled by the
-`docker-stats-sidecar`.
+(`cpu_pct_peak` / `cpu_pct_steady`) sampled by the orchestrator's
+native Docker-stats collector.
 
 ## Cross-run roll-up
 
-`make load-combine LOAD_RUN_IDS=a,b,c LOAD_OUTPUT=path LOAD_FORMAT=md`
-(wrapper around `scripts/aggregate-multi-csv.sh`) concatenates N
-per-run matrices into one wide file. It auto-regenerates any
-per-run CSV that is stale or missing, so the typical flow is:
+`bench compare-runs` (or `bench report --combined a,b,c …`)
+concatenates N per-run matrices into one wide artifact. The typical
+flow is:
 
 ```bash
 # 7 independent runs (one per gateway, same load profile)
@@ -268,10 +259,11 @@ for gw in nginx wallarm envoy traefik kong apisix tyk; do
       LOAD_RUN_ID=pathA-p1-$gw-$(date -u +%Y%m%dT%H%M%SZ)
 done
 
-# roll them into one wide report
-make load-combine \
-    LOAD_RUN_IDS=pathA-p1-nginx-…,pathA-p1-wallarm-…,… \
-    LOAD_OUTPUT=reports/combined-pathA-p1-baseline/matrix.csv
+# roll them into one combined HTML report
+bench report \
+    --combined pathA-p1-nginx-…,pathA-p1-wallarm-…,… \
+    --output   reports/combined-pathA-p1-baseline/report.html \
+    --title    "API Gateway Benchmark — Path A baseline"
 ```
 
 ## Known gaps (not blockers — recorded for cycle-to-cycle planning)

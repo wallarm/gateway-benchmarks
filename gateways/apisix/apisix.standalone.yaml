@@ -61,11 +61,20 @@ apisix:
   # file. That is intentional: it forces a reviewer to notice when
   # the bench's attack surface grows.
   enable_admin: false
-  # Disable the ssl-redirect + https listener entirely. Bench is HTTP-
-  # only for p03-jwks-rs256-basic; future p01-vanilla-tls /
-  # p12-full-pipeline-tls profiles will re-enable it locally.
+  # Phase 5 — TLS data plane on :9443 for s13-vanilla-https / s14-full-
+  # pipeline-https. APISIX in standalone mode picks the cert+key from a
+  # `ssls:` block in the per-profile apisix.yaml — see
+  # `gateways/apisix/p01-vanilla/apisix.yaml` and
+  # `gateways/apisix/p12-full-pipeline/apisix.yaml` for the actual cert
+  # material. Profiles without an `ssls:` block keep the listener bound
+  # but answer with the default-loaded snake-oil cert.
   ssl:
-    enable: false
+    enable: true
+    listen:
+      - port: 9443
+        enable_http2: false
+    ssl_protocols: "TLSv1.2 TLSv1.3"
+    ssl_ciphers: "HIGH:!aNULL:!MD5"
   # Additional Lua package search path, prepended to OpenResty's
   # default. APISIX's entrypoint translates this into
   # `lua_package_path "<extra_lua_path>;<original>";` in the rendered

@@ -94,7 +94,16 @@ run_logged() {
 }
 
 ssh_opts() {
-	sed 's/^ssh /ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=120 /'
+	# Use `|` as the sed delimiter — the option list contains
+	# `/dev/null` (UserKnownHostsFile), so the default `/` delimiter
+	# would terminate the substitution mid-arg.
+	# StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null is the
+	# correct posture for ephemeral EC2: AWS recycles public IPs
+	# between runs, so the same address legitimately serves a new host
+	# key every fleet — accept-new (the previous setting) only worked
+	# for first-time IPs and started rejecting connections once an
+	# operator's known_hosts had built up entries from earlier runs.
+	sed 's|^ssh |ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=10 |'
 }
 
 wait_remote_ready() {
@@ -152,6 +161,24 @@ if [[ ! -f "${AWS_TOFU_DIR}/terraform.tfvars" ]]; then
 	printf '  Copy infra/aws/terraform.tfvars.example, edit ssh_key_name + allowed_ssh_cidrs, then re-run.\n' >&2
 	exit 2
 fi
+
+# Preflight: wallarm gateway requires WALLARM_IMAGE to be exported. The
+# compose file uses ${WALLARM_IMAGE:?...} so an empty value silently
+# fails docker compose up on the remote host with the stderr lost
+# through the ssh pipeline. Catch this locally instead of burning a
+# whole AWS run on it.
+case ",${GATEWAYS}," in
+	*,wallarm,*|*,all,*)
+		if [[ -z "${WALLARM_IMAGE:-}" ]]; then
+			printf '%s✗ WALLARM_IMAGE is required when gateways include "wallarm" or "all".%s\n' "${RED}" "${NC}" >&2
+			printf '  Build the Wallarm API Gateway and export the tag, e.g.:\n' >&2
+			printf "    export WALLARM_IMAGE='wallarm/api-gateway:main-<sha>'\n" >&2
+			printf '  Or exclude wallarm from this run: BENCH_AWS_FULL_GATEWAYS=nginx,kong,apisix,traefik,tyk,envoy\n' >&2
+			exit 2
+		fi
+		printf '%s✓ WALLARM_IMAGE=%s%s\n' "${GREEN}" "${WALLARM_IMAGE}" "${NC}"
+		;;
+esac
 
 run_logged "Init AWS terraform" "${LOG_DIR}/tofu-init.log" \
 	bash -lc "cd '${REPO_ROOT}/${AWS_TOFU_DIR}' && ${TOFU_BIN} init"
@@ -236,7 +263,7 @@ for i in $(seq 0 $((runner_count - 1))); do
 	step_start="$(date +%s)"
 	gateway_private_ip="$(printf '%s' "${clusters_json}" | jq -r ".[$i].gateway_private_ip")"
 	printf '    preflight loadgen -> gateway SSH ... '
-	if ! ${loadgen_ssh} "ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 ubuntu@${gateway_private_ip} true" >>"${log}" 2>&1; then
+	if ! ${loadgen_ssh} "ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 ubuntu@${gateway_private_ip} true" >>"${log}" 2>&1; then
 		printf 'failed\n%s✗ preflight loadgen -> gateway SSH failed for cluster %d%s log: %s\n' "${RED}" "$((i + 1))" "${NC}" "${log}" >&2
 		tail -80 "${log}" >&2 || true
 		exit 1
@@ -259,7 +286,7 @@ for i in $(seq 0 $((runner_count - 1))); do
 	if [[ -n "${WALLARM_IMAGE:-}" ]]; then remote_env+="WALLARM_IMAGE='${WALLARM_IMAGE}' "; fi
 	if [[ -n "${GATEWAY_IMAGE:-}" ]]; then remote_env+="GATEWAY_IMAGE='${GATEWAY_IMAGE}' "; fi
 	
-	remote_cmd="cd /opt/gateway-benchmarks && chmod +x ${REMOTE_BIN} scripts/aws-clean-cell.sh && ${remote_env}BENCH_CELL_RUNNER=scripts/aws-clean-cell.sh AWS_GATEWAY_SSH='ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=120 ubuntu@${gateway_private_ip}' AWS_GATEWAY_PRIVATE_IP='${gateway_private_ip}' AWS_BACKEND_PRIVATE_IP='${backend_private_ip}' ./${REMOTE_BIN} --repo-root /opt/gateway-benchmarks --run-id ${shard_run_id} run --matrix canonical --gateways '${GATEWAYS}' --loads '${LOADS}' --seed '${SEED}' --reps '${REPS}' --mode aws --shard-index ${i} --shard-count ${runner_count} --parallel '${PARALLEL}' --skip-parity --disable-native-stats --progress --progress-interval '${PROGRESS_INTERVAL}' --allow-failed-cells --notes \"${NOTES} shard $((i + 1))/${runner_count}\""
+	remote_cmd="cd /opt/gateway-benchmarks && chmod +x ${REMOTE_BIN} scripts/aws-clean-cell.sh && ${remote_env}BENCH_CELL_RUNNER=scripts/aws-clean-cell.sh AWS_GATEWAY_SSH='ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=10 ubuntu@${gateway_private_ip}' AWS_GATEWAY_PRIVATE_IP='${gateway_private_ip}' AWS_BACKEND_PRIVATE_IP='${backend_private_ip}' ./${REMOTE_BIN} --repo-root /opt/gateway-benchmarks --run-id ${shard_run_id} run --matrix canonical --gateways '${GATEWAYS}' --loads '${LOADS}' --seed '${SEED}' --reps '${REPS}' --mode aws --shard-index ${i} --shard-count ${runner_count} --parallel '${PARALLEL}' --skip-parity --disable-native-stats --progress --progress-interval '${PROGRESS_INTERVAL}' --allow-failed-cells --notes \"${NOTES} shard $((i + 1))/${runner_count}\""
 	(
 		rc=0
 		for attempt in 1 2; do
@@ -353,6 +380,37 @@ fi
 run_logged "Render combined HTML report" "${LOG_DIR}/render-report.log" "${report_cmd[@]}"
 
 printf '%s✓ Report ready:%s %s\n' "${GREEN}" "${NC}" "${REPORT_PATH}"
+
+# Optional: publish the rendered HTML report to S3 with public-read
+# ACL so a shareable link can be sent to colleagues without giving
+# them console access to the bucket. Opt-in via
+# BENCH_AWS_REPORT_S3_BUCKET; pass region + key prefix overrides if
+# the bucket lives outside eu-central-1 or you want a non-default
+# layout. Failure here is non-fatal — the local report is already
+# saved.
+if [[ -n "${BENCH_AWS_REPORT_S3_BUCKET:-}" ]] && [[ -s "${REPORT_PATH}" ]]; then
+	s3_region="${BENCH_AWS_REPORT_S3_REGION:-eu-central-1}"
+	s3_prefix="${BENCH_AWS_REPORT_S3_PREFIX:-reports}"
+	s3_prefix="${s3_prefix%/}"
+	s3_key="${s3_prefix}/${RUN_ID}/report.html"
+	s3_url="https://${BENCH_AWS_REPORT_S3_BUCKET}.s3.${s3_region}.amazonaws.com/${s3_key}"
+	printf '%s▶ Publish report to s3://%s/%s%s %s\n' "${CYAN}" "${BENCH_AWS_REPORT_S3_BUCKET}" "${s3_key}" "${NC}" "$(ts)"
+	if aws s3 cp "${REPORT_PATH}" "s3://${BENCH_AWS_REPORT_S3_BUCKET}/${s3_key}" \
+		--acl public-read \
+		--content-type 'text/html; charset=utf-8' \
+		--cache-control 'public, max-age=3600' \
+		--region "${s3_region}" \
+		>"${LOG_DIR}/s3-publish.log" 2>&1; then
+		printf '%s✓ Public report URL:%s %s\n' "${GREEN}" "${NC}" "${s3_url}"
+	else
+		s3_rc=$?
+		printf '%s! S3 publish failed (rc=%d) — local report is still at %s%s\n' \
+			"${YELLOW}" "${s3_rc}" "${REPORT_PATH}" "${NC}" >&2
+		printf '  log: %s\n' "${LOG_DIR}/s3-publish.log" >&2
+		tail -20 "${LOG_DIR}/s3-publish.log" >&2 || true
+	fi
+fi
+
 printf '%sNext:%s destroying AWS infrastructure (report is already local)\n' "${YELLOW}" "${NC}"
 if [[ "${OPEN_REPORT}" == "1" || "${OPEN_REPORT}" == "true" ]]; then
 	open "${REPORT_PATH}"

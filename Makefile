@@ -9,7 +9,7 @@
 	perf-aws-up perf-aws-destroy perf-aws-ssh-loadgen perf-aws-ssh-gateway perf-aws-ssh-backend \
 	perf-aws-down \
 	parity-check parity-check-all parity-gateway parity-gateway-all \
-	load-gateway load-gateway-load-sweep load-sweep load-aggregate load-combine load-report \
+	load-gateway load-gateway-load-sweep load-sweep \
 	.bench-ports-free
 
 # ---------------------------------------------------------------------------
@@ -109,9 +109,7 @@ help: ## Show this help
 	@echo "  $(GREEN)load-gateway$(NC)              Single load cell end-to-end (compose up → parity → k6 → tear down)"
 	@echo "  $(GREEN)load-gateway-load-sweep$(NC)   Sweep all 4 load profiles for one (LOAD_GATEWAY × LOAD_POLICY × LOAD_SCENARIO)"
 	@echo "  $(GREEN)load-sweep$(NC)                Matrix sweep (LOAD_GATEWAY × LOAD_POLICIES × LOAD_LOADS via orchestrator)"
-	@echo "  $(GREEN)load-aggregate$(NC)            Aggregate reports/\$$(LOAD_RUN_ID)/ into wide CSV/TSV/MD"
-	@echo "  $(GREEN)load-combine$(NC)              Combine N reports/<run-id>/ into one CSV (LOAD_RUN_IDS=id1,id2,…)"
-	@echo "  $(GREEN)load-report$(NC)               Render Chart.js HTML report from a combined CSV (LOAD_REPORT_INPUT=, LOAD_REPORT_OUTPUT=)"
+	@echo "  Aggregate / cross-run / HTML render → use 'bench aggregate', 'bench compare-runs', 'bench report'"
 	@echo ""
 	@echo "$(CYAN)Run ID:$(NC) $(RUN_ID)"
 	@echo "$(CYAN)See:$(NC)    README.md · TASK.md · CHANGELOG.md"
@@ -494,6 +492,11 @@ perf-aws-full-report: orchestrator-build ## One command: deploy AWS, run canonic
 	BENCH_PROGRESS_INTERVAL="$(BENCH_PROGRESS_INTERVAL)" \
 	BENCH_AWS_REMOTE_BIN="$(BENCH_AWS_REMOTE_BIN)" \
 	BENCH_SEED="$(BENCH_SEED)" \
+	WALLARM_IMAGE="$${WALLARM_IMAGE}" \
+	GATEWAY_IMAGE="$${GATEWAY_IMAGE}" \
+	BENCH_AWS_REPORT_S3_BUCKET="$${BENCH_AWS_REPORT_S3_BUCKET}" \
+	BENCH_AWS_REPORT_S3_REGION="$${BENCH_AWS_REPORT_S3_REGION}" \
+	BENCH_AWS_REPORT_S3_PREFIX="$${BENCH_AWS_REPORT_S3_PREFIX}" \
 		bash scripts/perf-aws-full-report.sh
 
 perf-aws-destroy: ## tofu destroy — terminate the 3 EC2 hosts and free all resources
@@ -677,20 +680,11 @@ load-sweep: .bench-ports-free ## Full matrix sweep: LOAD_GATEWAY × LOAD_POLICIE
 	 if [ -n "$(LOAD_RUN_ID)" ]; then orch_args="$$orch_args --run-id $(LOAD_RUN_ID)"; fi; \
 	 bash scripts/load-orchestrator.sh $$orch_args
 
-load-aggregate: ## Aggregate reports/$(LOAD_RUN_ID)/ into a wide CSV (format: csv|tsv|md)
-	@bash scripts/aggregate-csv.sh --run-id $(LOAD_RUN_ID) --format $(or $(LOAD_FORMAT),csv)
-
-load-combine: ## Combine N reports/<run-id>/ into one wide CSV (LOAD_RUN_IDS=id1,id2,…, format: csv|tsv|md)
-	@bash scripts/aggregate-multi-csv.sh \
-	    --run-ids $(LOAD_RUN_IDS) \
-	    --format  $(or $(LOAD_FORMAT),csv) \
-	    $(if $(LOAD_REGENERATE),--regenerate,) \
-	    $(if $(LOAD_OUTPUT),--output $(LOAD_OUTPUT),)
-
-load-report: ## Render a Chart.js HTML report from a combined CSV (LOAD_REPORT_INPUT=reports/<dir>/matrix.csv, LOAD_REPORT_OUTPUT=…/report.html)
-	@python3 scripts/render-html-report.py \
-	    --input  "$(LOAD_REPORT_INPUT)" \
-	    --output "$(LOAD_REPORT_OUTPUT)" \
-	    $(if $(LOAD_REPORT_TITLE),--title "$(LOAD_REPORT_TITLE)",) \
-	    $(if $(LOAD_REPORT_ENV),--env "$(LOAD_REPORT_ENV)",)
+# Aggregation, cross-run roll-up, and HTML rendering all live in the
+# Go orchestrator now: `bench aggregate`, `bench compare-runs`,
+# `bench report` (see orchestrator/README.md). The shell/Python
+# precursors (aggregate-csv.sh, aggregate-multi-csv.sh,
+# render-html-report.py) and their Makefile entry points
+# (load-aggregate, load-combine, load-report) were removed in the
+# legacy-cleanup pass after they were fully covered by the Go code.
 

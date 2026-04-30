@@ -11,22 +11,22 @@ import (
 
 func mkCell(gw, policy, load string, rps float64, p50, p95 float64, opts ...func(*aggregate.Cell)) aggregate.Cell {
 	c := aggregate.Cell{
-		Gateway:             gw,
-		Policy:              policy,
-		Load:                load,
-		Scenario:            "s01-vanilla-http",
-		RunID:               "r1",
-		Verdict:             "PASS",
-		ParityStatus:        "PASS",
-		HTTPReqs:            int64(rps * 60),
-		HTTPReqRate:         rps,
-		HTTPReqDurationP50:  p50,
-		HTTPReqDurationP95:  p95,
-		HTTPReqDurationMax:  p95 * 3,
-		Policy2xx:           int64(rps * 60),
-		MemRSSPeakBytes:     128 * 1024 * 1024,
-		MemRSSSteadyBytes:   100 * 1024 * 1024,
-		Health:              classify.HealthGreen,
+		Gateway:            gw,
+		Policy:             policy,
+		Load:               load,
+		Scenario:           "s01-vanilla-http",
+		RunID:              "r1",
+		Verdict:            "PASS",
+		ParityStatus:       "PASS",
+		HTTPReqs:           int64(rps * 60),
+		HTTPReqRate:        rps,
+		HTTPReqDurationP50: p50,
+		HTTPReqDurationP95: p95,
+		HTTPReqDurationMax: p95 * 3,
+		Policy2xx:          int64(rps * 60),
+		MemRSSPeakBytes:    128 * 1024 * 1024,
+		MemRSSSteadyBytes:  100 * 1024 * 1024,
+		Health:             classify.HealthGreen,
 	}
 	for _, o := range opts {
 		o(&c)
@@ -73,6 +73,42 @@ func TestBuildIndexAndUnstable(t *testing.T) {
 	}
 	if got := idx.Buckets["p01-vanilla"]["envoy"]["p1-baseline"]; got.Unstable {
 		t.Fatalf("envoy single-rep cell should not be unstable; got %+v", got)
+	}
+}
+
+// TestBuildIndexSplitsHTTPAndHTTPSScenarios guards against the run
+// aws-20260429T151344Z regression: an HTTP scenario (working) and an
+// HTTPS scenario (broken with 100% connection refused) sharing the
+// same (policy, gateway, load) key were treated as two reps of one
+// cell. The HTTPS rep had RPS comparable to HTTP (failed-fast loops),
+// so spread crossed 5% and the whole row was flagged "unstable" while
+// the median picker sometimes returned the broken HTTPS cell.
+func TestBuildIndexSplitsHTTPAndHTTPSScenarios(t *testing.T) {
+	httpCell := mkCell("apisix", "p01-vanilla", "p1-baseline", 20000, 0.34, 0.91)
+	httpsCell := mkCell("apisix", "p01-vanilla", "p1-baseline", 22000, 0, 0)
+	httpsCell.Scenario = "s13-vanilla-https"
+	httpsCell.HTTPReqDurationMax = 0
+	httpsCell.TimingBroken = true
+
+	idx := BuildIndex([]aggregate.Cell{httpCell, httpsCell}, 0.05)
+
+	httpBucket, ok := idx.Buckets["p01-vanilla"]["apisix"]["p1-baseline"]
+	if !ok {
+		t.Fatalf("HTTP bucket missing; got buckets %+v", idx.Buckets["p01-vanilla"]["apisix"])
+	}
+	if httpBucket.Scenario != "s01-vanilla-http" {
+		t.Fatalf("HTTP bucket should hold the HTTP cell; got scenario=%q", httpBucket.Scenario)
+	}
+	if httpBucket.Unstable {
+		t.Fatalf("HTTP bucket should not be unstable: HTTP and HTTPS were merged as fake reps")
+	}
+
+	httpsBucket, ok := idx.Buckets["p01-vanilla"]["apisix"]["p1-baseline-https"]
+	if !ok {
+		t.Fatalf("HTTPS bucket missing under load key 'p1-baseline-https'; got %+v", idx.Buckets["p01-vanilla"]["apisix"])
+	}
+	if httpsBucket.Scenario != "s13-vanilla-https" {
+		t.Fatalf("HTTPS bucket should hold the HTTPS cell; got scenario=%q", httpsBucket.Scenario)
 	}
 }
 

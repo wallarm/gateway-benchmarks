@@ -30,7 +30,7 @@
 #
 # The script writes a path list of all per-gateway run-ids to
 #   /tmp/load-sweep-many.last-runs
-# which `scripts/aggregate-multi-csv.sh` consumes via
+# which `bench compare-runs` / `bench report --combined` consume via
 # `--run-ids "$(cat /tmp/load-sweep-many.last-runs | paste -sd, -)"`.
 #
 # Exit codes:

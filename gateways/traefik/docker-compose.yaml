@@ -81,8 +81,18 @@ services:
       - ./${GATEWAY_PROFILE:-p01-vanilla}/traefik.yaml:/etc/traefik/traefik.yaml:ro
       - ./${GATEWAY_PROFILE:-p01-vanilla}/dynamic.yaml:/etc/traefik/dynamic/dynamic.yaml:ro
       - ./_shared/plugins-local:/plugins-local:ro
+      # Phase 5 — TLS reference material (bench.local self-signed,
+      # SAN: bench.local / localhost / gateway / 127.0.0.1, valid until
+      # 2126). Only the p01-vanilla and p12-full-pipeline profiles
+      # actually wire it into a `websecure` entryPoint via dynamic.yaml;
+      # the other ten profiles ignore the path so the mount is inert.
+      - ../_reference/tls:/etc/traefik/tls:ro
     ports:
-      - "${GATEWAY_HTTP_PORT:-9080}:9080"  # data plane (parity-gateway target)
+      - "${GATEWAY_HTTP_PORT:-9080}:9080"   # data plane (parity-gateway target)
+      # TLS data plane — only meaningful on profiles whose dynamic.yaml
+      # declares a `websecure` entryPoint (currently p01-vanilla and
+      # p12-full-pipeline). Mirrors the nginx column.
+      - "${GATEWAY_HTTPS_PORT:-9443}:9443"
     # Traefik shuts down cleanly on SIGTERM. A 5 s stop-grace-period
     # keeps `docker compose down` snappy during the parity sweeps.
     stop_grace_period: 5s

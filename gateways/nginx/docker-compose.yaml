@@ -44,6 +44,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway:
     # OpenResty (nginx + LuaJIT + lua-resty-* libraries) instead of
@@ -60,6 +68,10 @@ services:
     restart: "no"
     depends_on:
       - backend
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # The 12 per-profile nginx.conf files all carry `user nginx;`
     # which the mainline nginx image satisfied via its preinstalled
     # `nginx` system user. The openresty image only ships `nobody`,

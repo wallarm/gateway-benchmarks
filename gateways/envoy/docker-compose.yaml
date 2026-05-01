@@ -44,6 +44,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway:
     image: ${GATEWAY_IMAGE:-envoyproxy/envoy:distroless-v1.32.6@sha256:569ad5b2503aca24c9f6af48c47449200afdb761bb4d1a021741d6d6692acf56}
@@ -51,6 +59,10 @@ services:
     restart: "no"
     depends_on:
       - backend
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Distroless envoy entrypoint is `envoy` itself; we pass the
     # bootstrap file and tune log level for a quiet hot path. Component
     # log overrides keep filter-level traces silent while the

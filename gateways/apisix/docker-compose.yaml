@@ -97,6 +97,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   oidc-server:
     # Same alpine image as the nginx column so we do not introduce a
@@ -129,6 +137,10 @@ services:
     depends_on:
       - backend
       - oidc-server
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       # Standalone mode flag the apache/apisix-docker image looks for
       # at container start. With this set, the entrypoint skips the

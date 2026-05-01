@@ -70,6 +70,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   tyk-redis:
     # Tyk OSS insists on Redis at startup — the /hello handler reports
@@ -146,6 +154,10 @@ services:
       - backend
       - tyk-redis
       - jwks-server
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # TYK_GW_SECRET pins the `/tyk/*` admin-API shared secret. The
     # bench never exposes the admin API on the host, but Tyk still
     # requires the variable to be set — and a deterministic value

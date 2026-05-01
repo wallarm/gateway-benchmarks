@@ -62,6 +62,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway:
     image: ${GATEWAY_IMAGE:-kong/kong:3.9.1@sha256:6addf50e6bd8d578314cb9ce4f2d2d1e3781d2edecef59f707e00c6e05d384f5}
@@ -69,6 +77,10 @@ services:
     restart: "no"
     depends_on:
       - backend
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       # --- DB-less declarative mode -----------------------------------
       KONG_DATABASE: "off"

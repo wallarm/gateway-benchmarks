@@ -54,6 +54,14 @@ services:
     networks:
       bench-net:
         aliases: [backend]
+    # Lift the per-process file-descriptor cap so high-RPS profiles
+    # (p4-stress, p3c-paced) don't hit EMFILE before they hit a real
+    # bottleneck. See docs/POLICIES.md § Run-environment notes; applied
+    # to every gateway compose file in lockstep.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
 
   gateway:
     image: ${GATEWAY_IMAGE:-traefik:v3.3.4@sha256:cc11989f418e2cfe5e60fc40c92c1813be847f58eda15eced7d5ac890255ad9e}
@@ -61,6 +69,10 @@ services:
     restart: "no"
     depends_on:
       - backend
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Traefik's three static-config surfaces — YAML file, env vars,
     # CLI flags — are mutually exclusive per the v3 docs: when one is
     # selected, the other two are silently ignored. We pick the YAML

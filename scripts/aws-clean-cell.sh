@@ -147,6 +147,13 @@ ssh_gateway "mkdir -p '${REMOTE_OUT}' && printf '%s\n' \
   '      - \"backend:${AWS_BACKEND_PRIVATE_IP}\"' \
   > '${OVERRIDE}';
 cd /opt/gateway-benchmarks;
+# Bump the SSH-side fd cap before docker-compose so dockerd inherits a
+# generous nofile when launching the gateway container. Compose-level
+# 'ulimits.nofile' already pins each gateway service at 65536, but on
+# some Ubuntu installs the daemon's effective limit is capped by the
+# caller's RLIMIT_NOFILE — without this, the per-service ulimit silently
+# downgrades. See gateways/<gw>/docker-compose.yaml § ulimits comment.
+ulimit -n 65536 2>/dev/null || true;
 env_file='gateways/${GATEWAY}/${POLICY}/.env';
 env_args='';
 if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi;

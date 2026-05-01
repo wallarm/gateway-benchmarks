@@ -405,14 +405,26 @@ for i in $(seq 0 $((runner_count - 1))); do
 	if [[ -n "${GATEWAY_IMAGE:-}" ]]; then remote_env+="GATEWAY_IMAGE='${GATEWAY_IMAGE}' "; fi
 	
 	remote_cmd="cd /opt/gateway-benchmarks && chmod +x ${REMOTE_BIN} scripts/aws-clean-cell.sh && ${remote_env}BENCH_CELL_RUNNER=scripts/aws-clean-cell.sh AWS_GATEWAY_SSH='ssh -i ~/.ssh/gwb_cluster_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=10 ubuntu@${gateway_private_ip}' AWS_GATEWAY_PRIVATE_IP='${gateway_private_ip}' AWS_BACKEND_PRIVATE_IP='${backend_private_ip}' ./${REMOTE_BIN} --repo-root /opt/gateway-benchmarks --run-id ${shard_run_id} run --matrix canonical --gateways '${GATEWAYS}' --loads '${LOADS}' --seed '${SEED}' --reps '${REPS}' --mode aws --shard-index ${i} --shard-count ${runner_count} --parallel '${PARALLEL}' --skip-parity --disable-native-stats --progress --progress-interval '${PROGRESS_INTERVAL}' --allow-failed-cells --notes \"${NOTES} shard $((i + 1))/${runner_count}\""
+	rc_file="${LOG_DIR}/${shard_run_id}.rc"
+	rm -f "${rc_file}"
 	(
 		rc=0
 		for attempt in 1 2; do
-			${ssh_cmd} "${remote_cmd}" && exit 0
+			if ${ssh_cmd} "${remote_cmd}"; then rc=0; break; fi
 			rc=$?
 			echo "ssh/remote attempt ${attempt} failed with rc=${rc}"
 			if [[ "${attempt}" == "1" ]]; then sleep 30; fi
 		done
+		# Persist exit code to disk before exiting. The outer script
+		# polls these .rc files for verdict instead of `wait $pid`,
+		# which is unreliable on long runs: bash's job table can lose
+		# track of completed background subshells (especially under
+		# bash 3.2 / 5.x with many backgrounded children over hours),
+		# and `wait $pid` then returns 127 ("pid is not a child of
+		# this shell") even though the subshell exited cleanly. That
+		# false-fail aborted run aws-20260501T062108Z after 2h26m of
+		# successful work and triggered an unwanted infra teardown.
+		echo "${rc}" >"${rc_file}"
 		exit "${rc}"
 	) >"${LOG_DIR}/${shard_run_id}.remote.log" 2>&1 &
 	pids+=("$!")
@@ -420,9 +432,25 @@ done
 printf '%s✓ Load test workers started%s (%d shards)\n' "${GREEN}" "${NC}" "${runner_count}"
 
 while :; do
-	alive=0
-	for pid in "${pids[@]}"; do
-		if kill -0 "${pid}" 2>/dev/null; then alive=1; fi
+	# A shard is "done" when it has written its exit-code file. This
+	# is the authoritative signal — independent of bash's job table,
+	# which can desync on long runs (see comment in the launch loop).
+	# Safety net: if a subshell pid is gone but its .rc is missing
+	# (e.g. SIGKILL / OOM before the `echo $rc > $rc_file` line ran),
+	# synthesize an rc=254 file so the loop can terminate instead of
+	# spinning forever.
+	rc_files_present=0
+	for i in $(seq 0 $((runner_count - 1))); do
+		shard_id="$(printf '%02d' "${i}")"
+		shard_rc="${LOG_DIR}/${RUN_ID}-shard-${shard_id}.rc"
+		if [[ ! -f "${shard_rc}" ]] && ! kill -0 "${pids[${i}]}" 2>/dev/null; then
+			echo "254" >"${shard_rc}"
+			echo "shard ${shard_id} subshell exited without writing rc (treated as crash)" \
+				>>"${LOG_DIR}/${RUN_ID}-shard-${shard_id}.remote.log"
+		fi
+		if [[ -f "${shard_rc}" ]]; then
+			((rc_files_present++))
+		fi
 	done
 	done_cells="$( (grep -h ' done |' "${LOG_DIR}"/"${RUN_ID}"-shard-*.remote.log 2>/dev/null || true) | wc -l | tr -d ' ')"
 	elapsed=$(( $(date +%s) - load_start ))
@@ -434,18 +462,42 @@ while :; do
 	fi
 	printf '\r\033[2K  %s %s/%s cells | elapsed %s | eta %s' \
 		"$(bar "${done_cells:-0}" "${total_cells}")" "${done_cells:-0}" "${total_cells}" "$(duration "${elapsed}")" "${eta}"
-	if (( alive == 0 )); then break; fi
+	if (( rc_files_present == runner_count )); then break; fi
 	sleep 30
 done
 printf '\n'
 
-load_failed=0
+# Best-effort reap of background subshells. We deliberately swallow
+# `wait $pid` errors (incl. 127 "not a child") because the verdict
+# comes from .rc files, not from bash's job table.
 for pid in "${pids[@]}"; do
-	if ! wait "${pid}"; then load_failed=1; fi
+	wait "${pid}" 2>/dev/null || true
 done
 pids=()
+
+load_failed=0
+failed_shards=()
+for i in $(seq 0 $((runner_count - 1))); do
+	shard_id="$(printf '%02d' "${i}")"
+	shard_run_id="${RUN_ID}-shard-${shard_id}"
+	rc_file="${LOG_DIR}/${shard_run_id}.rc"
+	if [[ ! -f "${rc_file}" ]]; then
+		load_failed=1
+		failed_shards+=("${shard_run_id} (no rc file — subshell crashed before writing)")
+		continue
+	fi
+	rc_val="$(cat "${rc_file}" 2>/dev/null || echo "?")"
+	if [[ "${rc_val}" != "0" ]]; then
+		load_failed=1
+		failed_shards+=("${shard_run_id} (rc=${rc_val})")
+	fi
+done
 if (( load_failed != 0 )); then
-	printf '%s✗ one or more shards failed%s logs: %s/%s-shard-*.remote.log\n' "${RED}" "${NC}" "${LOG_DIR}" "${RUN_ID}" >&2
+	printf '%s✗ one or more shards failed%s\n' "${RED}" "${NC}" >&2
+	for entry in "${failed_shards[@]}"; do
+		printf '    %s\n' "${entry}" >&2
+	done
+	printf '  logs: %s/%s-shard-*.remote.log\n' "${LOG_DIR}" "${RUN_ID}" >&2
 	exit 1
 fi
 printf '%s✓ Load tests complete%s (%s)\n' "${GREEN}" "${NC}" "$(duration "$(( $(date +%s) - load_start ))")"

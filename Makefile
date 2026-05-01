@@ -639,7 +639,7 @@ load-gateway-load-sweep: .bench-ports-free ## Sweep all 4 load profiles for one 
 	@passed=0; excluded=0; failed=0; \
 	 for lp in p1-baseline p2-sustained p3-ramp p4-stress; do \
 	     out_dir=reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/$(LOAD_POLICY)__$${lp}__$(LOAD_SCENARIO); \
-	     RUN_ID=$(LOAD_RUN_ID) bash scripts/load-gateway.sh \
+	     RUN_ID=$(LOAD_RUN_ID) BENCH_LOCAL_REPORT=0 bash scripts/load-gateway.sh \
 	         --gateway  $(LOAD_GATEWAY) \
 	         --policy   $(LOAD_POLICY) \
 	         --scenario $(LOAD_SCENARIO) \
@@ -663,8 +663,17 @@ load-gateway-load-sweep: .bench-ports-free ## Sweep all 4 load profiles for one 
 	         failed=$$((failed+1)); \
 	     fi; \
 	 done; \
+	 if [ -x orchestrator/bin/bench ]; then \
+	     orchestrator/bin/bench --repo-root "$$(pwd)" aggregate --run-id $(LOAD_RUN_ID) -q >/dev/null 2>&1 && \
+	     orchestrator/bin/bench --repo-root "$$(pwd)" report    --run-id $(LOAD_RUN_ID)    >/dev/null 2>&1 && \
+	     report_path="reports/$(LOAD_RUN_ID)/report.html" || report_path="(HTML render failed)"; \
+	 else \
+	     report_path="(orchestrator/bin/bench not built)"; \
+	 fi; \
 	 echo ""; \
-	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$excluded EXCLUDED (reports in reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/)"
+	 echo "$(CYAN)Summary:$(NC) $$passed PASS, $$failed FAIL, $$excluded EXCLUDED"; \
+	 echo "  raw:    reports/$(LOAD_RUN_ID)/raw/$(LOAD_GATEWAY)/"; \
+	 echo "  report: $$report_path"
 
 # ---------------------------------------------------------------------------
 # Orchestrator + aggregator (Phase 4 "Путь A" shell pipeline).

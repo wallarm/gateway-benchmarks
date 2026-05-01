@@ -293,6 +293,21 @@ say "  matrix:   ${MATRIX_TSV}"
 say "  log:      ${SWEEP_LOG}"
 say "  reports:  reports/${RUN_ID}/"
 
+# Aggregate + render the same Go-pipeline HTML the AWS sweep produces.
+# Best-effort — failures here don't change the sweep's exit code,
+# the raw artefacts are already on disk. Override with BENCH_LOCAL_REPORT=0.
+if [[ "${BENCH_LOCAL_REPORT:-1}" == "1" ]]; then
+    bench_bin="${REPO_ROOT}/orchestrator/bin/bench"
+    if [[ ! -x "${bench_bin}" ]]; then
+        warn "  (HTML report skipped: ${bench_bin} not built — \`cd orchestrator && go build -o bin/bench .\`)"
+    elif "${bench_bin}" --repo-root "${REPO_ROOT}" aggregate --run-id "${RUN_ID}" -q >/dev/null 2>&1 \
+        && "${bench_bin}" --repo-root "${REPO_ROOT}" report --run-id "${RUN_ID}" >/dev/null 2>&1; then
+        ok "  report:   reports/${RUN_ID}/report.html"
+    else
+        warn "  (HTML report failed — re-run \`bench aggregate / report --run-id ${RUN_ID}\` to see the error)"
+    fi
+fi
+
 if (( failed > 0 )); then
     exit 1
 fi

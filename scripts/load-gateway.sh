@@ -587,4 +587,25 @@ if [[ -s "${STATS_CSV}" ]]; then
     ok "  stats:     ${STATS_CSV} (${stats_rows} samples)"
 fi
 
+# -----------------------------------------------------------------------------
+# 8. HTML report (best-effort, opt-out via BENCH_LOCAL_REPORT=0)
+# -----------------------------------------------------------------------------
+# Aggregate + render the same Go-pipeline HTML the AWS sweep produces,
+# but for the single cell the operator just ran. Cheap (~1 second on a
+# single cell) and uses the artefacts already on disk — no extra
+# benchmark work. Skip silently if the orchestrator binary isn't built:
+# the script's primary job (load + raw artefacts) has already
+# succeeded, and a missing binary should not flunk the whole verdict.
+if [[ "${BENCH_LOCAL_REPORT:-1}" == "1" ]]; then
+    bench_bin="${REPO_ROOT}/orchestrator/bin/bench"
+    if [[ ! -x "${bench_bin}" ]]; then
+        printf '  (HTML report skipped: %s not built — `cd orchestrator && go build -o bin/bench .`)\n' "${bench_bin}" >&2
+    elif "${bench_bin}" --repo-root "${REPO_ROOT}" aggregate --run-id "${RUN_ID}" -q >/dev/null 2>&1 \
+        && "${bench_bin}" --repo-root "${REPO_ROOT}" report --run-id "${RUN_ID}" >/dev/null 2>&1; then
+        ok "  report:    reports/${RUN_ID}/report.html"
+    else
+        printf '  (HTML report failed — re-run \`bench aggregate / report --run-id %s\` to see the error)\n' "${RUN_ID}" >&2
+    fi
+fi
+
 exit 0

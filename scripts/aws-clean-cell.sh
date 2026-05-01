@@ -48,7 +48,15 @@ mkdir -p "${OUTPUT}" "${LOGS_DIR}"
 
 K6_IMAGE="${K6_IMAGE:-grafana/k6:1.7.1@sha256:4fd3a694926b064d3491d9b02b01cde886583c4931f1223816e3d9a7bdfa7e0f}"
 GATEWAY_TARGET="http://${AWS_GATEWAY_PRIVATE_IP}:9080"
-GATEWAY_TARGET_HTTPS="https://${AWS_GATEWAY_PRIVATE_IP}:9443"
+# HTTPS target uses the canonical bench.local hostname so k6 sends
+# SNI=bench.local during the TLS handshake. Strict-SNI gateways
+# (apisix's ssls.snis list, wallarm's virtual_hosts.tls.sni) reject
+# the handshake with "tls: access denied" / "tls: internal error" if
+# the SNI doesn't match a configured cert — sending the IP would do
+# exactly that. The k6 container resolves bench.local via the
+# --add-host injection further below, so the URL routes to the
+# correct gateway IP without DNS plumbing.
+GATEWAY_TARGET_HTTPS="https://bench.local:9443"
 PROJECT="gwb-${RUN_ID}-${GATEWAY}"
 PROJECT="${PROJECT//[^a-zA-Z0-9_-]/-}"
 PROJECT="${PROJECT,,}"
@@ -252,6 +260,7 @@ docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 PHASE="k6-warmup"
 echo "Starting 20s warmup for ${GATEWAY}/${POLICY}..." >&2
 docker run --rm -i \
+	--add-host "bench.local:${AWS_GATEWAY_PRIVATE_IP}" \
 	-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \
 	-e "BENCH_TARGET_URL_HTTPS=${GATEWAY_TARGET_HTTPS}" \
 	-e "BENCH_JWT_VALID=${BENCH_JWT_VALID}" \
@@ -273,6 +282,7 @@ EOF
 PHASE="k6-run"
 docker run --rm \
 	--user "$(id -u):$(id -g)" \
+	--add-host "bench.local:${AWS_GATEWAY_PRIVATE_IP}" \
 	-v "${abs_k6}:/k6:ro" \
 	-v "${abs_out}:/out" \
 	-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \

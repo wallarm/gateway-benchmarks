@@ -15,6 +15,8 @@
 // the same commit.
 package report
 
+import "html/template"
+
 // GatewayColors is the per-gateway brand palette used across every
 // chart so the same gateway stays visually identifiable as the user
 // jumps between tabs.
@@ -155,9 +157,15 @@ var PolicyDescriptions = map[string]PolicyMeta{
 // LoadProfileMeta describes one of the load profile shapes the
 // orchestrator supports. Keep in sync with k6/profiles/*.js.
 type LoadProfileMeta struct {
-	Label   string // short tag for the sub-section header
-	Shape   string // executor + numbers (e.g. "constant 10 VUs × 60s")
-	Purpose string // why this shape exists
+	Label string // short tag for the sub-section header
+	Shape string // executor + numbers (e.g. "constant 10 VUs × 60s")
+	// Purpose is rendered as trusted HTML so the descriptions can
+	// embed in-text links (e.g. to the API7 benchmark repo). It is
+	// NOT auto-escaped at render time, so `<`, `>` and `&` introduced
+	// for body text (not markup) must be written as entities. The
+	// template (assets/report.html.tmpl § load-purpose) intentionally
+	// drops the `| esc` for this field.
+	Purpose template.HTML
 }
 
 // LoadDescriptions surface the executor + numbers next to every
@@ -166,62 +174,62 @@ var LoadDescriptions = map[string]LoadProfileMeta{
 	"p1-baseline": {
 		Label:   "p1 · baseline",
 		Shape:   "constant 10 VUs × 60s (closed-loop)",
-		Purpose: "Cheap canonical comparison run; matches api7/apisix-benchmark conventions.",
+		Purpose: `Light 60-second comparison run with 10 concurrent clients. Same shape as <a href="https://github.com/api7/apisix-benchmark">API7's public APISIX benchmark</a>, so numbers compare directly with theirs.`,
 	},
 	"p2-sustained": {
 		Label:   "p2 · sustained",
 		Shape:   "constant 100 VUs × 5m (closed-loop)",
-		Purpose: "Steady-state RSS + warm-cache CPU; what an operator would actually see.",
+		Purpose: `Five-minute steady-state run. Surfaces memory growth and warm-cache CPU — what production traffic looks like after caches and connection pools heat up.`,
 	},
 	"p3-ramp": {
 		Label:   "p3 · ramp",
 		Shape:   "ramp 10 → 200 VUs over 3m, hold 2m (closed-loop)",
-		Purpose: "Probe how the gateway recovers from a load spike.",
+		Purpose: `Tests recovery from a traffic surge: load grows 20× over 3 minutes, then holds. Catches gateways that handle steady load fine but choke on sudden spikes.`,
 	},
 	"p4-stress": {
 		Label:   "p4 · stress",
 		Shape:   "constant 500 VUs × 2m (closed-loop)",
-		Purpose: "Push past comfortable load to surface tail-latency / dropped requests.",
+		Purpose: `Deliberate overload (500 concurrent clients) to see how the gateway degrades — tail latency, dropped requests, 5xx storms. Measures failure-mode behaviour, not best case.`,
 	},
 	"p1c-paced": {
 		Label:   "p1c · paced",
 		Shape:   "constant-arrival 500 RPS × 60s",
-		Purpose: "Absolute-RPS twin of p1 — measures latency at a fixed offered load.",
+		Purpose: `Same goal as p1, but pinned to a fixed arrival rate (500 requests/second). Answers 'can the gateway sustain this rate cleanly?' rather than 'how fast is it under fixed concurrency?'.`,
 	},
 	"p2c-paced": {
 		Label:   "p2c · paced",
 		Shape:   "constant-arrival 2000 RPS × 5m",
-		Purpose: "Absolute-RPS twin of p2 — same length, predictable arrival rate.",
+		Purpose: `Five-minute fixed-arrival twin of p2: 2000 RPS held flat. Catches queue buildup that closed-loop p2 hides — when the gateway slows, paced arrivals keep coming and latency rises visibly.`,
 	},
 	"p3c-paced": {
 		Label:   "p3c · paced",
 		Shape:   "ramping-arrival 0 → 10000 RPS over 3m",
-		Purpose: "Find the throughput knee under controlled arrival ramp.",
+		Purpose: `Ramps arrivals from 0 to 10,000 RPS over 3 minutes. Finds the throughput knee — the RPS at which p95 latency starts climbing fast.`,
 	},
 	"p4c-paced": {
 		Label:   "p4c · paced",
 		Shape:   "constant-arrival 20000 RPS × 2m",
-		Purpose: "Hard-shed test: oversubscribe arrivals deliberately.",
+		Purpose: `Hard-shed test: deliberately offer 20,000 RPS — more than any single gateway can clean-handle. Measures how gracefully the gateway sheds load vs cascade-fails.`,
 	},
 	"p1-baseline-https": {
 		Label:   "p1 · baseline (HTTPS)",
 		Shape:   "constant 10 VUs × 60s (closed-loop, TLS)",
-		Purpose: "TLS-overhead twin of p1; isolates handshake + record cost on top of pure passthrough.",
+		Purpose: `HTTPS twin of p1. Subtracting p1 from this number gives pure TLS overhead — handshake plus per-byte encryption cost on top of plain passthrough.`,
 	},
 	"p2-sustained-https": {
 		Label:   "p2 · sustained (HTTPS)",
 		Shape:   "constant 100 VUs × 5m (closed-loop, TLS)",
-		Purpose: "TLS-overhead twin of p2; steady-state with warmed TLS sessions.",
+		Purpose: `HTTPS twin of p2. The TLS handshake is paid once per connection, so this profile isolates the bulk-encryption (record-layer) cost in steady state.`,
 	},
 	"p3-ramp-https": {
 		Label:   "p3 · ramp (HTTPS)",
 		Shape:   "ramp 10 → 200 VUs over 3m, hold 2m (closed-loop, TLS)",
-		Purpose: "TLS-overhead twin of p3; spike recovery with TLS termination.",
+		Purpose: `HTTPS twin of p3. Spike recovery while terminating TLS — catches gateways that handle TLS fine in steady state but struggle with connection storms.`,
 	},
 	"p4-stress-https": {
 		Label:   "p4 · stress (HTTPS)",
 		Shape:   "constant 500 VUs × 2m (closed-loop, TLS)",
-		Purpose: "TLS-overhead twin of p4; tail latency under TLS.",
+		Purpose: `HTTPS twin of p4. Tail-latency behaviour under TLS overload — surfaces TLS-specific degradation modes (handshake exhaustion, session-cache thrashing) invisible at lower loads.`,
 	},
 }
 

@@ -188,12 +188,18 @@ func (a *Aggregator) Collect() ([]Cell, error) {
 		// (e.g. HTTPS scenario hitting an HTTP-only gateway), every
 		// request fails with `connection refused` but Policy2xx /
 		// Policy5xx counters all stay at zero — UnexpectedRatio reads
-		// 0 % and Verdict would otherwise stay PASS. If more than half
-		// the checks failed, demote to FAIL so the cell is excluded
-		// from rankings instead of polluting the median.
+		// 0 % and Verdict would otherwise stay PASS.
+		//
+		// The threshold is intentionally tight (>99 %): a stress test
+		// that pushes a real gateway to 95 % 5xx is a *legitimate*
+		// data point — it tells the reviewer exactly where the
+		// gateway falls over — and should stay PASS so the RPS /
+		// latency / error% columns appear in the report. Only when
+		// effectively *every* request failed do we demote to FAIL,
+		// which is the connection-refused / wrong-port signature.
 		if cell.Verdict == "PASS" && cell.ChecksTotal > 0 {
 			failRatio := float64(cell.ChecksFails) / float64(cell.ChecksTotal)
-			if failRatio > 0.5 {
+			if failRatio > 0.99 {
 				cell.Verdict = "FAIL"
 				if cell.ParityStatus == "" {
 					cell.ParityStatus = "EXCESSIVE_CHECK_FAILURES"
@@ -663,32 +669,72 @@ func deriveResourceBottleneck(cell *Cell) {
 
 	cpuCap := float64(cell.CPUOnline) * 100
 	cpuUtil := 0.0
+	cpuSteadyUtil := 0.0
 	if cpuCap > 0 {
 		cpuUtil = math.Max(cell.CPUPctSteady, cell.CPUPctPeak) / cpuCap * 100
+		cpuSteadyUtil = cell.CPUPctSteady / cpuCap * 100
 	}
+	cpuPeakCores := cell.CPUPctPeak / 100
+	cpuSteadyCores := cell.CPUPctSteady / 100
+	cpuTotalCores := float64(cell.CPUOnline)
 	memUtil := cell.MemUtilPeakPct
 	diskPeak := math.Max(cell.BlkReadPeakBps, cell.BlkWritePeakBps)
 	netPeak := math.Max(cell.NetRxPeakBps, cell.NetTxPeakBps)
 
-	switch {
-	case cpuUtil >= 85:
-		cell.ResourceBottleneck = "cpu"
-	case memUtil >= 85:
-		cell.ResourceBottleneck = "ram"
-	case diskPeak >= 80*1024*1024:
-		cell.ResourceBottleneck = "disk"
-	case netPeak >= 100*1024*1024:
-		cell.ResourceBottleneck = "network"
-	default:
-		cell.ResourceBottleneck = "not saturated"
-	}
+	// Resource thresholds — kept in one place so the report tooltip
+	// (assets/report.html.tmpl § Bottleneck header) and the inference
+	// stay in lockstep. See docs/REPORT.md § Bottleneck inference.
+	const (
+		cpuSatPct        = 85.0              // % of (numCPU × 100)
+		ramSatPct        = 85.0              // % of container memory limit
+		diskSatBytesPerS = 80 * 1024 * 1024  // 80 MB/s
+		netSatBytesPerS  = 100 * 1024 * 1024 // 100 MB/s
+	)
 
-	cell.ResourceBottleneckDetail = fmt.Sprintf(
-		"cpu %.0f%% of %.0f%% cap; ram %.0f%%; disk r/w %.1f/%.1f MB/s; net rx/tx %.1f/%.1f MB/s",
-		cpuUtil, cpuCap, memUtil,
+	// rawSamples is the uniform 4-channel suffix appended to every
+	// bottleneck headline. Wording is "peak X.X / N cores" rather than
+	// "% of M%% cap" because reviewers think in cores, not in
+	// dockerd's "100% per vCPU" abstraction. Memory is a percent of
+	// the container's RAM limit; disk and net are MB/s peaks.
+	rawSamples := fmt.Sprintf(
+		"peak: cpu %.1f / %.0f cores; ram %.0f%%; disk r/w %.1f/%.1f MB/s; net rx/tx %.1f/%.1f MB/s",
+		cpuPeakCores, cpuTotalCores, memUtil,
 		cell.BlkReadPeakBps/(1024*1024), cell.BlkWritePeakBps/(1024*1024),
 		cell.NetRxPeakBps/(1024*1024), cell.NetTxPeakBps/(1024*1024),
 	)
+
+	switch {
+	case cpuUtil >= cpuSatPct:
+		cell.ResourceBottleneck = "cpu"
+		cell.ResourceBottleneckDetail = fmt.Sprintf(
+			"CPU saturated: peak %.1f of %.0f vCPUs (%.0f%% of capacity, ≥ %.0f%% threshold); steady was %.1f vCPUs (%.0f%%). %s",
+			cpuPeakCores, cpuTotalCores, cpuUtil, cpuSatPct,
+			cpuSteadyCores, cpuSteadyUtil, rawSamples)
+	case memUtil >= ramSatPct:
+		cell.ResourceBottleneck = "ram"
+		cell.ResourceBottleneckDetail = fmt.Sprintf(
+			"Memory saturated: peak %.0f%% of container limit (≥ %.0f%% threshold). %s",
+			memUtil, ramSatPct, rawSamples)
+	case diskPeak >= diskSatBytesPerS:
+		cell.ResourceBottleneck = "disk"
+		cell.ResourceBottleneckDetail = fmt.Sprintf(
+			"Disk I/O saturated: peak %.1f MB/s (≥ %d MB/s threshold). %s",
+			diskPeak/(1024*1024), diskSatBytesPerS/(1024*1024), rawSamples)
+	case netPeak >= netSatBytesPerS:
+		cell.ResourceBottleneck = "network"
+		netDir := "tx"
+		if cell.NetRxPeakBps > cell.NetTxPeakBps {
+			netDir = "rx"
+		}
+		cell.ResourceBottleneckDetail = fmt.Sprintf(
+			"Network saturated: peak %.1f MB/s on the busier direction (%s) (≥ %d MB/s threshold). The gateway is NIC-bound — faster CPU will not raise RPS without a wider pipe. %s",
+			netPeak/(1024*1024), netDir, netSatBytesPerS/(1024*1024), rawSamples)
+	default:
+		cell.ResourceBottleneck = "not saturated"
+		cell.ResourceBottleneckDetail = fmt.Sprintf(
+			"No signal crossed its saturation threshold (cpu ≥ %.0f%%, ram ≥ %.0f%%, disk ≥ %d MB/s, net ≥ %d MB/s). %s",
+			cpuSatPct, ramSatPct, diskSatBytesPerS/(1024*1024), netSatBytesPerS/(1024*1024), rawSamples)
+	}
 }
 
 // -----------------------------------------------------------------------------

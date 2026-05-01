@@ -55,6 +55,6 @@ export const options = {
         // legitimate data points — they tell the reviewer the gateway
         // can't sustain the target, and we want that visible in the
         // report rather than hidden behind a "FAIL" verdict.
-        policy_5xx_unexpected: ['count==0'],
+        // policy_5xx_unexpected threshold removed: 5xx storms under heavy load (p4-stress, p3c-paced) are *expected* test results — the bench measures how the gateway degrades, not whether it stays clean. Errors are still counted in the 'Errors' column of the report.
     },
 };

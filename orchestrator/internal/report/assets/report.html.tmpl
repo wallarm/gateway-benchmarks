@@ -41,17 +41,17 @@
 
 <h2 class="section-title">Executive Summary</h2>
 <div class="card" style="margin-bottom:1rem">
-  <table class="ranking-table">
+  <table class="ranking-table sortable">
     <thead><tr>
-      <th style="text-align:center">Rank</th>
-      <th>Gateway</th>
-      <th>Stack</th>
-      <th style="text-align:right">Avg RPS</th>
-      <th>Max errors</th>
-      <th>Coverage</th>
+      <th style="text-align:center" data-sort="numeric" title="Position in the ranking by Avg RPS (descending). Click any header to re-sort by that column; click again to reverse direction.">Rank</th>
+      <th data-sort="string" title="Gateway implementation under test. Click to sort alphabetically.">Gateway</th>
+      <th data-sort="string" title="Implementation language and version pin. Click to sort alphabetically.">Stack</th>
+      <th style="text-align:right" data-sort="numeric" title="Mean RPS across every PASS cell this gateway produced. Higher is better. The Executive Summary defaults to sorting by this column.">Avg RPS</th>
+      <th data-sort="numeric" title="Worst per-cell ratio of unexpected errors (policy_5xx_unexpected + policy_4xx_unexpected) divided by total classified responses. Expected policy responses (401/429) are NOT counted. Higher = unhealthier under load.">Max errors</th>
+      <th data-sort="coverage" title="Number of cells that finished with verdict=PASS / total cells attempted for this gateway. Format: passed/total. Excluded and failed cells are NOT in the numerator.">Coverage</th>
       {{- if $.HasResourceData }}
-      <th>Peak RSS</th>
-      <th>Steady RSS</th>
+      <th data-sort="numeric" title="Peak Resident Set Size — the highest amount of physical RAM the gateway process held during the run, sampled once per second from the Docker engine stats endpoint. Lower means a smaller production memory footprint.">Peak RSS</th>
+      <th data-sort="numeric" title="Steady-state Resident Set Size — mean RAM held by the gateway process during the last 30 seconds of the cell (warm path, JIT/cache populated). Lower is better.">Steady RSS</th>
       {{- end }}
     </tr></thead>
     <tbody>
@@ -119,7 +119,7 @@
       <h4>{{ .Meta.Label | esc }}</h4>
       <span class="load-shape">{{ .Meta.Shape | esc }}</span>
     </div>
-    <p class="load-purpose">{{ .Meta.Purpose | esc }}</p>
+    <p class="load-purpose">{{ .Meta.Purpose }}</p>
 
     {{- if gt (len .Cells) 0 }}
     <div class="chart-row">
@@ -128,17 +128,17 @@
     </div>
     {{- end }}
 
-    <table>
+    <table class="sortable">
       <thead><tr>
-        <th title="Gateway implementation under test.">Gateway</th>
-        <th title="Requests per second observed by k6. Higher is better.">RPS ↓</th>
-        <th title="Median request duration in milliseconds.">p50 (ms)</th>
-        <th title="95th percentile request duration in milliseconds.">p95 (ms)</th>
-        <th title="Unexpected errors only: policy_5xx_unexpected + policy_4xx_unexpected. Expected policy responses such as 401/429 are not counted here.">Errors</th>
-        <th title="Total requests issued by k6 during this cell.">Requests</th>
-        <th title="Container RSS memory: peak / steady-state. Hidden as — when docker-stats data is unavailable.">RSS</th>
-        <th title="Docker CPU percentage at steady state. 100% is approximately one fully used vCPU; on multi-core instances this is not necessarily saturation.">CPU</th>
-        <th title="Likely resource bottleneck inferred from CPU, memory, disk and network counters. Blank means no clear saturation was detected or resource data is unavailable.">Bottleneck</th>
+        <th data-sort="string" title="Gateway implementation under test. Click any header to sort the table by that column; click again to reverse direction.">Gateway</th>
+        <th data-sort="numeric" title="Requests per second observed by k6 (closed-loop iteration cadence — apples-to-apples with api7/apisix-benchmark, not absolute-arrival rate). Higher is better. Default sort.">RPS</th>
+        <th data-sort="numeric" title="Median request duration (50th percentile) in milliseconds, measured by k6 client-side. Lower is better. N/A means the timing instrumentation returned all-zeros for this cell (rare — usually a connection-refused or measurement bug).">p50 (ms)</th>
+        <th data-sort="numeric" title="95th percentile request duration in milliseconds. The 'tail' latency metric — captures the worst 5% of requests. Lower is better.">p95 (ms)</th>
+        <th data-sort="numeric" title="Count of unexpected errors: policy_5xx_unexpected + policy_4xx_unexpected. Expected policy responses (401 on bad JWT, 429 on rate-limit) are NOT counted here — those are recorded under policy_4xx_expected and confirm the policy works as designed.">Errors</th>
+        <th data-sort="numeric" title="Total requests issued by k6 during this cell. Higher correlates with higher RPS and longer duration. Use the RPS column for cross-cell comparison since durations differ between load profiles.">Requests</th>
+        <th data-sort="rss" title="Container Resident Set Size — physical RAM held by the gateway process. Format: peak / steady-state. Peak is the highest 1-second sample during the run; steady is the mean over the last 30 seconds (warm path, after JIT and connection pools settle). Sorted by peak. '—' means docker-stats data was unavailable for this cell.">RSS (peak / steady)</th>
+        <th data-sort="rss" title="Docker CPU usage as &quot;peak / steady&quot;. 100% is approximately one fully used vCPU; on multi-core instances values above 100% mean multiple cores are engaged simultaneously. The bottleneck column uses max(peak, steady) against the available vCPU cap (cpu_online×100), so a peak well above the steady column is what trips the &quot;cpu&quot; verdict — the steady value alone can look modest while peak still saturates. Sort key is peak.">CPU % (peak/steady)</th>
+        <th data-sort="string" title="Likely resource bottleneck inferred from per-second docker-stats samples. Decided by the FIRST threshold crossed (priority order):&#10;• cpu — max(steady, peak) CPU ≥85% of available vCPU capacity (e.g. ≥6.8 of 8 vCPUs on c7i.2xlarge)&#10;• ram — peak memory utilisation ≥85% of the container's memory limit&#10;• disk — peak read OR write throughput ≥80 MB/s&#10;• network — peak rx OR tx throughput ≥100 MB/s (the gateway is saturating the NIC; faster CPU won't help)&#10;• (blank/—) — no signal crossed its threshold OR docker-stats data was unavailable.&#10;Hover the value below for the raw four-channel measurements.">Bottleneck</th>
       </tr></thead>
       <tbody>
       {{- $ref := .LatWinner }}
@@ -157,7 +157,7 @@
           <td class="num {{ if gt (unexpectedErrors .) 0 }}error-cell{{ end }}">{{ fmtInt (unexpectedErrors .) }}</td>
           <td class="num">{{ fmtInt .HTTPReqs }}</td>
           <td class="num meta-cell" title="peak / steady">{{ fmtRSSPair .MemRSSPeakBytes .MemRSSSteadyBytes }}</td>
-          <td class="num meta-cell" title="100% is approximately one full vCPU">{{ fmtPct .CPUPctSteady }}</td>
+          <td class="num meta-cell" title="peak / steady — see column header">{{ fmtCPUPair .CPUPctPeak .CPUPctSteady }}</td>
           <td>{{ if showBottleneck .ResourceBottleneck }}<span class="bottleneck bottleneck-{{ bottleneckClass .ResourceBottleneck }}" title="{{ .ResourceBottleneckDetail | esc }}">{{ .ResourceBottleneck | esc }}</span>{{ else }}<span class="meta-cell" title="No clear CPU/RAM/disk/network saturation detected, or resource data is unavailable.">—</span>{{ end }}</td>
         </tr>
       {{- end }}

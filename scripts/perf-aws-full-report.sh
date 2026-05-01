@@ -17,6 +17,23 @@ REPORT_PATH="${COPY_DIR}/report.html"
 LOG_DIR="reports/${RUN_ID}-logs"
 REPORT_LOGO="${BENCH_AWS_REPORT_LOGO:-}"
 
+# If the operator opted into S3 publishing (BENCH_AWS_REPORT_S3_BUCKET),
+# compute the eventual public URL up front so it can be (a) shown in
+# the startup banner — useful for scheduling a deferred Slack message
+# while the run is still in progress — and (b) reused verbatim by the
+# publish step at the end. Bucket/region/prefix conventions match the
+# `aws s3 cp` block below; keep the two in sync.
+S3_REPORT_URL=""
+S3_REPORT_KEY=""
+S3_REPORT_REGION=""
+if [[ -n "${BENCH_AWS_REPORT_S3_BUCKET:-}" ]]; then
+	S3_REPORT_REGION="${BENCH_AWS_REPORT_S3_REGION:-eu-central-1}"
+	_s3_prefix="${BENCH_AWS_REPORT_S3_PREFIX:-reports}"
+	_s3_prefix="${_s3_prefix%/}"
+	S3_REPORT_KEY="${_s3_prefix}/${RUN_ID}/report.html"
+	S3_REPORT_URL="https://${BENCH_AWS_REPORT_S3_BUCKET}.s3.${S3_REPORT_REGION}.amazonaws.com/${S3_REPORT_KEY}"
+fi
+
 FLEET_SIZE="${BENCH_AWS_FLEET_SIZE:-7}"
 INSTANCE_TYPE="${BENCH_AWS_INSTANCE_TYPE:-c7i.4xlarge}"
 PARALLEL="${BENCH_AWS_PARALLEL:-4}"
@@ -236,8 +253,13 @@ cleanup() {
 trap cleanup EXIT
 
 printf '%sGateway Benchmarks AWS clean cluster fleet%s\n' "${CYAN}" "${NC}"
-printf '  run-id: %s\n  clean clusters: %s x 3 EC2 (%s)\n  parallel/loadgen: %s\n  logs: %s\n\n' \
+printf '  run-id: %s\n  clean clusters: %s x 3 EC2 (%s)\n  parallel/loadgen: %s\n  logs: %s\n' \
 	"${RUN_ID}" "${FLEET_SIZE}" "${INSTANCE_TYPE}" "${PARALLEL}" "${LOG_DIR}"
+if [[ -n "${S3_REPORT_URL}" ]]; then
+	printf '  %sreport URL (after success):%s %s\n' "${CYAN}" "${NC}" "${S3_REPORT_URL}"
+	printf '    (safe to schedule a Slack message now — same URL is printed again at the end)\n'
+fi
+printf '\n'
 
 if [[ ! -f "${AWS_TOFU_DIR}/terraform.tfvars" ]]; then
 	printf '%s✗ infra/aws/terraform.tfvars is missing.%s\n' "${RED}" "${NC}" >&2
@@ -509,20 +531,15 @@ printf '%s✓ Report ready:%s %s\n' "${GREEN}" "${NC}" "${REPORT_PATH}"
 # the bucket lives outside eu-central-1 or you want a non-default
 # layout. Failure here is non-fatal — the local report is already
 # saved.
-if [[ -n "${BENCH_AWS_REPORT_S3_BUCKET:-}" ]] && [[ -s "${REPORT_PATH}" ]]; then
-	s3_region="${BENCH_AWS_REPORT_S3_REGION:-eu-central-1}"
-	s3_prefix="${BENCH_AWS_REPORT_S3_PREFIX:-reports}"
-	s3_prefix="${s3_prefix%/}"
-	s3_key="${s3_prefix}/${RUN_ID}/report.html"
-	s3_url="https://${BENCH_AWS_REPORT_S3_BUCKET}.s3.${s3_region}.amazonaws.com/${s3_key}"
-	printf '%s▶ Publish report to s3://%s/%s%s %s\n' "${CYAN}" "${BENCH_AWS_REPORT_S3_BUCKET}" "${s3_key}" "${NC}" "$(ts)"
-	if aws s3 cp "${REPORT_PATH}" "s3://${BENCH_AWS_REPORT_S3_BUCKET}/${s3_key}" \
+if [[ -n "${S3_REPORT_URL}" ]] && [[ -s "${REPORT_PATH}" ]]; then
+	printf '%s▶ Publish report to s3://%s/%s%s %s\n' "${CYAN}" "${BENCH_AWS_REPORT_S3_BUCKET}" "${S3_REPORT_KEY}" "${NC}" "$(ts)"
+	if aws s3 cp "${REPORT_PATH}" "s3://${BENCH_AWS_REPORT_S3_BUCKET}/${S3_REPORT_KEY}" \
 		--acl public-read \
 		--content-type 'text/html; charset=utf-8' \
 		--cache-control 'public, max-age=3600' \
-		--region "${s3_region}" \
+		--region "${S3_REPORT_REGION}" \
 		>"${LOG_DIR}/s3-publish.log" 2>&1; then
-		printf '%s✓ Public report URL:%s %s\n' "${GREEN}" "${NC}" "${s3_url}"
+		printf '%s✓ Public report URL:%s %s\n' "${GREEN}" "${NC}" "${S3_REPORT_URL}"
 	else
 		s3_rc=$?
 		printf '%s! S3 publish failed (rc=%d) — local report is still at %s%s\n' \

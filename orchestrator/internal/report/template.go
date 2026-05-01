@@ -63,6 +63,7 @@ func templateFuncs() template.FuncMap {
 		"fmtBytes":         fmtBytes,
 		"fmtMaybeMB":       fmtMaybeMB,
 		"fmtRSSPair":       fmtRSSPair,
+		"fmtCPUPair":       fmtCPUPair,
 		"fmtBps":           fmtBps,
 		"fmtPct":           fmtPct,
 		"unexpectedErrors": unexpectedErrors,
@@ -158,6 +159,20 @@ func fmtRSSPair(peak, steady int64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%s / %s", fmtBytes(peak), fmtBytes(steady))
+}
+
+// fmtCPUPair renders a "peak / steady" CPU% pair so the column matches
+// what the bottleneck classifier sees. The classifier uses
+// max(steady, peak) against the cpuOnline×100 cap, so a column showing
+// only steady made the "cpu" verdict look wrong whenever peak crossed
+// the 85% threshold but steady didn't (real example: wallarm p4-stress
+// on c7i.4xlarge, steady 736% vs peak 1361% on a 1600% cap → 85.08%).
+// Peak comes first to match RSS column ordering.
+func fmtCPUPair(peak, steady float64) string {
+	if peak <= 0 && steady <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%s / %s", fmtPct(peak), fmtPct(steady))
 }
 
 func fmtMaybeMB(v interface{}) string {

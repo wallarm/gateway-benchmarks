@@ -129,3 +129,27 @@ footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.
   .card, .chart-box, table { box-shadow: none; border: 1px solid #ddd; }
   body { background: #fff; }
 }
+
+/* Sortable tables — every <th data-sort="..."> is clickable and
+   visually advertises that affordance plus the current sort
+   direction. The sort logic itself lives in report.js. */
+table.sortable th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 1.4em;
+}
+table.sortable th[data-sort]:hover {
+  background: #2a2c44;
+}
+table.sortable th[data-sort]::after {
+  content: "▾";
+  position: absolute;
+  right: 0.45em;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.25;
+  font-size: 0.75em;
+}
+table.sortable th[data-sort].sort-asc::after  { content: "▲"; opacity: 1; }
+table.sortable th[data-sort].sort-desc::after { content: "▼"; opacity: 1; }

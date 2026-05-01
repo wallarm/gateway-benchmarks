@@ -70,6 +70,6 @@ export const options = {
         // ceiling. Both signals are still emitted to the summary and
         // surfaced verbatim in the report's columns; we just don't
         // turn them into exit-99 failures any more.
-        policy_5xx_unexpected: ['count==0'],
+        // policy_5xx_unexpected threshold removed: 5xx storms under heavy load (p4-stress, p3c-paced) are *expected* test results — the bench measures how the gateway degrades, not whether it stays clean. Errors are still counted in the 'Errors' column of the report.
     },
 };

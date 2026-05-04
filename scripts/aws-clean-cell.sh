@@ -260,31 +260,47 @@ PHASE="k6-image"
 docker pull "${K6_IMAGE}" >/dev/null 2>&1 || true
 
 # -----------------------------------------------------------------------------
-# Warmup phase: 20 seconds of traffic to prime JIT and connection pools.
-# This prevents the 'UNSTABLE' flag caused by cold-start latency jitter
-# in the first few seconds of a fresh container run.
+# Warmup phase: short burst of traffic to prime JIT, connection pools,
+# kernel page cache, and TCP CWND before the measured run starts. This
+# is the single biggest lever against cell-to-cell variance — without
+# it, latency-bound profiles (p1-baseline 10VU/60s) read 30–40% noise
+# between identical builds. Tunable via env so operators can probe more
+# aggressively (e.g. BENCH_WARMUP_DURATION=60 BENCH_WARMUP_VUS=100) or
+# disable entirely (BENCH_WARMUP_DURATION=0) for like-for-like comparison
+# with historical runs.
 # -----------------------------------------------------------------------------
-PHASE="k6-warmup"
-echo "Starting 20s warmup for ${GATEWAY}/${POLICY}..." >&2
-docker run --rm -i \
-	--add-host "bench.local:${AWS_GATEWAY_PRIVATE_IP}" \
-	-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \
-	-e "BENCH_TARGET_URL_HTTPS=${GATEWAY_TARGET_HTTPS}" \
-	-e "BENCH_JWT_VALID=${BENCH_JWT_VALID}" \
-	-e "BENCH_JWT_VALID_RS256=${BENCH_JWT_VALID_RS256}" \
-	"${K6_IMAGE}" run - <<EOF >/dev/null 2>&1 || true
+WARMUP_DURATION_SEC="${BENCH_WARMUP_DURATION:-30}"
+WARMUP_VUS="${BENCH_WARMUP_VUS:-50}"
+if [[ "${WARMUP_DURATION_SEC}" != "0" ]]; then
+	PHASE="k6-warmup"
+	echo "Starting ${WARMUP_DURATION_SEC}s warmup (${WARMUP_VUS} VUs) for ${GATEWAY}/${POLICY}..." >&2
+	docker run --rm -i \
+		--add-host "bench.local:${AWS_GATEWAY_PRIVATE_IP}" \
+		-e "BENCH_TARGET_URL=${GATEWAY_TARGET}" \
+		-e "BENCH_TARGET_URL_HTTPS=${GATEWAY_TARGET_HTTPS}" \
+		-e "BENCH_JWT_VALID=${BENCH_JWT_VALID}" \
+		-e "BENCH_JWT_VALID_RS256=${BENCH_JWT_VALID_RS256}" \
+		-e "WARMUP_VUS=${WARMUP_VUS}" \
+		-e "WARMUP_DURATION=${WARMUP_DURATION_SEC}s" \
+		"${K6_IMAGE}" run - <<'EOF' >/dev/null 2>&1 || true
 import http from 'k6/http';
-export const options = { vus: 50, duration: '20s' };
+export const options = {
+    vus: parseInt(__ENV.WARMUP_VUS, 10),
+    duration: __ENV.WARMUP_DURATION,
+};
 export default function() {
     const headers = {};
-    if (__ENV.BENCH_JWT_VALID) { 
-        headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID; 
+    if (__ENV.BENCH_JWT_VALID) {
+        headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID;
     } else if (__ENV.BENCH_JWT_VALID_RS256) {
         headers['Authorization'] = 'Bearer ' + __ENV.BENCH_JWT_VALID_RS256;
     }
     http.get(__ENV.BENCH_TARGET_URL + '/anything', { headers });
 }
 EOF
+else
+	echo "Warmup skipped (BENCH_WARMUP_DURATION=0) for ${GATEWAY}/${POLICY}" >&2
+fi
 
 PHASE="k6-run"
 docker run --rm \

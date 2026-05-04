@@ -409,7 +409,7 @@ TOFU_BIN ?= $(shell command -v tofu >/dev/null 2>&1 && echo tofu || echo terrafo
 BENCH_AWS_FULL_RUN_ID      ?= aws-$(RUN_ID)
 BENCH_AWS_FULL_GATEWAYS    ?= all
 BENCH_AWS_FULL_LOADS       ?= http
-BENCH_AWS_FULL_REPS        ?= 1
+BENCH_AWS_FULL_REPS        ?= 5
 BENCH_AWS_FULL_NOTES       ?= AWS canonical report sweep
 BENCH_AWS_INSTANCE_TYPE    ?= c7i.4xlarge
 BENCH_AWS_FLEET_SIZE       ?= 7
@@ -419,6 +419,10 @@ BENCH_AWS_OPEN_REPORT      ?= 1
 BENCH_AWS_DESTROY_AFTER    ?= 1
 BENCH_PROGRESS_INTERVAL    ?= 30s
 BENCH_AWS_REMOTE_BIN       ?= orchestrator/bin/bench-linux-amd64
+# Per-cell warmup before measurement: primes JIT, connection pools, page cache.
+# Overrides aws-clean-cell.sh defaults; set 0 to skip the warmup entirely.
+BENCH_WARMUP_DURATION      ?= 30
+BENCH_WARMUP_VUS           ?= 50
 
 perf-aws-init: ## tofu init in $(AWS_TOFU_DIR)/
 	@echo "$(YELLOW)perf-aws-init: $(TOFU_BIN) init in $(AWS_TOFU_DIR)/$(NC)"
@@ -492,6 +496,8 @@ perf-aws-full-report: orchestrator-build ## One command: deploy AWS, run canonic
 	BENCH_PROGRESS_INTERVAL="$(BENCH_PROGRESS_INTERVAL)" \
 	BENCH_AWS_REMOTE_BIN="$(BENCH_AWS_REMOTE_BIN)" \
 	BENCH_SEED="$(BENCH_SEED)" \
+	BENCH_WARMUP_DURATION="$(BENCH_WARMUP_DURATION)" \
+	BENCH_WARMUP_VUS="$(BENCH_WARMUP_VUS)" \
 	WALLARM_IMAGE="$${WALLARM_IMAGE}" \
 	GATEWAY_IMAGE="$${GATEWAY_IMAGE}" \
 	BENCH_AWS_REPORT_S3_BUCKET="$${BENCH_AWS_REPORT_S3_BUCKET}" \

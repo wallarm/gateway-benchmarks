@@ -35,6 +35,13 @@ done
 	exit 2
 }
 
+# Multi-variant wallarm runs pass "wallarm@<variant>" as the gateway.
+# The variant suffix is only a column label — compose file, setup.sh,
+# FEATURE-MISSING, .env, and policy YAMLs all live under
+# gateways/<base>/. Strip the suffix to find them; keep the full name
+# in PROJECT / output paths so the variants stay distinguishable.
+GATEWAY_BASE="${GATEWAY%@*}"
+
 : "${AWS_GATEWAY_SSH:?AWS_GATEWAY_SSH is required}"
 : "${AWS_GATEWAY_PRIVATE_IP:?AWS_GATEWAY_PRIVATE_IP is required}"
 : "${AWS_BACKEND_PRIVATE_IP:?AWS_BACKEND_PRIVATE_IP is required}"
@@ -65,7 +72,7 @@ REMOTE_OUT="/tmp/${PROJECT}-${POLICY}-${LOAD}-${SCENARIO}"
 REMOTE_OUT="${REMOTE_OUT//[^a-zA-Z0-9_\/.-]/-}"
 OVERRIDE="/tmp/${PROJECT}-external-backend.yaml"
 GATEWAY_DEPENDS_ON="[]"
-case "${GATEWAY}" in
+case "${GATEWAY_BASE}" in
 	tyk)
 		GATEWAY_DEPENDS_ON="[tyk-redis, jwks-server]"
 		;;
@@ -101,20 +108,20 @@ HEARTBEAT_PID=$!
 cleanup() {
 	set +e
 	kill "${HEARTBEAT_PID}" >/dev/null 2>&1 || true
-	ssh_gateway "cd /opt/gateway-benchmarks; env_file='gateways/${GATEWAY}/${POLICY}/.env'; env_args=''; if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' logs --no-color > '${REMOTE_OUT}/compose.log' 2>&1 || true; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true"
+	ssh_gateway "cd /opt/gateway-benchmarks; env_file='gateways/${GATEWAY_BASE}/${POLICY}/.env'; env_args=''; if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY_BASE}/docker-compose.yaml -f '${OVERRIDE}' logs --no-color > '${REMOTE_OUT}/compose.log' 2>&1 || true; GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY_BASE}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true"
 	ssh_gateway "cat '${REMOTE_OUT}/compose.log' 2>/dev/null || true" > "${LOGS_DIR}/compose.log" 2>/dev/null || true
 	ssh_gateway "rm -f '${OVERRIDE}'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-feature_missing="gateways/${GATEWAY}/${POLICY}/FEATURE-MISSING"
+feature_missing="gateways/${GATEWAY_BASE}/${POLICY}/FEATURE-MISSING"
 # Scenario-specific marker — used when only one scenario inside a
 # policy is unimplemented (e.g. tyk OSS can't run s13/s14 because
 # `http_server_options.use_ssl` makes ALL listeners TLS-only, but its
 # HTTP scenario s01 works fine). Checked in addition to the policy-
 # wide marker so a gateway with partial coverage doesn't lose its HTTP
 # rows.
-feature_missing_scenario="gateways/${GATEWAY}/${POLICY}/FEATURE-MISSING-${SCENARIO}"
+feature_missing_scenario="gateways/${GATEWAY_BASE}/${POLICY}/FEATURE-MISSING-${SCENARIO}"
 if [[ -f "${feature_missing}" ]]; then
 	reason="$(sed -n '1p' "${feature_missing}" 2>/dev/null || true)"
 	jq -cn --arg gateway "${GATEWAY}" --arg policy "${POLICY}" --arg scenario "${SCENARIO}" \
@@ -154,11 +161,11 @@ cd /opt/gateway-benchmarks;
 # caller's RLIMIT_NOFILE — without this, the per-service ulimit silently
 # downgrades. See gateways/<gw>/docker-compose.yaml § ulimits comment.
 ulimit -n 65536 2>/dev/null || true;
-env_file='gateways/${GATEWAY}/${POLICY}/.env';
+env_file='gateways/${GATEWAY_BASE}/${POLICY}/.env';
 env_args='';
 if [ -f \"\${env_file}\" ]; then env_args=\"--env-file \${env_file}\"; fi;
-BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true;
-BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY}/docker-compose.yaml -f '${OVERRIDE}' up -d > '${REMOTE_OUT}/compose-up.log' 2>&1;
+BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY_BASE}/docker-compose.yaml -f '${OVERRIDE}' down --remove-orphans -v >/dev/null 2>&1 || true;
+BENCH_COMPOSE_PROJECT='${PROJECT}' BENCH_CONTAINER_PREFIX='${PREFIX}' GATEWAY_IMAGE='${GATEWAY_IMAGE:-}' WALLARM_IMAGE='${WALLARM_IMAGE:-}' GATEWAY_PROFILE='${POLICY}' GATEWAY_HTTP_PORT=9080 GATEWAY_HTTPS_PORT=9443 GATEWAY_ADMIN_PORT=9081 GATEWAY_ENVOY_ADMIN_PORT=9901 docker compose -p '${PROJECT}' \${env_args} -f gateways/${GATEWAY_BASE}/docker-compose.yaml -f '${OVERRIDE}' up -d > '${REMOTE_OUT}/compose-up.log' 2>&1;
 up_rc=\$?;
 if [ \"\${up_rc}\" -ne 0 ]; then exit 4; fi;
 for i in \$(seq 1 90); do
@@ -195,7 +202,7 @@ if [[ "${up_rc}" != "0" ]]; then
 fi
 
 PHASE="gateway-setup"
-ssh_gateway "cd /opt/gateway-benchmarks && BENCH_CONTAINER_PREFIX='${PREFIX}' DATA_URL='http://localhost:9080' ADMIN_URL='http://localhost:9081' BACKEND_URL='http://backend:8080' FEATURE_MISSING_REASON_FILE='${REMOTE_OUT}/setup-feature-missing.txt' bash gateways/${GATEWAY}/${POLICY}/setup.sh" \
+ssh_gateway "cd /opt/gateway-benchmarks && BENCH_CONTAINER_PREFIX='${PREFIX}' DATA_URL='http://localhost:9080' ADMIN_URL='http://localhost:9081' BACKEND_URL='http://backend:8080' FEATURE_MISSING_REASON_FILE='${REMOTE_OUT}/setup-feature-missing.txt' bash gateways/${GATEWAY_BASE}/${POLICY}/setup.sh" \
 	> "${LOGS_DIR}/setup.log" 2>&1 || setup_rc=$?
 setup_rc="${setup_rc:-0}"
 if [[ "${setup_rc}" == "42" ]]; then

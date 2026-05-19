@@ -173,3 +173,155 @@ func TestSortStable(t *testing.T) {
 		t.Errorf("SortStable policies: got %v, want %v", out, want)
 	}
 }
+
+func TestParseWallarmImageEnv(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []WallarmVariant
+	}{
+		{"", nil},
+		{"wallarm:branch-main", []WallarmVariant{{Name: "branch-main", Image: "wallarm:branch-main"}}},
+		{
+			"wallarm:branch-main,wallarm:branch-other",
+			[]WallarmVariant{
+				{Name: "branch-main", Image: "wallarm:branch-main"},
+				{Name: "branch-other", Image: "wallarm:branch-other"},
+			},
+		},
+		{
+			// Same tag twice — second gets disambiguated with a -2 suffix.
+			"wallarm:main,registry.example/wallarm:main",
+			[]WallarmVariant{
+				{Name: "main", Image: "wallarm:main"},
+				{Name: "main-2", Image: "registry.example/wallarm:main"},
+			},
+		},
+		{
+			// Digest-only references: fall back to image name segment.
+			"wallarm/api-gateway@sha256:abc",
+			[]WallarmVariant{{Name: "api-gateway", Image: "wallarm/api-gateway@sha256:abc"}},
+		},
+	}
+	for _, c := range cases {
+		got := ParseWallarmImageEnv(c.in)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("ParseWallarmImageEnv(%q) = %#v, want %#v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestExpandWallarmVariants(t *testing.T) {
+	variants := []WallarmVariant{
+		{Name: "branch-main", Image: "wallarm:branch-main"},
+		{Name: "branch-other", Image: "wallarm:branch-other"},
+	}
+	got := ExpandWallarmVariants([]string{"nginx", "wallarm", "envoy"}, variants)
+	want := []string{"nginx", "wallarm@branch-main", "wallarm@branch-other", "envoy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ExpandWallarmVariants 2: got %v, want %v", got, want)
+	}
+
+	// Single variant: no expansion, legacy column name preserved.
+	single := []WallarmVariant{{Name: "main", Image: "wallarm:main"}}
+	got = ExpandWallarmVariants([]string{"nginx", "wallarm"}, single)
+	want = []string{"nginx", "wallarm"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ExpandWallarmVariants 1: got %v, want %v", got, want)
+	}
+
+	// Nil variants: no-op.
+	got = ExpandWallarmVariants([]string{"wallarm", "kong"}, nil)
+	want = []string{"wallarm", "kong"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ExpandWallarmVariants nil: got %v, want %v", got, want)
+	}
+}
+
+func TestCellGatewayBaseAndVariant(t *testing.T) {
+	c := Cell{Gateway: "wallarm@branch-main"}
+	if c.GatewayBase() != "wallarm" {
+		t.Errorf("GatewayBase: got %q, want wallarm", c.GatewayBase())
+	}
+	if c.GatewayVariant() != "branch-main" {
+		t.Errorf("GatewayVariant: got %q, want branch-main", c.GatewayVariant())
+	}
+	c = Cell{Gateway: "nginx"}
+	if c.GatewayBase() != "nginx" || c.GatewayVariant() != "" {
+		t.Errorf("plain name: base=%q variant=%q", c.GatewayBase(), c.GatewayVariant())
+	}
+}
+
+func TestSelectionExpandWithWallarmVariants(t *testing.T) {
+	sel := Selection{
+		Gateways: []string{"wallarm", "nginx"},
+		Policies: []string{"p01-vanilla"},
+		Loads:    []string{"p1-baseline"},
+		WallarmVariants: []WallarmVariant{
+			{Name: "branch-main", Image: "wallarm:branch-main"},
+			{Name: "branch-other", Image: "wallarm:branch-other"},
+		},
+	}
+	cells, err := sel.Expand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cells) != 3 {
+		t.Fatalf("want 3 cells (2 wallarm variants + 1 nginx), got %d", len(cells))
+	}
+	if cells[0].Gateway != "wallarm@branch-main" || cells[0].WallarmImage != "wallarm:branch-main" {
+		t.Errorf("cell[0] unexpected: %+v", cells[0])
+	}
+	if cells[1].Gateway != "wallarm@branch-other" || cells[1].WallarmImage != "wallarm:branch-other" {
+		t.Errorf("cell[1] unexpected: %+v", cells[1])
+	}
+	if cells[2].Gateway != "nginx" || cells[2].WallarmImage != "" {
+		t.Errorf("cell[2] unexpected: %+v", cells[2])
+	}
+}
+
+func TestCanonicalReportCellsWithVariants(t *testing.T) {
+	variants := []WallarmVariant{
+		{Name: "a", Image: "wallarm:a"},
+		{Name: "b", Image: "wallarm:b"},
+	}
+	cells, err := CanonicalReportCellsWithVariants(
+		[]string{"wallarm"}, []string{"p1-baseline"}, 1, variants,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 13 policy/scenario pairs (11 HTTP + 2 HTTPS) × 2 variants
+	if len(cells) != 26 {
+		t.Fatalf("want 26 cells, got %d", len(cells))
+	}
+	sawA, sawB := false, false
+	for _, c := range cells {
+		switch c.Gateway {
+		case "wallarm@a":
+			sawA = true
+			if c.WallarmImage != "wallarm:a" {
+				t.Errorf("wallarm@a cell has image %q, want wallarm:a", c.WallarmImage)
+			}
+		case "wallarm@b":
+			sawB = true
+			if c.WallarmImage != "wallarm:b" {
+				t.Errorf("wallarm@b cell has image %q, want wallarm:b", c.WallarmImage)
+			}
+		default:
+			t.Errorf("unexpected gateway %q", c.Gateway)
+		}
+	}
+	if !sawA || !sawB {
+		t.Errorf("missing variant: sawA=%v sawB=%v", sawA, sawB)
+	}
+}
+
+func TestSortStableGatewayVariants(t *testing.T) {
+	in := []string{"kong", "wallarm@b", "nginx", "wallarm@a"}
+	out := SortStable("gateways", in)
+	// Canonical order: nginx, wallarm*, kong. Variants keep input order.
+	want := []string{"nginx", "wallarm@b", "wallarm@a", "kong"}
+	if !reflect.DeepEqual(out, want) {
+		t.Errorf("SortStable gateways: got %v, want %v", out, want)
+	}
+}

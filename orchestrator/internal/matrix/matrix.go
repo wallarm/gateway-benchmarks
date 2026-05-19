@@ -94,12 +94,25 @@ var HTTPSScenarios = map[string]string{
 
 // Cell is a single (gateway, policy, scenario, load) coordinate.
 // Repetition is the 1-indexed pass within a multi-rep run.
+//
+// Gateway may carry a "@<variant>" suffix when the operator passes
+// WALLARM_IMAGE as a comma-separated list (one wallarm column per
+// image — see ExpandWallarmVariants). The base name (before "@") is
+// the directory under gateways/ that owns docker-compose.yaml /
+// setup.sh; the suffix only flavours the column label and the per-
+// cell raw/ output directory.
 type Cell struct {
 	Gateway    string `json:"gateway"`
 	Policy     string `json:"policy"`
 	Scenario   string `json:"scenario"`
 	Load       string `json:"load"`
 	Repetition int    `json:"repetition"`
+
+	// WallarmImage is the image to pull for this cell when Gateway
+	// names a wallarm variant. Empty for non-wallarm cells and for
+	// single-variant runs (where WALLARM_IMAGE remains a scalar env
+	// var honoured by gateways/wallarm/docker-compose.yaml directly).
+	WallarmImage string `json:"wallarm_image,omitempty"`
 }
 
 // ID returns "<gateway>/<policy>/<load>/<scenario>[#repN]" — used
@@ -110,6 +123,38 @@ func (c Cell) ID() string {
 		id += fmt.Sprintf("#rep%d", c.Repetition)
 	}
 	return id
+}
+
+// GatewayBase returns the gateway name without any "@<variant>"
+// suffix — i.e. the directory under gateways/ that owns the compose
+// file and policy subdirs. For non-suffixed names it is identical to
+// Cell.Gateway.
+func (c Cell) GatewayBase() string {
+	return GatewayBase(c.Gateway)
+}
+
+// GatewayVariant returns the "@<variant>" suffix part (without the
+// "@") or "" when the gateway name has no variant suffix.
+func (c Cell) GatewayVariant() string {
+	return GatewayVariant(c.Gateway)
+}
+
+// GatewayBase returns the gateway name without any "@<variant>"
+// suffix. Free function so callers that have a plain string (e.g.
+// the aggregator reading directory names off disk) can reuse it.
+func GatewayBase(name string) string {
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// GatewayVariant returns the variant suffix or "" when none is set.
+func GatewayVariant(name string) string {
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		return name[i+1:]
+	}
+	return ""
 }
 
 // OutputDir mirrors scripts/load-gateway.sh's per-cell directory
@@ -131,6 +176,142 @@ type Selection struct {
 	Scenarios   []string // one-per-policy, in order; auto-derived if empty
 	Loads       []string
 	Repetitions int
+
+	// WallarmVariants, when set with 2+ entries, expands every
+	// "wallarm" entry in Gateways into one "wallarm@<variant>" entry
+	// per variant. With 0 or 1 entries the wallarm column stays a
+	// single "wallarm" — matching legacy single-image behaviour.
+	WallarmVariants []WallarmVariant
+}
+
+// WallarmVariant pairs the human-readable label that becomes the
+// gateway column suffix ("wallarm@<name>") with the docker image
+// reference that should be set as WALLARM_IMAGE for cells in that
+// column.
+type WallarmVariant struct {
+	Name  string
+	Image string
+}
+
+// ParseWallarmImageEnv parses a WALLARM_IMAGE env value into a list
+// of variants. A scalar (no comma) returns a single variant whose
+// Name is derived from the image tag and Image is the input verbatim.
+// An empty / whitespace-only input returns nil.
+//
+// The variant name is the last colon-separated segment of the image
+// reference, sanitised to docker-name safe characters. Duplicate
+// names get a "-N" disambiguator. Examples:
+//
+//	"wallarm:branch-main"
+//	   → [{Name: "branch-main", Image: "wallarm:branch-main"}]
+//
+//	"wallarm:branch-main,wallarm:branch-other"
+//	   → [{Name: "branch-main", Image: "wallarm:branch-main"},
+//	      {Name: "branch-other", Image: "wallarm:branch-other"}]
+func ParseWallarmImageEnv(env string) []WallarmVariant {
+	parts := ParseCSV(env)
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]WallarmVariant, 0, len(parts))
+	seen := make(map[string]int, len(parts))
+	for _, image := range parts {
+		name := variantNameFromImage(image)
+		if dup, ok := seen[name]; ok {
+			seen[name] = dup + 1
+			name = fmt.Sprintf("%s-%d", name, dup+1)
+		} else {
+			seen[name] = 1
+		}
+		out = append(out, WallarmVariant{Name: name, Image: image})
+	}
+	return out
+}
+
+// variantNameFromImage extracts a docker-safe label from an image
+// reference. Prefers the tag after the last ':'; falls back to the
+// last path segment when the reference has no tag (e.g. bare digest).
+func variantNameFromImage(image string) string {
+	candidate := image
+	if i := strings.LastIndexByte(candidate, '@'); i >= 0 {
+		// digest form: drop the digest, keep the tag if any
+		candidate = candidate[:i]
+	}
+	if i := strings.LastIndexByte(candidate, ':'); i >= 0 {
+		candidate = candidate[i+1:]
+	} else if i := strings.LastIndexByte(candidate, '/'); i >= 0 {
+		candidate = candidate[i+1:]
+	}
+	candidate = sanitiseVariantName(candidate)
+	if candidate == "" {
+		return "variant"
+	}
+	return candidate
+}
+
+func sanitiseVariantName(s string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(s) {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.'
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// ExpandWallarmVariants takes a gateway list and, when 2+ variants
+// are supplied, replaces each "wallarm" entry with one
+// "wallarm@<variant>" entry per variant. 0 or 1 variants is a no-op
+// — single-image runs keep the legacy "wallarm" column name.
+func ExpandWallarmVariants(gateways []string, variants []WallarmVariant) []string {
+	if len(variants) < 2 {
+		return append([]string(nil), gateways...)
+	}
+	out := make([]string, 0, len(gateways)+len(variants)-1)
+	for _, gw := range gateways {
+		if GatewayBase(gw) != "wallarm" || GatewayVariant(gw) != "" {
+			out = append(out, gw)
+			continue
+		}
+		for _, v := range variants {
+			out = append(out, "wallarm@"+v.Name)
+		}
+	}
+	return out
+}
+
+// WallarmImageFor returns the image associated with a gateway name
+// (e.g. "wallarm@branch-main" → "wallarm:branch-main"). Returns ""
+// when the gateway is not a wallarm variant or no matching variant
+// exists in the list.
+func WallarmImageFor(gateway string, variants []WallarmVariant) string {
+	if GatewayBase(gateway) != "wallarm" {
+		return ""
+	}
+	variant := GatewayVariant(gateway)
+	if variant == "" {
+		// Scalar wallarm column — only meaningful when a single variant
+		// was supplied. Return its image so the runner can still inject
+		// WALLARM_IMAGE per cell rather than relying on the env leak.
+		if len(variants) == 1 {
+			return variants[0].Image
+		}
+		return ""
+	}
+	for _, v := range variants {
+		if v.Name == variant {
+			return v.Image
+		}
+	}
+	return ""
 }
 
 // Expand returns every cell implied by the selection, in stable
@@ -167,17 +348,20 @@ func (s Selection) Expand() ([]Cell, error) {
 		}
 	}
 
+	gateways := ExpandWallarmVariants(s.Gateways, s.WallarmVariants)
 	var cells []Cell
-	for _, gw := range s.Gateways {
+	for _, gw := range gateways {
+		image := WallarmImageFor(gw, s.WallarmVariants)
 		for i, policy := range s.Policies {
 			for _, load := range s.Loads {
 				for rep := 1; rep <= s.Repetitions; rep++ {
 					cells = append(cells, Cell{
-						Gateway:    gw,
-						Policy:     policy,
-						Scenario:   scenarios[i],
-						Load:       load,
-						Repetition: rep,
+						Gateway:      gw,
+						Policy:       policy,
+						Scenario:     scenarios[i],
+						Load:         load,
+						Repetition:   rep,
+						WallarmImage: image,
 					})
 				}
 			}
@@ -189,6 +373,14 @@ func (s Selection) Expand() ([]Cell, error) {
 // CanonicalReportCells expands the published report matrix:
 // (11 ranking HTTP profiles + 2 HTTPS scenarios) x loads x gateways x reps.
 func CanonicalReportCells(gateways, loads []string, repetitions int) ([]Cell, error) {
+	return CanonicalReportCellsWithVariants(gateways, loads, repetitions, nil)
+}
+
+// CanonicalReportCellsWithVariants is the variant-aware version of
+// CanonicalReportCells. When 2+ wallarm variants are passed, each
+// "wallarm" entry expands into one "wallarm@<variant>" column with
+// the corresponding image stamped onto every emitted cell.
+func CanonicalReportCellsWithVariants(gateways, loads []string, repetitions int, variants []WallarmVariant) ([]Cell, error) {
 	if len(gateways) == 0 {
 		return nil, fmt.Errorf("matrix: at least one --gateway is required")
 	}
@@ -217,17 +409,20 @@ func CanonicalReportCells(gateways, loads []string, repetitions int) ([]Cell, er
 		policyScenario{policy: "p12-full-pipeline", scenario: HTTPSScenarios["p12-full-pipeline"]},
 	)
 
+	expanded := ExpandWallarmVariants(gateways, variants)
 	var cells []Cell
-	for _, gw := range gateways {
+	for _, gw := range expanded {
+		image := WallarmImageFor(gw, variants)
 		for _, pair := range pairs {
 			for _, load := range loads {
 				for rep := 1; rep <= repetitions; rep++ {
 					cells = append(cells, Cell{
-						Gateway:    gw,
-						Policy:     pair.policy,
-						Scenario:   pair.scenario,
-						Load:       load,
-						Repetition: rep,
+						Gateway:      gw,
+						Policy:       pair.policy,
+						Scenario:     pair.scenario,
+						Load:         load,
+						Repetition:   rep,
+						WallarmImage: image,
 					})
 				}
 			}
@@ -305,6 +500,10 @@ func ResolveAlias(kind, value string) []string {
 // SortStable sorts a slice in canonical order (CanonicalPolicies for
 // "policies", CanonicalGateways for "gateways", CanonicalLoads for
 // "loads"). Unknown items go to the end alphabetically.
+//
+// For "gateways", a "wallarm@<variant>" entry ranks at the same
+// position as plain "wallarm"; ties between variants are broken by
+// the variant suffix in input order (stable).
 func SortStable(kind string, items []string) []string {
 	var rank map[string]int
 	switch kind {
@@ -320,12 +519,23 @@ func SortStable(kind string, items []string) []string {
 		return out
 	}
 	out := append([]string(nil), items...)
+	keyFor := func(s string) string {
+		if kind == "gateways" {
+			return GatewayBase(s)
+		}
+		return s
+	}
 	sort.SliceStable(out, func(i, j int) bool {
-		ri, oi := rank[out[i]]
-		rj, oj := rank[out[j]]
+		ki, kj := keyFor(out[i]), keyFor(out[j])
+		ri, oi := rank[ki]
+		rj, oj := rank[kj]
 		switch {
 		case oi && oj:
-			return ri < rj
+			if ri != rj {
+				return ri < rj
+			}
+			// same base rank — preserve input order for variants.
+			return false
 		case oi:
 			return true
 		case oj:

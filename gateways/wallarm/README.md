@@ -22,8 +22,30 @@ fails loudly with "`WALLARM_IMAGE must be set`" — this is intentional;
 an earlier iteration pinned the public `0.2.0` image as a default, but
 that release lacks `jwt_validation` (p02, p11,
 `p03-jwks-rs256-basic`) and the full body-rewrite policy surface (p09,
-p10) the benchmark exercises, so we dropped the pin in
-[`.notes/PROGRESS.md § Iteration 23`](../../.notes/PROGRESS.md).
+p10) the benchmark exercises, so we dropped the pin (see the internal
+progress log § Iteration 23).
+
+### Comparing multiple wallarm builds in one sweep
+
+`WALLARM_IMAGE` accepts a comma-separated list — `bench run` expands
+each entry into a distinct column named `wallarm@<variant>` so two (or
+more) builds run side-by-side through the same matrix:
+
+```bash
+WALLARM_IMAGE='wallarm:branch-main,wallarm:branch-other' \
+    orchestrator/bin/bench run --gateways wallarm,nginx --matrix canonical
+# columns: nginx, wallarm@branch-main, wallarm@branch-other
+```
+
+The variant label is derived from the image tag (everything after the
+last `:` in the reference). Duplicate labels get a `-2`/`-3` suffix.
+A single-value `WALLARM_IMAGE` (no comma) keeps the legacy column name
+`wallarm`, so existing pipelines are unaffected.
+
+Variant cells share `gateways/wallarm/docker-compose.yaml` and all the
+profile sub-directories below it — only the image swap and column
+label differ. Per-cell artefacts land at
+`reports/<run-id>/raw/wallarm@<variant>/...`.
 
 | Field        | Value                                                       |
 |--------------|-------------------------------------------------------------|

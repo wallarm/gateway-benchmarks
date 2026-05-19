@@ -110,6 +110,19 @@ done
 [[ -n "${SCENARIO}" ]] || { printf '%s\n' "--scenario is required" >&2; exit 2; }
 [[ -n "${LOAD}"     ]] || { printf '%s\n' "--load is required"     >&2; exit 2; }
 
+# Multi-variant wallarm comparisons (e.g. WALLARM_IMAGE=img-a,img-b)
+# expose each build as a distinct gateway column "wallarm@<variant>".
+# The variant suffix is purely a column label — the compose file,
+# setup.sh, FEATURE-MISSING marker, and policy YAMLs all live under
+# gateways/wallarm/. Strip the suffix to find them; keep the full
+# name for the output directory + container prefix so the runs stay
+# distinguishable on disk.
+GATEWAY_BASE="${GATEWAY%@*}"
+GATEWAY_VARIANT=""
+if [[ "${GATEWAY}" == *"@"* ]]; then
+    GATEWAY_VARIANT="${GATEWAY#*@}"
+fi
+
 # Accepted load profiles — closed-loop (p1/p2/p3/p4-*) plus paced-
 # arrivals twins (p1c/p2c/p3c/p4c-paced). The `-paced` suffix is the
 # gate for the `constant-arrival-rate` executors; see
@@ -126,8 +139,8 @@ scenario_file="k6/scenarios/${SCENARIO}.js"
 [[ -f "${scenario_file}" ]] \
     || { printf 'scenario script not found: %s\n' "${scenario_file}" >&2; exit 2; }
 
-compose_file="gateways/${GATEWAY}/docker-compose.yaml"
-profile_dir="gateways/${GATEWAY}/${POLICY}"
+compose_file="gateways/${GATEWAY_BASE}/docker-compose.yaml"
+profile_dir="gateways/${GATEWAY_BASE}/${POLICY}"
 setup_script="${profile_dir}/setup.sh"
 feature_missing="${profile_dir}/FEATURE-MISSING"
 
@@ -147,8 +160,11 @@ GATEWAY_HTTP_PORT="${GATEWAY_HTTP_PORT:-9080}"
 GATEWAY_HTTPS_PORT="${GATEWAY_HTTPS_PORT:-9443}"
 GATEWAY_ADMIN_PORT="${GATEWAY_ADMIN_PORT:-9081}"
 GATEWAY_ENVOY_ADMIN_PORT="${GATEWAY_ENVOY_ADMIN_PORT:-9901}"
-BENCH_COMPOSE_PROJECT="${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-${GATEWAY}}"
-BENCH_CONTAINER_PREFIX="${BENCH_CONTAINER_PREFIX:-gwb-${GATEWAY}}"
+# Sanitise the gateway slug for docker (compose project + container
+# names disallow '@'). Lower-case anything outside [a-z0-9] → '-'.
+gateway_docker_slug="$(printf '%s' "${GATEWAY}" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9]\+/-/g; s/^-//; s/-$//')"
+BENCH_COMPOSE_PROJECT="${BENCH_COMPOSE_PROJECT:-gateway-benchmarks-${gateway_docker_slug}}"
+BENCH_CONTAINER_PREFIX="${BENCH_CONTAINER_PREFIX:-gwb-${gateway_docker_slug}}"
 GATEWAY_TARGET="${GATEWAY_TARGET:-http://localhost:${GATEWAY_HTTP_PORT}}"
 export GATEWAY_HTTP_PORT GATEWAY_HTTPS_PORT GATEWAY_ADMIN_PORT GATEWAY_ENVOY_ADMIN_PORT
 export BENCH_COMPOSE_PROJECT BENCH_CONTAINER_PREFIX
@@ -199,7 +215,7 @@ fi
 # Compose driver (handles per-profile .env override identically to
 # parity-gateway.sh — keeps the two lifecycles 100% consistent).
 # -----------------------------------------------------------------------------
-profile_env="gateways/${GATEWAY}/${POLICY}/.env"
+profile_env="gateways/${GATEWAY_BASE}/${POLICY}/.env"
 compose_cmd=(docker compose -p "${BENCH_COMPOSE_PROJECT}")
 if [[ -f "${profile_env}" ]]; then
     compose_cmd+=(--env-file "${profile_env}")
@@ -213,7 +229,7 @@ compose_cmd+=(-f "${compose_file}")
 # project name dynamically to stay agnostic of any future rename.
 project_name="$("${compose_cmd[@]}" config --format json 2>/dev/null \
     | jq -r '.name' 2>/dev/null || true)"
-project_name="${project_name:-gateway-benchmarks-${GATEWAY}}"
+project_name="${project_name:-gateway-benchmarks-${gateway_docker_slug}}"
 bench_network="${project_name}_bench-net"
 
 # -----------------------------------------------------------------------------

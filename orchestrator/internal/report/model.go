@@ -611,6 +611,11 @@ func nullable(in []float64) []*float64 {
 // gatewaysIn returns every gateway that appears in the index, sorted
 // by GatewayStack canonical order (nginx first, then alphabetic for
 // any unknown extras).
+//
+// "wallarm@<variant>" entries — emitted when WALLARM_IMAGE was passed
+// as a CSV — rank at the same canonical position as plain "wallarm"
+// and break ties alphabetically by variant so the report columns
+// stay deterministic across runs.
 func gatewaysIn(idx *Index) []string {
 	seen := map[string]struct{}{}
 	for _, byGW := range idx.Buckets {
@@ -623,12 +628,22 @@ func gatewaysIn(idx *Index) []string {
 		out = append(out, gw)
 	}
 	rank := indexedSlice(orderedGateways())
+	baseOf := func(s string) string {
+		if i := strings.IndexByte(s, '@'); i >= 0 {
+			return s[:i]
+		}
+		return s
+	}
 	sort.SliceStable(out, func(i, j int) bool {
-		ri, oi := rank[out[i]]
-		rj, oj := rank[out[j]]
+		bi, bj := baseOf(out[i]), baseOf(out[j])
+		ri, oi := rank[bi]
+		rj, oj := rank[bj]
 		switch {
 		case oi && oj:
-			return ri < rj
+			if ri != rj {
+				return ri < rj
+			}
+			return out[i] < out[j]
 		case oi:
 			return true
 		case oj:

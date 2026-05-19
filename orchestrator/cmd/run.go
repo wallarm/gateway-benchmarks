@@ -80,23 +80,32 @@ Use --dry-run first to see the planned cell list.`,
 
 			scenarios := matrix.ParseCSV(scenariosCSV)
 
+			// WALLARM_IMAGE is a CSV when the operator wants to benchmark
+			// multiple wallarm builds against each other in one sweep —
+			// e.g. WALLARM_IMAGE='wallarm:branch-main,wallarm:branch-other'.
+			// With 2+ entries the wallarm column fans out into one
+			// "wallarm@<variant>" column per image; with a single value
+			// the column stays plain "wallarm" (legacy behaviour).
+			wallarmVariants := matrix.ParseWallarmImageEnv(os.Getenv("WALLARM_IMAGE"))
+
 			var cells []matrix.Cell
 			var err error
 			switch matrixMode {
 			case "selection":
 				sel := matrix.Selection{
-					Gateways:    gateways,
-					Policies:    policies,
-					Scenarios:   scenarios,
-					Loads:       loads,
-					Repetitions: repetitions,
+					Gateways:        gateways,
+					Policies:        policies,
+					Scenarios:       scenarios,
+					Loads:           loads,
+					Repetitions:     repetitions,
+					WallarmVariants: wallarmVariants,
 				}
 				cells, err = sel.Expand()
 			case "canonical":
 				if len(scenarios) > 0 || cmd.Flags().Changed("policies") {
 					return fmt.Errorf("--matrix canonical owns policies/scenarios; use --gateways/--loads/--reps to narrow it")
 				}
-				cells, err = matrix.CanonicalReportCells(gateways, loads, repetitions)
+				cells, err = matrix.CanonicalReportCellsWithVariants(gateways, loads, repetitions, wallarmVariants)
 			default:
 				return fmt.Errorf("unknown --matrix %q (valid: selection, canonical)", matrixMode)
 			}

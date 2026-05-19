@@ -132,13 +132,21 @@ func New(ctx context.Context, repoRoot, mode, runID string, seed int64) *Builder
 
 // AddGateway records a gateway reference. Call after the gateway has
 // been brought up so we can resolve its image digest.
+//
+// "wallarm@<variant>" entries share gateways/wallarm/docker-compose.yaml
+// — strip the suffix before resolving the compose path so the manifest
+// still gets a useful image probe.
 func (b *Builder) AddGateway(ctx context.Context, name string) {
-	composePath := filepath.Join(b.repoRoot, "gateways", name, "docker-compose.yaml")
+	base := name
+	if i := strings.IndexByte(base, '@'); i >= 0 {
+		base = base[:i]
+	}
+	composePath := filepath.Join(b.repoRoot, "gateways", base, "docker-compose.yaml")
 	ref := GatewayRef{
 		Name:        name,
 		ComposePath: composePath,
 	}
-	if image, digest, ok := probeGatewayImage(ctx, name); ok {
+	if image, digest, ok := probeGatewayImage(ctx, base); ok {
 		ref.Image = image
 		ref.Digest = digest
 		ref.Source = "registry"

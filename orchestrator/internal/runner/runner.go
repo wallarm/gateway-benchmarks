@@ -195,6 +195,31 @@ func (r *Runner) runOnce(ctx context.Context, cell matrix.Cell, attempt int) Res
 	// `gwb-<gateway>` and writes reports/<run>/raw/<cell>/docker-stats.csv
 	// — the shell sidecar is suppressed via BENCH_SKIP_DOCKER_STATS=1.
 	cellEnv := nilSafeCellEnv(r.CellEnv, cell)
+
+	// When the cell carries a per-variant wallarm image (CSV-form
+	// WALLARM_IMAGE in the parent env), override WALLARM_IMAGE for
+	// this cell only. Non-wallarm cells leave the parent env alone —
+	// their docker-compose files don't reference WALLARM_IMAGE.
+	if cell.WallarmImage != "" {
+		cellEnv = append(cellEnv, "WALLARM_IMAGE="+cell.WallarmImage)
+	}
+
+	// "wallarm@branch-main" violates docker's container_name regex
+	// ([a-zA-Z0-9][a-zA-Z0-9_.-]*). In serial mode CellEnv is nil so
+	// load-gateway.sh would otherwise default BENCH_CONTAINER_PREFIX
+	// to "gwb-wallarm@branch-main" and compose up would fail. Inject
+	// a sanitised prefix + project name so the variant columns stay
+	// distinct on disk while the container names stay docker-safe.
+	// Parallel mode already passes its own slot-scoped prefix; skip
+	// when it has.
+	if cell.GatewayVariant() != "" && envValue(cellEnv, "BENCH_CONTAINER_PREFIX") == "" {
+		safe := "gwb-" + sanitizeDockerName(cell.Gateway)
+		cellEnv = append(cellEnv,
+			"BENCH_CONTAINER_PREFIX="+safe,
+			"BENCH_COMPOSE_PROJECT="+safe,
+		)
+	}
+
 	gatewayContainer := envValue(cellEnv, "BENCH_CONTAINER_PREFIX")
 	if gatewayContainer == "" {
 		gatewayContainer = "gwb-" + cell.Gateway
@@ -455,4 +480,27 @@ var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 func stripANSI(s string) string {
 	return ansiPattern.ReplaceAllString(s, "")
+}
+
+// sanitizeDockerName collapses any character outside [a-z0-9] into
+// a single '-' and trims leading/trailing dashes. Mirrors the helper
+// in cmd/run.go so wallarm@variant gateway names produce a valid
+// container_name / compose project (docker forbids '@' there).
+func sanitizeDockerName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

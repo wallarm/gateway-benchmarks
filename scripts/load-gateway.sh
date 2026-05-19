@@ -118,10 +118,6 @@ done
 # name for the output directory + container prefix so the runs stay
 # distinguishable on disk.
 GATEWAY_BASE="${GATEWAY%@*}"
-GATEWAY_VARIANT=""
-if [[ "${GATEWAY}" == *"@"* ]]; then
-    GATEWAY_VARIANT="${GATEWAY#*@}"
-fi
 
 # Accepted load profiles — closed-loop (p1/p2/p3/p4-*) plus paced-
 # arrivals twins (p1c/p2c/p3c/p4c-paced). The `-paced` suffix is the
